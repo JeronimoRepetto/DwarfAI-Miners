@@ -18,10 +18,11 @@ import type { McpConfigFiles } from '../../../modules/suppliers/adapters/drivers
 import { evts, type Host } from './cut3aHost'
 
 /**
- * How many settle rounds a helper waits, the clock frozen, for a spawn that never comes: about 1.5 s
- * on a developer machine (2026-10-21), against the few rounds the two files take there, so it covers
- * the multi-second disk stalls of the Windows CI runner, and it stays inside the per-test timeout
- * (5 s, 30 s on that runner, vitest.config.ts), so a missing spawn fails with its own message.
+ * How many settle rounds a helper waits by default, the clock frozen, for a spawn that never comes:
+ * about 1.5 s on a developer machine (2026-10-21) against the few rounds the two files take there,
+ * so it covers the multi-second disk stalls of the Windows CI runner. A launch that spawns never
+ * reaches it; only a launch that fails to spawn pays for it, and no test exhausts it (a round costs
+ * very different real time per runner): the case for the message passes its own small cap.
  */
 export const SPAWN_WAIT_SETTLES = 40_000
 
@@ -47,11 +48,13 @@ export interface SpawnWait {
   givenUp: () => boolean
   /** What the failure message reports when no spawn came. */
   state: () => string
+  /** The settle-round cap; `SPAWN_WAIT_SETTLES` by default. */
+  settles?: number
 }
 
 /**
  * Settles `ui` with the fake clock frozen until `spawned` resolved or `wait.givenUp()` answers true;
- * after `SPAWN_WAIT_SETTLES` rounds with neither, fails with `claude did not spawn: <state>`.
+ * after `wait.settles` rounds with neither, fails with `claude did not spawn: <state>`.
  */
 export async function untilSpawned(
   h: Pick<Host, 'settle'>,
@@ -61,8 +64,9 @@ export async function untilSpawned(
 ): Promise<void> {
   let done = false
   void spawned.then(() => (done = true))
+  const cap = wait.settles ?? SPAWN_WAIT_SETTLES
   for (let round = 0; !done && !wait.givenUp(); round += 1) {
-    if (round >= SPAWN_WAIT_SETTLES) throw new Error(`claude did not spawn: ${wait.state()}`)
+    if (round >= cap) throw new Error(`claude did not spawn: ${wait.state()}`)
     await h.settle(ui)
   }
 }
@@ -72,12 +76,14 @@ export async function untilSpawned(
  * the request): the launch's continuation runs on the scheduler, then the wait for the spawn with
  * the clock frozen (`untilSpawned`), then fake time through the handshake budget and the 3 s
  * early-failure window (ADR-020 D4), which is part of the success. Answers the launch and its dwarf.
+ * `spawnWaitSettles` caps the wait for the spawn (`SPAWN_WAIT_SETTLES` by default).
  */
 export async function settleClaudeLaunch(
   h: Pick<Host, 'settle' | 'run'>,
   ui: Parameters<Host['settle']>[0],
   launchId: LaunchId,
-  spawned: Promise<void>
+  spawned: Promise<void>,
+  spawnWaitSettles?: number
 ): Promise<{ launchId: LaunchId; dwarfId: DwarfId }> {
   const frames = () =>
     evts<{ launch: { launchId: LaunchId; state: string; dwarfId?: DwarfId } }>(
@@ -89,7 +95,8 @@ export async function settleClaudeLaunch(
   await h.run(50, ui)
   await untilSpawned(h, ui, spawned, {
     givenUp: failed,
-    state: () => JSON.stringify({ states: frames().map((f) => f.launch.state) })
+    state: () => JSON.stringify({ states: frames().map((f) => f.launch.state) }),
+    ...(spawnWaitSettles === undefined ? {} : { settles: spawnWaitSettles })
   })
   const budget = HANDSHAKE_TIMEOUT_MS + EARLY_FAILURE_WINDOW_MS
   for (let waited = 0; waited < budget && settled() === undefined && !failed(); waited += 50) {

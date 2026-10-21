@@ -452,7 +452,9 @@ describe('launching and conversation write side wired', () => {
 
   it('[SP-08, S5.19] a Claude launch whose files never reach the disk ends its wait with what it saw, not a timeout', async () => {
     // The wait for the spawn is bounded in settle rounds, never in real time: a spawn that never
-    // comes fails with its own message, the launch still resolving and nothing failed.
+    // comes fails with its own message, the launch still resolving and nothing failed. The case
+    // proves the message, not the default cap's size, so it passes a small cap: a settle round
+    // costs very different real time per runner (macOS CI took over 30 s for the default).
     const recorded = claudeRecording()
     const h = await bootHost(world(), {
       epoch: 'epoch-flake-b',
@@ -464,12 +466,11 @@ describe('launching and conversation write side wired', () => {
     const mineId = await h.mine()
     const ui = await h.attach()
 
-    await expect(launchClaude(h, ui, mineId, recorded.allowPrompt)).rejects.toThrow(
+    await expect(launchClaude(h, ui, mineId, recorded.allowPrompt, 200)).rejects.toThrow(
       'claude did not spawn: {"states":["resolving"]}'
     )
     expect(evts(ui, 'launch.failed')).toEqual([])
-    // Slow by design: the whole settle-round cap runs out (SPAWN_WAIT_SETTLES).
-  }, 30_000)
+  })
 
   it('[S4.18, SP-15, CH-01] a Host rebuilt after a crash resumes the Claude session with its prompt tool served again', async () => {
     const w = world()
@@ -626,13 +627,15 @@ function claudeSpawn(
 /**
  * A Claude launch into `mineId` over `ui`, settled: its launch and the dwarf it produced. The relay's
  * credential and `--mcp-config` files are real files written before `claude -p` is spawned, so the
- * wait is for that spawn itself, with the clock frozen (testing/sessionSpawns.ts).
+ * wait is for that spawn itself, with the clock frozen (testing/sessionSpawns.ts), capped at
+ * `spawnWaitSettles` settle rounds (`SPAWN_WAIT_SETTLES` by default).
  */
 async function launchClaude(
   h: Host,
   ui: Parameters<Host['settle']>[0],
   mineId: MineId,
-  prompt: string
+  prompt: string,
+  spawnWaitSettles?: number
 ): Promise<{ launchId: LaunchId; dwarfId: DwarfId }> {
   const spawned = nextSessionSpawn(h.clock)
   const answered = await h.call(ui, 'launching.launch', {
@@ -646,5 +649,5 @@ async function launchClaude(
   expect(answered).toMatchObject({ ok: true })
   const launchId = (answered as { result?: { launchId?: LaunchId } }).result?.launchId
   if (launchId === undefined) throw new Error('the launch was answered with no launch id')
-  return settleClaudeLaunch(h, ui, launchId, spawned)
+  return settleClaudeLaunch(h, ui, launchId, spawned, spawnWaitSettles)
 }
