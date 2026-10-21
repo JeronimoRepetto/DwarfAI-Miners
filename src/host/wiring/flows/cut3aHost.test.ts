@@ -25,6 +25,13 @@ import { readFixtureSet, type FixtureProcess } from '../../modules/suppliers/tes
 import { FixtureTransport } from '../../modules/suppliers/testing/fixtureTransport'
 import { RecordingSpawn } from '../../modules/suppliers/testing/recordingSpawn'
 import { bootHost, cleanUp, evts, INSTALL_ID, JEV_KEY, world, type Host } from './testing/cut3aHost'
+import {
+  nextSessionSpawn,
+  notifySessionSpawn,
+  settleClaudeLaunch,
+  slowMcpConfigFiles,
+  untilSpawned
+} from './testing/sessionSpawns'
 
 const CODEX_FIXTURES = new URL('../../../../fixtures/codex/app-server-rpc/', import.meta.url)
 
@@ -418,10 +425,58 @@ describe('launching and conversation write side wired', () => {
     ])
   })
 
+  it('[SP-08, S5.19] a Claude launch through the wired Host waits for its files on a slow disk and launches', async () => {
+    // Windows CI flake (runs 39581750212, 39667176491: "claude did not launch: []"): the relay's
+    // `--mcp-config` file is a real file, and a disk slower than the wait's step count ran the wait out
+    // with the launch still resolving. The handshake budget starts at the spawn (S5.19), so a slow
+    // write delays the launch and never fails it.
+    const w = world()
+    const recorded = claudeRecording()
+    const h = await bootHost(w, {
+      epoch: 'epoch-flake-a',
+      processes: ({ clock, scheduler }) =>
+        claudeSpawn(clock, scheduler, recorded.allow, recorded.help),
+      installed: ['claude'],
+      mcpConfigFiles: (real, clock) => slowMcpConfigFiles(real, clock, 20_000)
+    })
+    const mineId = await h.mine()
+    const ui = await h.attach()
+
+    const launched = await launchClaude(h, ui, mineId, recorded.allowPrompt)
+
+    expect(h.crew.crew.queries.get(launched.dwarfId)).toMatchObject({
+      owned: true,
+      departed: false
+    })
+  })
+
+  it('[SP-08, S5.19] a Claude launch whose files never reach the disk ends its wait with what it saw, not a timeout', async () => {
+    // The wait for the spawn is bounded in settle rounds, never in real time: a spawn that never
+    // comes fails with its own message, the launch still resolving and nothing failed. The case
+    // proves the message, not the default cap's size, so it passes a small cap: a settle round
+    // costs very different real time per runner (macOS CI took over 30 s for the default).
+    const recorded = claudeRecording()
+    const h = await bootHost(world(), {
+      epoch: 'epoch-flake-b',
+      processes: ({ clock, scheduler }) =>
+        claudeSpawn(clock, scheduler, recorded.allow, recorded.help),
+      installed: ['claude'],
+      mcpConfigFiles: (real, clock) => slowMcpConfigFiles(real, clock, 'never')
+    })
+    const mineId = await h.mine()
+    const ui = await h.attach()
+
+    await expect(launchClaude(h, ui, mineId, recorded.allowPrompt, 200)).rejects.toThrow(
+      'claude did not spawn: {"states":["resolving"]}'
+    )
+    expect(evts(ui, 'launch.failed')).toEqual([])
+  })
+
   it('[S4.18, SP-15, CH-01] a Host rebuilt after a crash resumes the Claude session with its prompt tool served again', async () => {
     const w = world()
     const recorded = claudeRecording()
     const spawnsOfB: RecordingSpawn[] = []
+    let resumeSpawned: Promise<void> | undefined
     const a = await bootHost(w, {
       epoch: 'epoch-182-a',
       processes: ({ clock, scheduler }) =>
@@ -438,15 +493,21 @@ describe('launching and conversation write side wired', () => {
       processes: ({ clock, scheduler }) => {
         const spawn = claudeSpawn(clock, scheduler, recorded.resumed, recorded.help)
         spawnsOfB.push(spawn)
+        resumeSpawned = nextSessionSpawn(clock)
         return spawn
       },
       installed: ['claude'],
       previousEpochEnd: { kind: 'crashed', rule: 'none' }
     })
     const uiB = await b.attach()
-    const resumeSpawned = () =>
-      spawnsOfB[0]?.spawns.some((spawn) => spawn.args.includes('--resume')) === true
-    for (let step = 0; step < 400 && !resumeSpawned(); step += 1) await b.run(50, uiB)
+    // The resume's continuation runs on the scheduler; its relay files are real files, so the wait
+    // is for the resume's spawn itself, with the clock frozen (as `launchClaude`).
+    await b.run(50, uiB)
+    if (resumeSpawned === undefined) throw new Error('Host B built no spawn double')
+    await untilSpawned(b, uiB, resumeSpawned, {
+      givenUp: () => b.events('DwarfDeparted').length > 0,
+      state: () => JSON.stringify({ recovered: evts(uiB, 'host.recovered') })
+    })
     await b.run(4_000, uiB)
 
     // The resume carries the launch's relay again, and the session is served the prompt tool.
@@ -548,6 +609,7 @@ function claudeSpawn(
     decide: (spec) => {
       if (spec.args.includes('--help')) return { kind: 'exit', afterMs: 0, code: 0, stdout: help }
       if (spec.args.includes('-p')) {
+        notifySessionSpawn(clock)
         return {
           kind: 'fixture',
           transport: new FixtureTransport({
@@ -562,13 +624,20 @@ function claudeSpawn(
   })
 }
 
-/** A Claude launch into `mineId` over `ui`, settled: its launch and the dwarf it produced. */
+/**
+ * A Claude launch into `mineId` over `ui`, settled: its launch and the dwarf it produced. The relay's
+ * credential and `--mcp-config` files are real files written before `claude -p` is spawned, so the
+ * wait is for that spawn itself, with the clock frozen (testing/sessionSpawns.ts), capped at
+ * `spawnWaitSettles` settle rounds (`SPAWN_WAIT_SETTLES` by default).
+ */
 async function launchClaude(
   h: Host,
   ui: Parameters<Host['settle']>[0],
   mineId: MineId,
-  prompt: string
+  prompt: string,
+  spawnWaitSettles?: number
 ): Promise<{ launchId: LaunchId; dwarfId: DwarfId }> {
+  const spawned = nextSessionSpawn(h.clock)
   const answered = await h.call(ui, 'launching.launch', {
     mineId,
     way: { kind: 'supplier', providerId: 'claude' },
@@ -578,18 +647,7 @@ async function launchClaude(
     requestId: h.rid()
   })
   expect(answered).toMatchObject({ ok: true })
-  // The relay's credential and `--mcp-config` files are real files: fake time moves only once each
-  // step's disk work answered, so a slow disk never lets the handshake budget run out first.
-  const settledFrame = () =>
-    evts<LaunchChanged>(ui, 'launch.changed').find((frame) => frame.launch.state === 'succeeded')
-  for (let step = 0; step < 400 && settledFrame() === undefined; step += 1) {
-    if (evts(ui, 'launch.failed').length > 0) break
-    await h.run(50, ui)
-  }
-  // The 3 s early-failure window (ADR-020 D4) is part of the success.
-  const settled = settledFrame()?.launch
-  if (settled?.dwarfId === undefined) {
-    throw new Error(`claude did not launch: ${JSON.stringify(evts(ui, 'launch.failed'))}`)
-  }
-  return { launchId: settled.launchId, dwarfId: settled.dwarfId }
+  const launchId = (answered as { result?: { launchId?: LaunchId } }).result?.launchId
+  if (launchId === undefined) throw new Error('the launch was answered with no launch id')
+  return settleClaudeLaunch(h, ui, launchId, spawned, spawnWaitSettles)
 }

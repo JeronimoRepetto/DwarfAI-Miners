@@ -141,7 +141,10 @@ import {
   type WiredDelegation
 } from '../../delegationWiring'
 import { mintCredential } from '../../../transport/auth/mintCredential'
-import { NodeMcpConfigFiles } from '../../../modules/suppliers/adapters/drivers/claude-stream-json/mcpConfigFile'
+import {
+  NodeMcpConfigFiles,
+  type McpConfigFiles
+} from '../../../modules/suppliers/adapters/drivers/claude-stream-json/mcpConfigFile'
 import type {
   DelegationLifecycleEvent,
   DelegationRelayConnection,
@@ -249,6 +252,11 @@ export interface BootOptions {
    * launch none at this step (ISSUE-209, the no-provider case). Jev's routing catalogue only.
    */
   noLaunchableProvider?: () => boolean
+  /**
+   * Wraps the real `--mcp-config` file store the stream-json driver writes through, so a case can
+   * stand in a slow disk; the real store, unwrapped, by default.
+   */
+  mcpConfigFiles?: (real: McpConfigFiles, clock: FakeClock) => McpConfigFiles
 }
 
 /** The real catalogue, whose `launchable()` also answers a launch-enabled Claude once detected. */
@@ -477,7 +485,10 @@ export async function bootHost(w: World, options: BootOptions) {
             execPath: join(w.root, 'DwarfAI-Miners'),
             hostEntryPath: join(w.root, 'out', 'host', 'main.js'),
             hostDataDir: w.root,
-            mcpConfigFiles: new NodeMcpConfigFiles()
+            mcpConfigFiles: (options.mcpConfigFiles ?? ((real) => real))(
+              new NodeMcpConfigFiles(),
+              clock
+            )
           }
           const wiredDelegation = wireDelegation(delegationDeps)
           delegation = wiredDelegation
