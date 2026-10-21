@@ -644,6 +644,10 @@
     "key": "organisms/veta-strip#no-sessions"
   },
   {
+    "key": "screens-full/veta#arrival",
+    "red": "Not measured: registered without a golden run (ISSUE-292, the arrival choreography's settled picture). The reference's one step clicks the prototype's controls plate (Start a session, a session started in a terminal), which the full-screen harness has no stand-in for (it stands in for a sample switch only), and the harness drives the Panel window, not the Veta window; both are the maintainer lane's to add before this state can run"
+  },
+  {
     "key": "molecules/mine-chamber#needs-you",
     "red": "the app's chamber mirrors every dwarf, as components.md (Mine chamber, Anatomy) rules for a dwarf with no station, and the Veta wire carries none, where the UI kit gives its sample dwarfs stations that face some of them left; the tab and label are ISSUE-289 and ISSUE-290's (hidden in the reference too). Not measured: this state was registered without a golden run (ISSUE-287)"
   },
