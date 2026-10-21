@@ -1451,7 +1451,12 @@ onBeforeUnmount(() => {
       @close="risen.dispatch({ type: 'esc', renaming: false })"
       @open-in-panel="risen.dispatch({ type: 'open-in-panel' })"
     />
-    <VetaHostState :room="hostStateRoom" @shown="hostStateShown = $event" />
+    <!-- An incompatible Host's Stop everything and quit goes to the Panel, which holds its confirmation (ISSUE-296). -->
+    <VetaHostState
+      :room="hostStateRoom"
+      :on-stop-everything="() => life.openPanel()"
+      @shown="hostStateShown = $event"
+    />
     <WorktreeDialog
       :question="question"
       :adding="picker.adopting.value"

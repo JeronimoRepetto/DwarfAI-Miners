@@ -4,6 +4,8 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createFakeWindowApi } from '../../../../contracts/ipc/testing/fakeWindowApi'
 import { useHostConnection } from '../../composables/useHostConnection'
+import { BORIN, MORIA, dwarfWire, mineWire } from '../../lib/veta/testing/vetaFixtures'
+import { mountVeta } from './testing/mountVeta'
 import VetaHostState from './VetaHostState.vue'
 
 /*
@@ -95,5 +97,56 @@ describe('VetaHostState', () => {
     expect(document.querySelectorAll('.dm-host-state')).toHaveLength(0)
     expect(rooms).toEqual([true, false])
     wrapper.unmount()
+  })
+
+  // APPENDED (coordinator follow-up): an incompatible Host never leaves Veta silent (ADR-002 D8 item 5).
+  it('[ADR-002, S12.B03] an incompatible Host shows its message in Veta with Stop everything and quit as its one action', async () => {
+    ;(window as unknown as { api: unknown }).api = createFakeWindowApi({
+      getHostConnection: () =>
+        Promise.resolve({ state: 'unavailable', reason: 'incompatible' }) as never
+    })
+    const stop = vi.fn()
+    const rooms: boolean[] = []
+    const wrapper = mount(VetaHostState, {
+      props: {
+        room: (open: boolean) => {
+          rooms.push(open)
+          return Promise.resolve()
+        },
+        onStopEverything: stop
+      },
+      attachTo: document.body
+    })
+    await flushPromises()
+    expect(rooms).toEqual([true])
+    const messages = document.querySelectorAll<HTMLElement>('.dm-host-state')
+    expect(messages).toHaveLength(1)
+    expect(messages[0]!.dataset.variant).toBe('incompatible')
+    const buttons = [...document.body.querySelectorAll<HTMLButtonElement>('button')]
+    expect(buttons.map((b) => b.textContent?.trim())).toEqual(['Stop everything and quit…'])
+    expect(document.activeElement).toBe(buttons[0])
+    buttons[0]!.click()
+    expect(stop).toHaveBeenCalledOnce()
+    wrapper.unmount()
+  })
+
+  it('[ADR-002, S12.B03] in the Veta root the incompatible message’s Stop everything and quit moves to the Panel, which asks for the confirmation', async () => {
+    const world = await mountVeta(
+      {
+        minesEverKnown: true,
+        mines: [mineWire(MORIA)],
+        dwarfs: [dwarfWire(BORIN, MORIA)]
+      },
+      { hostConnection: { state: 'unavailable', reason: 'incompatible' } }
+    )
+    await flushPromises()
+    const button = document.body.querySelector<HTMLButtonElement>('.dm-dialog__actions button')
+    expect(button?.textContent?.trim()).toBe('Stop everything and quit…')
+    button!.click()
+    await flushPromises()
+    expect(world.moves).toEqual([{ mode: 'panel' }])
+    // The strip is still held as last known.
+    expect(document.querySelectorAll('[data-veta-dwarf]')).toHaveLength(1)
+    world.unmount()
   })
 })
