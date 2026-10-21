@@ -16,6 +16,7 @@ import type { ModeWindow } from '../ports/windowFactory'
 import { createModeCoordinator, type AppMode, type ModeCoordinator } from './ModeCoordinator'
 import type { PanelWindowUseCases } from './panelWindow'
 import type { DwarfChatRevealer, RevealWindows } from './revealDwarfChat'
+import type { VetaWindowController } from './VetaWindowController'
 import type { StoredUiPreferences } from './uiPreferences'
 
 /**
@@ -43,6 +44,10 @@ export interface ModeShellDeps {
   departures?(h: (dwarfId: DwarfId) => void): () => void
   /** The Host closed on purpose (`host.closing`): from tray-only the UI process ends with it (S10.16). */
   hostClosing?(h: () => void): () => void
+  /** The modes this build ships; `BUILT_MODES` when not given. */
+  built?: readonly AppMode[]
+  /** The Veta window (`VetaWindowController`), moved only where `built` lists Veta. */
+  veta?: Pick<VetaWindowController, 'window' | 'bounds'>
 }
 
 export interface ModeShell {
@@ -63,21 +68,48 @@ export function composeModeShell(deps: ModeShellDeps): ModeShell {
     focus: () => panel.raise(),
     send: (push, payload) => deps.pushToPanel(push, payload)
   }
+  const built = deps.built ?? BUILT_MODES
+  // The Veta window (ISSUE-285): moved only where this build ships Veta (BR-19; ADR-034 item 2), else not built.
+  const veta = built.includes('veta') ? deps.veta : undefined
+  let vetaShown = false
+  const vetaWindow = (): ModeWindow => {
+    if (veta === undefined) throw new Error('the veta window is not built')
+    const window = veta.window()
+    return {
+      placeAt: (bounds) => window.placeAt(bounds),
+      focus: () => window.focus(),
+      send: (push, payload) => window.send(push, payload),
+      showInactive: () => {
+        window.showInactive()
+        vetaShown = true
+      },
+      hide: () => {
+        window.hide()
+        vetaShown = false
+      }
+    }
+  }
   let revealer: DwarfChatRevealer = { revealDwarfChat: () => Promise.resolve('mine-only') }
   const coordinator = createModeCoordinator({
     windows: {
       window: (mode) => {
+        if (mode === 'veta') return vetaWindow()
         if (mode !== 'panel') throw new Error(`the ${mode} window is not built`)
         return panelWindow
       },
-      bounds: () => panel.panelStart().bounds,
+      bounds: (mode) => {
+        if (mode !== 'veta') return panel.panelStart().bounds
+        if (veta === undefined) throw new Error('the veta window is not built')
+        return veta.bounds()
+      },
       // The Panel's own show re-fits it, shows it inactive and raises it, which also un-minimizes it (#165).
-      bringForward: () => panel.show(),
-      isShown: () => panel.isShown()
+      bringForward: (mode) => (mode === 'veta' ? vetaWindow().focus() : panel.show()),
+      // The coordinator is the one that shows and hides Veta, so its own runs say whether it is on screen.
+      isShown: (mode) => (mode === 'veta' ? vetaShown : panel.isShown())
     },
     timing: deps.timing,
     lastMode: deps.lastMode,
-    built: BUILT_MODES,
+    built,
     // Late-bound: the reveal's windows are the coordinator's own runs.
     revealer: { revealDwarfChat: (t) => revealer.revealDwarfChat(t) },
     log: deps.log,

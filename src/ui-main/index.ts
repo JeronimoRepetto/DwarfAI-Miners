@@ -84,6 +84,7 @@ import {
   type PanelWindowUseCases
 } from './window/application/panelWindow'
 import { currentUiPlatform, ElectronScreenArea } from './window/adapters/ElectronScreenArea'
+import { ozoneRelaunchArgs } from './window/adapters/linuxSession'
 import { uiDataDirectory } from './dataDirectory'
 import {
   DEFAULT_TOGGLE_ACCELERATOR,
@@ -1907,6 +1908,18 @@ function electronRevertIntegrations(uiLog: UiLog, dataDir: string): Promise<numb
 
 /** The UI's own start (16 §8.4): everything a normal or `--background` start composes, the lock first. */
 function startElectronUi(dataDir: string, uiLog: ReturnType<typeof createUiLogger>): void {
+  // ADR-025 item 6 (ISSUE-285): on a Wayland session with XWayland the app runs on X11, so positioning and
+  // always-on-top work as there. Electron picks its display backend before this script runs, so a packaged start
+  // without `--ozone-platform=x11` relaunches itself once with it, before it takes the single-instance lock or builds
+  // a window. A development start keeps the backend it was given (the dev server owns its process).
+  const relaunchArgs = app.isPackaged
+    ? ozoneRelaunchArgs(currentUiPlatform(), process.env, process.argv.slice(1))
+    : null
+  if (relaunchArgs !== null) {
+    app.relaunch({ args: relaunchArgs })
+    app.exit(0)
+    return
+  }
   // ADR-019 items 2–4 (ISSUE-046): the navigation guard from the first webContents, then the permission denial and
   // the CSP once Electron is ready. From cut 0 the secure window factory builds the Panel (ISSUE-047) with a preload
   // that loads sandboxed (ISSUE-045); a rollback build's table gives the window back to today's runtime.

@@ -5,7 +5,8 @@ import { RecordingUiLog } from '../../hostLauncher/fakes/RecordingUiLog'
 import { FakeModeTiming } from '../ports/fakes/FakeModeTiming'
 import { InMemoryUiPreferenceStore } from '../ports/fakes/InMemoryUiPreferenceStore'
 import { MODE_TRANSITION_PUSH } from './ModeCoordinator'
-import { composeModeShell } from './modeShell'
+import { FakeModeWindow } from '../ports/fakes/FakeWindowFactory'
+import { BUILT_MODES, composeModeShell, type ModeShellDeps } from './modeShell'
 import type { PanelWindowUseCases } from './panelWindow'
 import type { RevealWindows } from './revealDwarfChat'
 import { createUiPreferences } from './uiPreferences'
@@ -41,7 +42,7 @@ function fakePanel(shown: boolean) {
   return { panel, calls, state }
 }
 
-function setup(start: 'hidden' | 'tray-only', shown = false) {
+function setup(start: 'hidden' | 'tray-only', shown = false, extra: Partial<ModeShellDeps> = {}) {
   const { panel, calls, state } = fakePanel(shown)
   const pushes: { push: string; payload: unknown }[] = []
   const timing = new FakeModeTiming()
@@ -67,6 +68,7 @@ function setup(start: 'hidden' | 'tray-only', shown = false) {
     log: new RecordingUiLog(),
     newTransitionId: () => `t-${(ids += 1)}`,
     start,
+    ...extra,
     revealer: (windows) => {
       revealWindows = windows
       return {
@@ -167,5 +169,50 @@ describe('the mode shell over the Panel (ISSUE-284; ADR-025 item 3; 07 S10.08, S
     const tray = setup('tray-only')
     tray.hostClose()
     expect(tray.shell.coordinator.ladder()).toEqual({ state: 'not-running', lastId: 'S10.16' })
+  })
+})
+
+describe('the mode shell with a Veta window (ISSUE-285; ADR-025 items 1, 3)', () => {
+  it('[ADR-025, BR-19] a release build ships the Panel alone, so no move reaches a Veta window', async () => {
+    expect(BUILT_MODES).toEqual(['panel'])
+    const veta = new FakeModeWindow()
+    const s = setup('hidden', false, {
+      veta: { window: () => veta, bounds: () => ({ x: 0, y: 1000, width: 480, height: 72 }) }
+    })
+    expect(await s.shell.coordinator.moveToMode({ mode: 'veta' })).toMatchObject({ ok: false })
+    expect(veta.calls).toEqual([])
+  })
+
+  it('[ADR-025, NFR-PLAT-02] where Veta is built, a move to Veta places its window at its final bounds and shows it through the coordinator', async () => {
+    const veta = new FakeModeWindow()
+    const bounds = { x: 1920, y: 1328, width: 480, height: 72 }
+    const s = setup('hidden', false, {
+      built: ['panel', 'veta'],
+      veta: { window: () => veta, bounds: () => bounds }
+    })
+    s.shell.panel.toggleVisible()
+    s.answer()
+    await Promise.resolve()
+    const moved = s.shell.coordinator.moveToMode({ mode: 'veta' })
+    expect(veta.calls.slice(0, 2)).toEqual([
+      { member: 'placeAt', bounds },
+      { member: 'showInactive' }
+    ])
+    const run = s.transitions().at(-1)!
+    expect(run).toMatchObject({ from: 'panel', to: 'veta', role: 'source' })
+    expect(veta.pushes.map((p) => p.push)).toEqual([MODE_TRANSITION_PUSH])
+    s.answer()
+    s.shell.coordinator.transitionDone('veta', { transitionId: run.transitionId })
+    expect(await moved).toEqual({ ok: true, value: undefined })
+    expect(s.calls.at(-1)).toBe('hide')
+    expect(veta.focused).toBe(true)
+    expect(s.store.load('lastMode')).toBe('veta')
+    // Back to the Panel: Veta hides, never closes (ADR-025 item 1).
+    const back = s.shell.coordinator.moveToMode({ mode: 'panel' })
+    const second = s.transitions().at(-1)!
+    s.answer()
+    s.shell.coordinator.transitionDone('veta', { transitionId: second.transitionId })
+    expect(await back).toEqual({ ok: true, value: undefined })
+    expect(veta.visible).toBe(false)
   })
 })
