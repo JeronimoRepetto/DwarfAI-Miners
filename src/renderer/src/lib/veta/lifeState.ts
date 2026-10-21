@@ -18,6 +18,9 @@
  * the state is held. Removing the last mine keeps `minesEverKnown` (a removed mine stays a Host record), so it leads to
  * `no-sessions`, never back to `first-run`; only the re-snapshot after Reset metrics does that (S20.11).
  *
+ * It also reads out every live mine with its present crew, chamber or not (`mines`): the mine picker's list
+ * (07 S22.07; ISSUE-288).
+ *
  * Pure: no DOM, no clock, no `window.api`.
  */
 import {
@@ -70,12 +73,20 @@ export interface VetaChamberView {
   readonly attention: boolean
 }
 
+/** A live mine and how many of its dwarfs are present (the mine picker's rows, 07 S22.07). */
+export interface VetaMineView {
+  readonly mine: MineWire
+  readonly crew: number
+}
+
 export interface VetaLife {
   /** `null` until the first snapshot: nothing is known yet. */
   readonly state: VetaLifeState | null
   readonly shown: boolean
   /** The chambers to draw, in mine order; none in `first-run` and `no-sessions`. */
   readonly chambers: readonly VetaChamberView[]
+  /** Every live mine in mine order with its present crew, those with no chamber included (US-VETA-003.AC05). */
+  readonly mines: readonly VetaMineView[]
   /** The last step taken or refused. */
   readonly last: LifeStep | null
   applySnapshot(data: VetaFacts): void
@@ -215,6 +226,14 @@ export function createVetaLife(): VetaLife {
     },
     get chambers() {
       return chambers
+    },
+    get mines() {
+      const present = [...dwarfs.values()].filter(isPresent)
+      return mineOrder.flatMap((mineId): VetaMineView[] => {
+        const mine = mines.get(mineId)
+        if (mine === undefined) return []
+        return [{ mine, crew: present.filter((d) => d.mineId === mineId).length }]
+      })
     },
     get last() {
       return last

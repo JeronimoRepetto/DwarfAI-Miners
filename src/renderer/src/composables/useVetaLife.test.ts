@@ -110,4 +110,26 @@ describe('useVetaLife', () => {
 
     scope.stop()
   })
+  it('[US-VETA-003.AC05, S22.07] publishes every live mine with its present crew, for the mine picker', async () => {
+    const host = scriptedHost([
+      snapshotPage(10, {
+        minesEverKnown: true,
+        mines: [mineWire(MORIA), mineWire(EREBOR)],
+        dwarfs: [dwarfWire(BORIN, MORIA)]
+      })
+    ])
+    const scope = effectScope()
+    const life = scope.run(() =>
+      useVetaLife({ bridge: host.bridge, visibility: visibility(true).deps })
+    )!
+    expect(life.mines.value).toEqual([])
+    await life.start()
+    expect(life.mines.value.map((m) => [m.mine.id, m.crew])).toEqual([
+      [MORIA, 1],
+      [EREBOR, 0]
+    ])
+    host.push([frame(11, 'mine.removed', { mineId: MORIA, removedAt: 11 })])
+    expect(life.mines.value.map((m) => m.mine.id)).toEqual([EREBOR])
+    scope.stop()
+  })
 })

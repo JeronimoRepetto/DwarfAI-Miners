@@ -202,9 +202,20 @@ describe('machine 20 diagram conformance', () => {
         dwarfs: [dwarfWire(DAIN, MORIA, { status: 'working' })]
       })
     ).toBe('sessions-working')
-    // The tracker takes facts only: a snapshot, a frame, a show or a hide.
+    // The tracker takes facts only: a snapshot, a frame, a show or a hide. AMENDED for ISSUE-288: it also reads out
+    // the live mines (`mines`, the picker's list), a read like `chambers`, never an input.
     expect(Object.keys(life).sort()).toEqual(
-      ['applyFrame', 'applySnapshot', 'chambers', 'hide', 'last', 'show', 'shown', 'state'].sort()
+      [
+        'applyFrame',
+        'applySnapshot',
+        'chambers',
+        'hide',
+        'last',
+        'mines',
+        'show',
+        'shown',
+        'state'
+      ].sort()
     )
   })
 
@@ -303,5 +314,21 @@ describe('machine 20 diagram conformance', () => {
     // A rejected step leaves the state as it was.
     const life = lifeFrom({ minesEverKnown: true, mines: [mineWire(MORIA)], dwarfs: [] })
     expect(life.state).toBe('no-sessions')
+  })
+  it('[US-VETA-003.AC05, S22.07] every live mine is listed with its present crew, those without a chamber included', () => {
+    const life = lifeFrom({
+      minesEverKnown: true,
+      mines: [mineWire(MORIA), mineWire(EREBOR)],
+      dwarfs: [dwarfWire(BORIN, MORIA), dwarfWire(DAIN, MORIA, { presence: 'walking-out' })]
+    })
+    // Erebor has nobody at work and so no chamber; the picker reaches it all the same.
+    expect(life.chambers.map((c) => c.mine.id)).toEqual([MORIA])
+    expect(life.mines.map((m) => [m.mine.id, m.crew])).toEqual([
+      [MORIA, 1],
+      [EREBOR, 0]
+    ])
+    // A removed mine is no longer live.
+    life.applyFrame(frame(11, 'mine.removed', { mineId: EREBOR, removedAt: 11 }))
+    expect(life.mines.map((m) => m.mine.id)).toEqual([MORIA])
   })
 })
