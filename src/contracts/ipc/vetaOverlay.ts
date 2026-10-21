@@ -1,6 +1,7 @@
 // The window an open Veta overlay grows to (ADR-025 item 2; 07 N-25; 14 §3.9 `VetaLayoutRequest {kind:'overlay'}`;
-// ISSUE-288). Pure; shared by UI main, which places the window, and the Veta renderer, which lays the island and the
-// overlay out inside it, so the two agree and the island never moves on the screen.
+// ISSUE-288). Pure. UI main places the window by it; the Veta renderer pins the island and the overlay inside the
+// window by the same rule (`VetaApp`: each against its edge and the anchored end), so the island never moves on the
+// screen while the window grows around it.
 //
 // The overlay (the grip menu, the mine picker; its `width` × `height` include its gap to the island) sits beside the
 // island on the screen side, away from the docked edge (DS/docs/screens/veta.md: menus open toward the screen), and

@@ -9,8 +9,9 @@
 //   S21.15); `dock-key` docks it to the named edge keeping its end and offset (S21.11); `island-resize` re-places it for
 //   its new length, saving nothing (S21.19), which is also how the renderer puts it back after a cancelled drag
 //   (S21.10); `overlay` (ISSUE-288; 07 N-25; ADR-025 item 2) grows the window before a menu or the mine picker shows,
-//   toward the screen and aligned to the island's anchored end (`vetaOverlayFrame`, by which the renderer lays them
-//   out too), so the island never moves on the screen, and `null` shrinks it back once the overlay closed. An overlay
+//   toward the screen and aligned to the island's anchored end (`vetaOverlayFrame`; the renderer pins the island and
+//   the overlay by the same rule), so the island never moves on the screen, and `null` shrinks it back once the
+//   overlay closed. An overlay
 //   is never saved, and a drag forgets it (the renderer closes it silently, S22.17). The other kinds answer
 //   `applied: false` until their issue builds them.
 // - A landing whose bounds the OS refused (the read-back differs, `dockingAvailable` false) puts the island back where

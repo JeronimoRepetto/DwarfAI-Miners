@@ -3,15 +3,15 @@ import { vetaOverlayFrame } from './vetaOverlay'
 
 /*
  * ISSUE-288 (TC-288-04; ADR-025 item 2; 07 N-25; 14 §3.9 `VetaLayoutRequest {kind:'overlay'}`): the window an open
- * overlay grows Veta to, shared by UI main (which places it) and the Veta renderer (which lays the island and the
- * overlay out inside it), so the two agree and the island never moves on the screen.
+ * overlay grows Veta to, which UI main places the window by; the Veta renderer pins the island and the overlay inside
+ * it by the same rule, so the island never moves on the screen.
  */
 
 const ISLAND = { length: 120, thickness: 52 }
 const MENU = { width: 200, height: 160 }
 
 describe('the Veta overlay frame', () => {
-  it('[ADR-025, N-25] an overlay sits beside the island on the screen side, aligned to its anchored end, on every edge', () => {
+  it('[ADR-025, S22.01] an overlay sits beside the island on the screen side, aligned to its anchored end, on every edge', () => {
     // Bottom edge, anchored at the end (right): the overlay above, both flush right.
     expect(vetaOverlayFrame({ edge: 'bottom', end: 'end' }, ISLAND, MENU)).toEqual({
       width: 200,

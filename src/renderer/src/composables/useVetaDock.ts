@@ -9,6 +9,8 @@
  *   stands; a failed call puts the island back the same way as a cancel.
  * - `restore` (a cancelled drag, S21.10): UI main re-places the island at its place for its length (`island-resize`),
  *   saving nothing.
+ * - `click` (a press released under the threshold, S21.05): the grip's click, handed to `onClick`, which opens the
+ *   grip menu (07 S22.01; ISSUE-288).
  * - Arrow keys on the focused grip dock to the named edge (S21.11); the edge it is on already does nothing.
  * - A-N28: UI main re-placed Veta after a display change; the place is taken at once and a drag in progress is
  *   cancelled (FM-112). A-N12: after Reset metrics the renderer re-reads `vetaDock` (A-N20) and takes its stored place

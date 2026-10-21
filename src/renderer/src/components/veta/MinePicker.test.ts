@@ -144,9 +144,8 @@ describe('the mine picker', () => {
     await openPicker(world)
     expect(shownOverlay()).toBe('picker')
     // A press on the window outside the picker (here, on the island) closes it.
-    world.root
-      .get('[data-veta-island]')
-      .element.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }))
+    const island = document.querySelector('[data-veta-island]')!
+    island.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }))
     await flushPromises()
     expect(shownOverlay()).toBe('none')
     expect(document.activeElement).toBe(grip)
