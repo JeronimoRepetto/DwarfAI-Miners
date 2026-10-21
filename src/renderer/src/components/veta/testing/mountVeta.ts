@@ -4,6 +4,7 @@
  * can be held back to see what shows before the window has grown. Never imported by production code (R14).
  */
 import type {
+  HostFrame,
   MoveToModeParams,
   UiSessionPatch,
   UiSessionSnapshot,
@@ -62,6 +63,8 @@ export interface VetaWorld {
   risenAtLayout: string[]
   /** Every A-N18 patch the page sent. */
   patches: UiSessionPatch[]
+  /** Relays Host frames to the page as UI main does over A-N02 (ISSUE-292), then lets it settle. */
+  push(frames: HostFrame[]): Promise<void>
   unmount(): void
 }
 
@@ -93,6 +96,7 @@ export async function mountVeta(
   const heldRises: Array<() => void> = []
   const risenAtLayout: string[] = []
   const patches: UiSessionPatch[] = []
+  const hostListeners = new Set<(frames: HostFrame[]) => void>()
   const matchMedia = window.matchMedia
   if (options.motion !== true) {
     window.matchMedia = ((query: string) => ({
@@ -108,7 +112,10 @@ export async function mountVeta(
   }
   ;(window as unknown as { api: unknown }).api = createFakeWindowApi({
     getHostSnapshot: () => Promise.resolve(snapshotPage(10, data)) as never,
-    onHostEvent: () => () => undefined,
+    onHostEvent: (listener) => {
+      hostListeners.add(listener as (frames: HostFrame[]) => void)
+      return () => hostListeners.delete(listener as (frames: HostFrame[]) => void)
+    },
     getUiSession: () =>
       Promise.resolve({
         drafts: {},
@@ -176,6 +183,10 @@ export async function mountVeta(
     },
     risenAtLayout,
     patches,
+    async push(frames) {
+      for (const listener of [...hostListeners]) listener(frames)
+      await flushPromises()
+    },
     unmount() {
       root.unmount()
       clock.dispose()

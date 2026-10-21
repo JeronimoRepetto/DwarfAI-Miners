@@ -10,7 +10,8 @@
  *   `resuming` after a Host restart, and one listed unrecovered, count as present (ADR-032 D7, S2.10).
  * - `all-idle`: dwarfs are present and none works or asks; every chamber stays.
  * - `sessions-working`: a present dwarf works or asks; a chamber holding an asking dwarf is lit and that dwarf shows
- *   "?" (attention level 1). Mines keep their first-seen order: a needing mine never jumps to the front.
+ *   "?" (attention level 1). Chambers keep the order they opened in, a new one last (S26.05): a needing mine never
+ *   jumps to the front.
  *
  * `createVetaLife` tracks the facts the way the read model hands them over (a snapshot replaces them whole; a frame
  * changes one record) and names every step by its 07 id. Facts that arrive while the window is not shown are tracked
@@ -189,16 +190,28 @@ export function createVetaLife(): VetaLife {
     if (!dwarfOrder.includes(id)) dwarfOrder.push(id)
   }
 
+  /*
+   * The chambers in the order they opened (07 S26.05; ISSUE-292): a mine's chamber opens last, at the far end, whatever
+   * its place in the Host's list, and keeps its place while it stays open. A chamber that closes leaves the order; one
+   * that opens again opens last. The first chambers known open in mine order.
+   */
+  const chamberOrder: MineId[] = []
+
   function drawChambers(): readonly VetaChamberView[] {
     const present = dwarfOrder
       .map((id) => dwarfs.get(id))
       .filter((d): d is DwarfWire => d !== undefined && isPresent(d))
-    return mineOrder.flatMap((mineId) => {
+    const views = new Map<MineId, VetaChamberView>()
+    for (const mineId of mineOrder) {
       const mine = mines.get(mineId)
       const crew = present.filter((d) => d.mineId === mineId)
-      if (mine === undefined || crew.length === 0) return []
-      return [{ mine, dwarfs: crew, attention: crew.some((d) => d.status === 'asking') }]
-    })
+      if (mine === undefined || crew.length === 0) continue
+      views.set(mineId, { mine, dwarfs: crew, attention: crew.some((d) => d.status === 'asking') })
+    }
+    const kept = chamberOrder.filter((mineId) => views.has(mineId))
+    const opened = mineOrder.filter((mineId) => views.has(mineId) && !kept.includes(mineId))
+    chamberOrder.splice(0, chamberOrder.length, ...kept, ...opened)
+    return chamberOrder.map((mineId) => views.get(mineId)!)
   }
 
   function settle(cause: LifeCause): void {
