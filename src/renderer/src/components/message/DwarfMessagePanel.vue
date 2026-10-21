@@ -64,6 +64,7 @@ import {
   t,
   type DwarfId,
   type DwarfNameRefusal,
+  type ChatViewState,
   type MessageId
 } from '@dwarfai/contracts'
 import { captureChatView, restoredScrollTop } from '../../lib/chat/chatViewState'
@@ -212,6 +213,11 @@ const props = defineProps<{
    * `ModeTransition.slot`). The Panel by default.
    */
   hostedIn?: 'panel' | 'veta'
+  /**
+   * Where the log opens instead of its latest message: a chat view carried into this window (ISSUE-293; ADR-024 item 3;
+   * INV-114), read on the frame the panel opens on. Absent, the log opens on its latest message.
+   */
+  openAt?: ChatViewState['scrollAnchor']
 }>()
 
 const emit = defineEmits<{
@@ -750,8 +756,14 @@ async function showLatest(): Promise<void> {
   )
   const list = conversationRef.value
   if (list === null) return
-  list.scrollTop = list.scrollHeight
+  // A chat view carried here opens where it was (ISSUE-293): the anchored message at its offset, else the bottom.
+  const anchor = restoredAnchor ?? props.openAt
+  list.scrollTop =
+    anchor === undefined ? list.scrollHeight : restoredScrollTop(anchor, list, messageBoxesOf(list))
 }
+
+/** The scroll anchor a hand-off restored before the panel's opening frame, which that frame keeps (ISSUE-293). */
+let restoredAnchor: ChatViewState['scrollAnchor'] | undefined
 
 onMounted(showLatest)
 
@@ -782,6 +794,7 @@ const stopHandoff = modeTransitionPart().register({
   },
   restore: ({ draft, view }) => {
     message.value = draft
+    if (view !== null) restoredAnchor = view.scrollAnchor
     void nextTick(() => {
       const list = conversationRef.value
       if (list !== null && view !== null) {

@@ -165,8 +165,12 @@ function captureView(): ChatViewState {
   )
 }
 
+/** The scroll anchor the next chat opens on (S24.01, S24.18): the panel keeps it through its opening frame. */
+const openAt = ref<ChatViewState['scrollAnchor'] | undefined>(undefined)
+
 /** Puts a stored view state back once the panel is drawn. */
 async function restoreView(view: ChatViewState | null): Promise<void> {
+  openAt.value = view?.scrollAnchor
   await nextTick()
   if (view === null) return
   const log = list()
@@ -212,6 +216,7 @@ defineExpose({ play, focusContent, captureView, restoreView })
       :stop-disabled="dock.stopDisabled(dock.selectedDwarf.value.id)"
       :answer-state="dock.questionState.byDwarfId[dock.selectedDwarf.value.id]"
       hosted-in="veta"
+      :open-at="openAt"
       @open-in-panel="emit('open-in-panel')"
       @draft="emit('draft', dock.selectedDwarf.value.id, $event)"
       @send="dock.sendText(dock.selectedDwarf.value, $event)"

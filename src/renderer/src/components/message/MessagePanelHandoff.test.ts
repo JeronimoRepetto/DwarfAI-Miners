@@ -224,4 +224,41 @@ describe('MessagePanel chat hand-off (ISSUE-284)', () => {
     expect(scrollTop).toBe(900)
     carried = { draft: '', selection: { start: 0, end: 0, direction: 'none' } }
   })
+
+  it('[INV-114, S24.18] a panel opened on a carried scroll anchor opens there, never pulled to the bottom a frame later', async () => {
+    const id = (n: number) =>
+      `01920000-0000-7000-8000-00000000e${String(n).padStart(3, '0')}` as MessageId
+    const view = (n: number): MessageView => ({
+      id: id(n),
+      dwarfId: DWARF,
+      role: 'dwarf',
+      text: `line ${n}`,
+      attachments: [],
+      providerTime: null,
+      createdAt: 1_791_277_200_000 + n * 60_000
+    })
+    const feed = { readable: true, messages: [1, 2, 3, 4, 5, 6].map((n) => feedMessageOf(view(n))) }
+    let scrollTop = 0
+    const wrapper = mount(DwarfMessagePanel, {
+      props: { dwarf, feed, openAt: { messageId: id(4), offsetPx: 20 } },
+      attachTo: document.body
+    })
+    // Laid out before the frame the panel opens on: rows 100 px tall in a list 100 px high.
+    const list = wrapper.get('.dm-msg__log').element as HTMLElement
+    Object.defineProperty(list, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => void (scrollTop = value)
+    })
+    Object.defineProperty(list, 'scrollHeight', { configurable: true, value: 600 })
+    Object.defineProperty(list, 'clientHeight', { configurable: true, value: 100 })
+    list.getBoundingClientRect = () => ({ top: 0 }) as DOMRect
+    await wrapper.vm.$nextTick()
+    ;[...list.querySelectorAll<HTMLElement>('[data-message-id]')].forEach((bubble, i) => {
+      bubble.getBoundingClientRect = () => ({ top: i * 100 - scrollTop }) as DOMRect
+    })
+    await vi.advanceTimersByTimeAsync(50)
+    await flushPromises()
+    expect(scrollTop).toBe(320)
+  })
 })
