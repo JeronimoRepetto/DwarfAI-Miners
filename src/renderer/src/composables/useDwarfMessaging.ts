@@ -625,8 +625,10 @@ function chatsOf(chunks: readonly SnapshotChunk[]): HostChats {
   for (const chunk of chunks) {
     if (chunk.section !== 'tails') continue
     for (const tail of chunk.data) {
+      // The Host reads a chat newest first (16 §4.6, `sort_at DESC, id DESC`); a chat is held oldest first, as the
+      // `conversation.appended` frames build it, so the snapshot's tail is folded in from its oldest row (ISSUE-293).
       next.set(tail.dwarfId, {
-        rows: new Map(tail.messages.map((message) => [message.id, message])),
+        rows: new Map([...tail.messages].reverse().map((message) => [message.id, message])),
         reachedStart: tail.reachedStart
       })
     }
