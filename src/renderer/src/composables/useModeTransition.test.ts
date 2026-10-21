@@ -404,3 +404,49 @@ describe('the window part of a run (ISSUE-284)', () => {
     }
   })
 })
+
+/*
+ * ISSUE-295: a run into the Panel that carries no chat lands on the mine the session store names as the Panel's current
+ * mine (07 S27.01 "the Panel opens on the named mine"; S22.13). A-N14 carries no mine of its own (14 §3.9), so the
+ * target reads `currentMine.panel` (A-N17) and opens it before its content shows.
+ */
+
+/** Lets the session read and the restore it gates settle. */
+const settled = async (): Promise<void> => {
+  for (let i = 0; i < 6; i++) await Promise.resolve()
+}
+
+describe('useModeTransition — a run into the Panel naming a mine (ISSUE-295)', () => {
+  it('[US-VETA-010.AC03, S22.13, S27.01] a run into the Panel with no chat opens the mine the session store names for the Panel before its content shows', async () => {
+    const { push, events, clock, transition } = setup({ session: { currentMine: { panel: MINE } } })
+    const opened: MineId[] = []
+    transition.onMineArrival((mineId) => {
+      events.push(`mine ${mineId}`)
+      opened.push(mineId)
+    })
+    push({ from: 'veta', to: 'panel', role: 'target' })
+    await settled()
+    clock.advance(16)
+    expect(opened).toEqual([MINE])
+    // Opened while veiled: the mine shows with the content, never a frame after it.
+    expect(events.indexOf(`mine ${MINE}`)).toBeLessThan(events.indexOf('veil false'))
+  })
+
+  it('[S27.01] a run naming no mine for the Panel, or into another mode, opens no mine and still plays', async () => {
+    const none = setup()
+    const opened: MineId[] = []
+    none.transition.onMineArrival((mineId) => opened.push(mineId))
+    none.push({ from: 'hidden', to: 'panel', role: 'target' })
+    await settled()
+    none.clock.advance(16)
+    expect(none.events).toContain('veil false')
+
+    const veta = setup({ session: { currentMine: { panel: MINE } } })
+    veta.transition.onMineArrival((mineId) => opened.push(mineId))
+    veta.push({ from: 'panel', to: 'veta', role: 'target' })
+    await settled()
+    veta.clock.advance(16)
+    expect(veta.events).toContain('veil false')
+    expect(opened).toEqual([])
+  })
+})

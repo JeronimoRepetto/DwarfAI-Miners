@@ -18,6 +18,8 @@
  * progress is ended, so what it held travels as draft text (S9.02, US-DLG-006.AC03). A target carrying a chat first
  * opens it (`onArrival`: the Panel's mine column and chat), and restores the draft and view into that chat alone. A
  * window that hears the carried chat after landing (`onLanded`: Veta's rise, S24.18) is told M + 60 ms after `t0`. A
+ * run into the Panel carrying no chat opens the mine the session store names as the Panel's current mine
+ * (`onMineArrival`, ISSUE-295; S27.01, S22.13), since A-N14 carries no mine of its own. A
  * window that left a run (`onLeft`) is told once its source half ended, its content veiled: a hidden frameless window
  * does not reliably report itself hidden, so this is when Veta folds its risen chat (S24.14).
  * Under reduced motion both halves last 0 ms and the answer goes at `t0` (S27.06, NFR-TIM-02). An
@@ -29,6 +31,7 @@
 import type {
   ChatViewState,
   DwarfId,
+  MineId,
   ModeTransition,
   UiSessionPatch,
   UiSessionSnapshot
@@ -84,6 +87,11 @@ export interface ModeTransitionPart {
   register(handoff: ChatHandoff): () => void
   /** Opens the carried chat in this window before its draft and view are restored; answers the unregister. */
   onArrival(open: (chat: CarriedChat) => Promise<void> | void): () => void
+  /**
+   * Opens the mine the session store names for this window's host (`currentMine`) when a run with no chat lands here,
+   * before the content shows (S27.01, S22.13); answers the unregister.
+   */
+  onMineArrival(open: (mineId: MineId) => void): () => void
   /** Hears the carried chat once this window landed as a run's target; answers the unregister. */
   onLanded(hear: (chat: CarriedChat) => void): () => void
   /** Hears each run this window left, once its source half ended and its content is veiled; answers the unregister. */
@@ -98,6 +106,7 @@ export function useModeTransition(deps: ModeTransitionDeps): ModeTransitionPart 
   const { bridge, clock } = deps
   let handoff: ChatHandoff | null = null
   let arrival: ((chat: CarriedChat) => Promise<void> | void) | null = null
+  let mineArrival: ((mineId: MineId) => void) | null = null
   let landed: ((chat: CarriedChat) => void) | null = null
   let left: ((t: ModeTransition) => void) | null = null
   /** A carried chat opened here whose panel has not registered yet, and what its registration settles. */
@@ -115,9 +124,23 @@ export function useModeTransition(deps: ModeTransitionDeps): ModeTransitionPart 
     bridge.patchUiSession({ kind: 'chat-view', dwarfId, view: handoff.view() })
   }
 
+  /**
+   * S27.01, S22.13 (ISSUE-295): a run into the Panel with no chat opens on the mine the session store names as the
+   * Panel's current mine — A-N14 carries no mine of its own (14 §3.9), so a hand-off that names one writes it there first.
+   */
+  async function openNamedMine(t: ModeTransition): Promise<void> {
+    if (t.to !== 'panel' || mineArrival === null) return
+    try {
+      const mineId = (await bridge.getUiSession()).currentMine.panel ?? null
+      if (mineId !== null) mineArrival?.(mineId)
+    } catch {
+      // The session store could not be read: the Panel opens as it is, and the run still plays.
+    }
+  }
+
   async function restore(t: ModeTransition): Promise<void> {
     const chat = t.chat
-    if (chat === undefined) return
+    if (chat === undefined) return openNamedMine(t)
     // S27.01: the window opens on the carried chat first (the Panel's mine column and chat, US-MSG-010.AC01).
     if (handoff?.open() !== chat.dwarfId && arrival !== null) {
       try {
@@ -232,6 +255,12 @@ export function useModeTransition(deps: ModeTransitionDeps): ModeTransitionPart 
         if (arrival === open) arrival = null
       }
     },
+    onMineArrival(open) {
+      mineArrival = open
+      return () => {
+        if (mineArrival === open) mineArrival = null
+      }
+    },
     onLanded(hear) {
       landed = hear
       return () => {
@@ -306,6 +335,7 @@ export function modeTransitionPart(): ModeTransitionPart {
     return {
       register: () => () => {},
       onArrival: () => () => {},
+      onMineArrival: () => () => {},
       onLanded: () => () => {},
       onLeft: () => () => {},
       dispose: () => {}
@@ -315,6 +345,7 @@ export function modeTransitionPart(): ModeTransitionPart {
   shared = {
     register: (handoff) => part.register(handoff),
     onArrival: (open) => part.onArrival(open),
+    onMineArrival: (open) => part.onMineArrival(open),
     onLanded: (hear) => part.onLanded(hear),
     onLeft: (hear) => part.onLeft(hear),
     dispose: () => {

@@ -1,6 +1,8 @@
-import { reactive } from 'vue'
+import type { MineId, UiSessionPatch, UiSessionSnapshot } from '@dwarfai/contracts'
+import { reactive, watch } from 'vue'
 import { defaultViewState, parseLaunchView } from '../types'
 import type { LaunchView, ShellArea } from '../types'
+import { modeTransitionPart, type ModeTransitionPart } from './useModeTransition'
 
 // Singleton store: module-scope state shared by every useView() caller
 // (house style shared with useMines and a sibling Vue project).
@@ -43,6 +45,8 @@ export function useView() {
   function clear(): void {
     Object.assign(state, defaultViewState())
     launchMine = null
+    stopFollowing?.()
+    stopFollowing = null
   }
 
   return { state, openMine, closeMine, showArea, showMap, showMines, syncWithMines, clear }
@@ -65,18 +69,89 @@ let launchMine: string | null = null
  * `takeLaunchMine` for App to ask once the board and the projects are read — opening it first and
  * closing it a moment later would show the person a mine that is not there. A bridge that cannot
  * answer opens the default view: a launch is never worth failing over.
+ *
+ * ISSUE-295: with the UI session store in reach (the Panel's own `window.api`), the Panel's open mine then follows its
+ * current mine there (`followPanelMine`). A Panel that starts while a hand-off names its mine (07 S22.13: Veta wrote
+ * `currentMine.panel` before asking for the move) waits on that mine instead of the remembered one.
  */
-export async function restoreLaunchView(api: {
-  getLaunchView: () => Promise<LaunchView>
-}): Promise<void> {
-  let view: LaunchView
-  try {
-    view = parseLaunchView(await api.getLaunchView())
-  } catch {
-    view = defaultViewState()
-  }
+export async function restoreLaunchView(
+  api: { getLaunchView: () => Promise<LaunchView> } & Partial<PanelMineBridge>,
+  arrivals?: Pick<ModeTransitionPart, 'onMineArrival'>
+): Promise<void> {
+  const following = sessionBridge(api)
+  const [view, named] = await Promise.all([readLaunchView(api), namedPanelMine(following)])
   Object.assign(state, { area: view.area, mineId: null })
-  launchMine = view.mineId
+  launchMine = named ?? view.mineId
+  if (following !== null) followPanelMine(following, arrivals ?? modeTransitionPart())
+}
+
+async function readLaunchView(api: {
+  getLaunchView: () => Promise<LaunchView>
+}): Promise<LaunchView> {
+  try {
+    return parseLaunchView(await api.getLaunchView())
+  } catch {
+    return defaultViewState()
+  }
+}
+
+/** The UI session store members the Panel's current mine needs (14 §2.2 A-N17, A-N18). */
+export interface PanelMineBridge {
+  getUiSession(): Promise<UiSessionSnapshot>
+  patchUiSession(patch: UiSessionPatch): void
+}
+
+function sessionBridge(api: Partial<PanelMineBridge>): PanelMineBridge | null {
+  const { getUiSession, patchUiSession } = api
+  if (typeof getUiSession !== 'function' || typeof patchUiSession !== 'function') return null
+  return { getUiSession: () => getUiSession(), patchUiSession: (patch) => patchUiSession(patch) }
+}
+
+/** The mine a hand-off named for the Panel (`currentMine.panel`), or null when none did or the store cannot answer. */
+async function namedPanelMine(bridge: PanelMineBridge | null): Promise<string | null> {
+  if (bridge === null) return null
+  try {
+    return (await bridge.getUiSession()).currentMine.panel ?? null
+  } catch {
+    return null
+  }
+}
+
+let stopFollowing: (() => void) | null = null
+
+/**
+ * The Panel's open mine mirrors its current mine in the UI session store (ADR-024 item 1, ADR-033 item 4; ISSUE-295):
+ * a run into the Panel that names a mine opens it in the mine column (07 S22.13, S27.01), and each change of the open
+ * mine is written back, so the store never names a mine the person has since closed. Started once per Panel window;
+ * starting again replaces the earlier one.
+ */
+export function followPanelMine(
+  bridge: PanelMineBridge,
+  arrivals: Pick<ModeTransitionPart, 'onMineArrival'>
+): () => void {
+  stopFollowing?.()
+  const unlisten = arrivals.onMineArrival((mineId) => {
+    state.mineId = mineId
+  })
+  const unwatch = watch(
+    () => state.mineId,
+    (mineId) => {
+      // The renderer's mine ids are the Host's (`MineId`), held as plain strings by the legacy view state.
+      bridge.patchUiSession({
+        kind: 'current-mine',
+        host: 'panel',
+        mineId: mineId as MineId | null
+      })
+    },
+    { flush: 'sync' }
+  )
+  const stop = (): void => {
+    unlisten()
+    unwatch()
+    if (stopFollowing === stop) stopFollowing = null
+  }
+  stopFollowing = stop
+  return stop
 }
 
 /** The remembered mine waiting to be judged, handed over once; null when none is waiting. */
