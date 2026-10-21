@@ -17,7 +17,9 @@
 //   the island the same way (toward the screen, from its anchored end: the window grows away from the anchor corner,
 //   DS/docs/screens/veta.md V4); the larger of the overlay and the risen room holds the window, so a menu opened over a
 //   risen chat never shrinks it. `fold` gives the risen room back once the fold has played; a drag forgets it (S24.14).
-//   Neither is ever saved. The other kinds answer `applied: false` until their issue builds them.
+//   Neither is ever saved. `unfold-overflow` (ISSUE-291; 07 S25.08, S25.11) names the mine whose chamber "+N" unfolds:
+//   the request carries no length, so the renderer grows the window for the longer island first (`island-resize`),
+//   and the unfold is applied at that island, saving nothing.
 // - A landing whose bounds the OS refused (the read-back differs, `dockingAvailable` false) puts the island back where
 //   it was and saves nothing (S21.20); with docking unavailable (native Wayland, S21.16) a drag or an arrow key changes
 //   nothing.
@@ -244,8 +246,10 @@ export function createVetaDockService(deps: VetaDockServiceDeps): VetaDockServic
         putAt(at)
         return result(true)
       }
-      default:
-        return result(false)
+      case 'unfold-overflow': {
+        putAt(at)
+        return result(true)
+      }
     }
   }
 

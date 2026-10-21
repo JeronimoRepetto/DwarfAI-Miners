@@ -197,9 +197,23 @@ describe('the Veta dock in UI main (07 machine 21; UC-045)', () => {
     expect(dock.layout({ kind: 'drag-start', screenX: 100, screenY: 100 }).applied).toBe(false)
     expect(dock.layout({ kind: 'dock-key', edge: 'top' }).applied).toBe(false)
     // The kinds of later issues answer `applied: false` until they are built. AMENDED for ISSUE-288: `overlay` is built.
-    // AMENDED for ISSUE-290: `rise` and `fold` are built (their case is the risen-room one below); `unfold-overflow`
-    // is ISSUE-291's.
-    expect(dock.layout({ kind: 'unfold-overflow', mineId: PRIMARY_MINE }).applied).toBe(false)
+    // AMENDED for ISSUE-290: `rise` and `fold` are built (their case is the risen-room one below). AMENDED for
+    // ISSUE-291: `unfold-overflow` is built too (its case is the next one); every kind of A-N23 is built now.
+  })
+
+  it('[S25.08, S25.11] unfold-overflow is applied at the island the renderer grew for it first, saving nothing', () => {
+    const { dock, store, placed } = world()
+    // The renderer grows the window for the longer run first (`island-resize`), then names the mine it unfolds.
+    dock.layout({ kind: 'island-resize', length: 640 })
+    const unfolded = dock.layout({ kind: 'unfold-overflow', mineId: PRIMARY_MINE })
+    expect(unfolded).toEqual({
+      applied: true,
+      displayKey: PRIMARY.displayKey,
+      dock: { edge: 'bottom', end: 'end', offset: 16 }
+    })
+    // The window stays placed for that island, its anchor corner kept; the unfold is never saved.
+    expect(placed.at(-1)).toEqual({ x: 2560 - 16 - 640, y: 1392 - 72, width: 640, height: 72 })
+    expect(store.load('vetaDock')).toEqual({})
   })
 
   it('[S21.17] Reset metrics moves a shown Veta to the default place, with no onVetaDockChanged', () => {

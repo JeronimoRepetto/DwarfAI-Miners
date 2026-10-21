@@ -41,8 +41,10 @@ export interface VetaWorldOptions {
   motion?: boolean
   /** Holds back each `rise` answer until `answerRises` is called. */
   holdRises?: boolean
-  /** UI main's session store, as A-N17 answers it (ISSUE-290); its drafts and chat views. */
-  session?: Pick<UiSessionSnapshot, 'drafts' | 'chatViews'>
+  /** UI main's session store, as A-N17 answers it (ISSUE-290); its drafts and chat views, the chats talked to. */
+  session?: Partial<UiSessionSnapshot>
+  /** Called with each A-N23 request as UI main receives it, before it answers (ISSUE-291). */
+  onLayout?: (request: VetaLayoutRequest) => void
 }
 
 export interface VetaWorld {
@@ -127,6 +129,7 @@ export async function mountVeta(
     layoutVeta: (request) => {
       const place = options.place ?? VETA_PLACE
       layouts.push(request as VetaLayoutRequest)
+      options.onLayout?.(request as VetaLayoutRequest)
       if (request.kind === 'rise' || request.kind === 'fold') {
         risenAtLayout.push(`${request.kind}:${shownRisen()}`)
         if (request.kind === 'rise' && options.holdRises === true) {
