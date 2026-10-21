@@ -27,7 +27,7 @@ const LEGACY_SIDE = /^src\/(main|shared|legacy-bridge)\//
 const LEGACY_TREE = /^src\/(main|shared)(\/|$)/
 
 /** Roots that hold code; generated output and dependencies are not walked. */
-const ROOTS = ['src', 'e2e', 'scripts', 'perf', 'fixtures', 'spikes', 'lint-canaries']
+const ROOTS = ['src', 'e2e', 'scripts', 'perf', 'fixtures', 'lint-canaries']
 const SKIPPED_DIRS = new Set(['node_modules', 'out', 'dist', '.git'])
 const CODE_FILE = /\.(ts|tsx|mts|cts|js|mjs|cjs|vue)$/
 

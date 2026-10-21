@@ -57,7 +57,14 @@ import { belongsToComposition } from '../../lib/controls/input'
 import { dwarfDisplayName } from '../../lib/dwarf/displayName'
 import { untrustedText } from '../../lib/text/untrustedText'
 import { launcherLabel } from '../../lib/message/launcherLabel'
-import { cleanDwarfName, filterDwarfName, type DwarfNameRefusal } from '@dwarfai/contracts'
+import {
+  cleanDwarfName,
+  filterDwarfName,
+  type DwarfId,
+  type DwarfNameRefusal
+} from '@dwarfai/contracts'
+import { captureChatView, restoredScrollTop } from '../../lib/chat/chatViewState'
+import { modeTransitionPart } from '../../composables/useModeTransition'
 import type { AskAnswer } from '../../lib/question/questionAnswer'
 import { shownAskOf } from '../../lib/message/askCard'
 import { useDwarfQuestion } from '../../composables/useDwarfQuestion'
@@ -724,6 +731,43 @@ async function showLatest(): Promise<void> {
 }
 
 onMounted(showLatest)
+
+/*
+ * The chat this panel holds travels with a mode transition run (ISSUE-284; ADR-025 item 3; ADR-024 item 3; 07 machine
+ * 9): as the source of a run it hands its draft and its view state to the UI-main session store before t0; as the
+ * target it takes them back before its content shows. The conversation rows carry no message id yet (the feed names
+ * none, lib/message/conversation.ts), so the scroll anchor is the bottom; the composer's caret and selection travel
+ * whole.
+ */
+const composerField = (): HTMLTextAreaElement | null =>
+  composerRef.value?.querySelector('textarea') ?? null
+const stopHandoff = modeTransitionPart().register({
+  open: () => props.dwarf.id as DwarfId,
+  draft: () => message.value,
+  view: () => {
+    const list = conversationRef.value
+    return captureChatView(
+      list ?? { scrollTop: 0, scrollHeight: 0, clientHeight: 0 },
+      [],
+      composerField()
+    )
+  },
+  restore: ({ draft, view }) => {
+    message.value = draft
+    void nextTick(() => {
+      const list = conversationRef.value
+      if (list !== null && view !== null) {
+        list.scrollTop = restoredScrollTop(view.scrollAnchor, list, [])
+      }
+      const field = composerField()
+      if (field !== null && view?.selection !== undefined) {
+        const { start, end, direction } = view.selection
+        field.setSelectionRange(start, end, direction)
+      }
+    })
+  }
+})
+onUnmounted(stopHandoff)
 
 /*
  * The row list growing on its own — a re-read landing, or the poll finding new activity. Two

@@ -9,14 +9,13 @@
 [![CI](https://github.com/JeronimoRepetto/DwarfAI-Miners/actions/workflows/ci.yml/badge.svg)](https://github.com/JeronimoRepetto/DwarfAI-Miners/actions/workflows/ci.yml)
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-4a5568?style=flat-square)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-4a5568?style=flat-square)
-[![Ko-fi](https://img.shields.io/badge/Ko--fi-support%20the%20project-FF5E5B?style=flat-square&logo=kofi&logoColor=white)](https://ko-fi.com/jeronimorepetto)
+[![XERJ Corpus Hub contributor](https://hub.xerj.org/contributors/JeronimoRepetto/badge.svg)](https://hub.xerj.org/contributors/JeronimoRepetto)
 
 ![Electron](https://img.shields.io/badge/Electron-47848F?style=flat-square&logo=electron&logoColor=white)
 ![Vue 3](https://img.shields.io/badge/Vue%203-4FC08D?style=flat-square&logo=vuedotjs&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white)
 ![Vitest](https://img.shields.io/badge/Vitest-6E9F18?style=flat-square&logo=vitest&logoColor=white)
 ![pnpm](https://img.shields.io/badge/pnpm-F69220?style=flat-square&logo=pnpm&logoColor=white)
-
 </div>
 
 DwarfAI-Miners shows the AI coding sessions on your computer as dwarfs working in mines. A **mine**
@@ -38,13 +37,16 @@ DwarfAI-Miners has been rebuilt from the ground up. The app is now two parts:
 - the **window**, an Electron client of the Host. Closing it never ends a session; the Host keeps
   running, with its tray icon, until you choose **Stop everything and quit…** in the tray menu.
 
-**There is no public release of the rebuilt app yet.** The first public release is v1, and the
-work it still needs is open in EPIC-17 (packaging and distribution): the release job with
-`SHA256SUMS`, macOS signing and notarization in the release pipeline, and the release checklist.
-Until then every build is internal. To try the app today, [run it from source](#run-from-source).
+**[v0.20.0](https://github.com/JeronimoRepetto/DwarfAI-Miners/releases/tag/v0.20.0) is the first
+preview of the rebuilt app.** It has installers for Windows, macOS and Linux, plus `SHA256SUMS`.
+The builds are not signed yet, so Windows SmartScreen and macOS Gatekeeper ask before the first
+open; the release notes say how to get past them. The work still open before v1 is in EPIC-17
+(packaging and distribution): signing and notarization in the release pipeline, the release job
+and the release checklist. You can also [run it from source](#run-from-source).
 
-The releases on the [Releases page](https://github.com/JeronimoRepetto/DwarfAI-Miners/releases),
-v0.13.1 and earlier, are the previous app, not this one. No new release is published before v1.
+The releases v0.13.1 and earlier on the
+[Releases page](https://github.com/JeronimoRepetto/DwarfAI-Miners/releases) are the previous app,
+not this one.
 
 <p align="center"><img src="docs/readme/plates/highlights.png" width="644" alt="Section plate: Highlights"></p>
 

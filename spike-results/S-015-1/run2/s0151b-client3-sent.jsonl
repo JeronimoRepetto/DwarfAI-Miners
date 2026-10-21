@@ -1,3 +1,0 @@
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"spike-3","version":"0.0.1"}}}
-{"jsonrpc":"2.0","method":"initialized","params":{}}
-{"jsonrpc":"2.0","id":2,"method":"thread/resume","params":{"threadId":"00000000-0000-4000-8000-000000000001"}}

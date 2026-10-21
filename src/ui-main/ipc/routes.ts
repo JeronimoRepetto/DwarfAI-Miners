@@ -58,6 +58,19 @@ const uiLocalNew = (channel: IpcChannelName): ChannelRoute => ({
 })
 
 /**
+ * A NEW Veta row born `ui-local` in the PR of the issue that declares it (22 §5, revised 2026-09-30; ISSUE-284 for
+ * A-N13…A-N15): Veta and Valle are not cuts, so the row is routed from the release it ships in; no legacy code exists
+ * for it, so parity does not apply.
+ */
+const uiLocalVetaNew = (channel: IpcChannelName): ChannelRoute => ({
+  channel,
+  owner: 'ui-local',
+  since: 'cut-5',
+  parity: 'n/a',
+  shape: 'target'
+})
+
+/**
  * A row the cut-1 switch moved to the Host (21 §2 cut 1 "New core serves" H) with its target shape: `passed` because
  * its parity evidence is recorded in `docs/strangler/parity-cut-1.md` (the observer and board parity suites, the
  * legacy-row parity through the bridges, its L6 contract suite and the cut-1 E2E cases; 21 §1 item 3).
@@ -417,6 +430,9 @@ export const ROUTES: readonly ChannelRoute[] = [
   hostCut1('host:snapshot'), // A-N01
   hostCut1('host:event'), // A-N02
   uiLocalCut1New('mode:revealDwarfChat'), // A-N16, replacing A-P5
+  uiLocalVetaNew('mode:move'), // A-N13 (ISSUE-284)
+  uiLocalVetaNew('mode:transition'), // A-N14 (ISSUE-284)
+  uiLocalVetaNew('mode:transition:done'), // A-N15 (ISSUE-284)
   uiLocalCut1New('ui:session:get'), // A-N17
   uiLocalCut1New('ui:session:patch'), // A-N18
   uiLocalCut1New('ui:session:changed'), // A-N19

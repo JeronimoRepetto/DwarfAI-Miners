@@ -5,8 +5,8 @@
 // until v1 (21 §2: "otherwise the candidate behaviour stays and the entry lands before v1"), so UI main composes no
 // `ElectronAutostart`, applies no "Start with the system" at a start, and A-N20 / A-N21 do not offer the key (hidden
 // until built, 21 §1 item 8). The candidate writer is UI main's shell start (window/application/candidateAutostart.ts,
-// composed by the root only where this gate is closed). Once `spike-results/S-027-4.md` records a pass on an OS, its
-// entry here turns `true`, which also switches that OS's candidate writer off (21 §1 item 4: one writer per entry).
+// composed by the root only where this gate is closed). Once S-027-4 passes on an OS, its
+// entry here turns `true` in the same change as its test expectation, which also switches that OS's candidate writer off (21 §1 item 4: one writer per entry).
 export type LoginEntryPlatform = 'win32' | 'darwin' | 'linux'
 
 export const LOGIN_ENTRY_PASSED: Readonly<Record<LoginEntryPlatform, boolean>> = {

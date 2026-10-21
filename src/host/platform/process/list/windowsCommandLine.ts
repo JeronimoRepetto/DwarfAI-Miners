@@ -1,6 +1,6 @@
 // A Windows command line split the way the C runtime splits it, enough to name a stem: double
 // quotes group, a backslash is literal unless it precedes a quote. Adopted from spike S-014-1
-// (`spikes/S-014-1/pidSource.ts`).
+// (the S-014-1 spike harness).
 export function splitWindowsCommandLine(line: string): string[] {
   const args: string[] = []
   let current = ''

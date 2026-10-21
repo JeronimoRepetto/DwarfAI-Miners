@@ -1,7 +1,7 @@
 // The Claude `stream-json` driver's capability row (15 §3 row C2) and its probe reading (15 §2.3,
 // ADR-009 D4). Every UNVERIFIED `U→x` value of row C2 is held at its in-force `x` (INV-44) until
 // its spike records a measured value. Recorded for Claude Code 2.1.301 on Windows (ISSUE-321,
-// `spike-results/`): `launch` (SP-08), `earlyFailure` (S-020-1), `resume` (SP-15). Still at their
+// the spike records): `launch` (SP-08), `earlyFailure` (S-020-1), `resume` (SP-15). Still at their
 // in-force values: `interrupt`, `question` (ADR-009 D4), `reactionEvidence` (S-022-1),
 // `subagents`. `permission` (AMENDMENT-21, owner-approved 2026-10-17): the Host serves
 // `mcp__dwarfai__permission` on the relay every launch carries, so SP-08's prompt-tool channel
@@ -11,11 +11,11 @@ import type { ProviderCapabilities } from '../../../domain/capabilities'
 
 /** The spike records this driver's capability values follow; each is a committed record. */
 export interface SpikeRecords {
-  /** `spike-results/SP-08.md`, passed: `--permission-prompt-tool` present and routing. */
+  /** spike SP-08, passed: `--permission-prompt-tool` present and routing. */
   readonly sp08: boolean
-  /** `spike-results/S-020-1.md`, passed: readiness is `system/init`, after the first stdin line. */
+  /** spike S-020-1, passed: readiness is `system/init`, after the first stdin line. */
   readonly s0201: boolean
-  /** `spike-results/SP-15.md` (Claude stream-json part passed): `--resume <id>` keeps the id. */
+  /** spike SP-15 (Claude stream-json part passed): `--resume <id>` keeps the id. */
   readonly sp15: boolean
 }
 

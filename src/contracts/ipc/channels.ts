@@ -88,6 +88,9 @@ import {
   confirmStopEverythingSchema,
   consoleOpenResultSchema,
   hostConnectionViewSchema,
+  modeTransitionDoneSchema,
+  modeTransitionSchema,
+  moveToModeParamsSchema,
   openCodeSettingsViewSchema,
   rendererDiagnosticSchema,
   revealDwarfChatPushSchema,
@@ -805,6 +808,33 @@ export const CHANNELS = {
     status: 'new',
     request: none,
     response: revealDwarfChatPushSchema
+  },
+  // A-N13 `moveToMode`, A-N14 `onModeTransition`, A-N15 `modeTransitionDone` (ADR-025 item 3; 07 machine 27;
+  // AMENDMENT-10, OQ-78): every move between mode windows is one run of UI main's `ModeCoordinator`; A-N13 answers when
+  // the move that carries it settles, `INTERNAL` only when the target window cannot be shown (ISSUE-284). Ids only
+  'mode:move': {
+    name: 'mode:move',
+    kind: 'invoke',
+    placement: 'ui-local',
+    status: 'new',
+    request: moveToModeParamsSchema,
+    response: ipcVoidResultSchema
+  },
+  'mode:transition': {
+    name: 'mode:transition',
+    kind: 'push',
+    placement: 'ui-local',
+    status: 'new',
+    request: none,
+    response: modeTransitionSchema
+  },
+  'mode:transition:done': {
+    name: 'mode:transition:done',
+    kind: 'send',
+    placement: 'ui-local',
+    status: 'new',
+    request: modeTransitionDoneSchema,
+    response: none
   },
   // A-N31 `setClaudeHooksEnabled` (AMENDMENT-7, OQ-68; ADR-016 items 5–7): Settings → Integrations "Claude Code ·
   // instant updates", the equivalent of A-53 for the Claude hook entry; relays B-M39 `preferences.setClaudeHooks`

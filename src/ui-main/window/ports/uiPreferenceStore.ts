@@ -42,6 +42,8 @@ export interface UiPreferenceStoreMap {
   startWithSystem: UiPreferencesMap['startWithSystem']
   /** The last Reset metrics epoch UI main applied (14 §3.9, §4.3 rule 4; ADR-024 item 8; ISSUE-061): UI main's own. */
   resetEpochApplied: UiPreferencesMap['resetEpochApplied']
+  /** The mode shown last (14 §3.9; ADR-024 item 1): written by the `ModeCoordinator` only (ISSUE-284). */
+  lastMode: UiPreferencesMap['lastMode']
 }
 
 export type UiPreferenceStoreKey = keyof UiPreferenceStoreMap

@@ -8,13 +8,13 @@ what the project's own attack surface is.
 
 ## Supported versions
 
-The rebuilt app has no public release yet: the first public release is v1, and no release is
-published before it. Fixes land on `main` and ship in v1. The releases on the Releases page,
-v0.13.1 and earlier, are the previous app and receive no further release.
+The rebuilt app ships as preview releases, starting with v0.20.0. Fixes land on `main` and ship
+in the next release. The releases on the Releases page v0.13.1 and earlier are the previous app
+and receive no further release.
 
 | Version                            | Supported |
 | ---------------------------------- | --------- |
-| `main` and its internal builds     | Yes       |
+| `main` and the latest release      | Yes       |
 | v0.13.1 and earlier (previous app) | No        |
 
 ## Reporting a vulnerability

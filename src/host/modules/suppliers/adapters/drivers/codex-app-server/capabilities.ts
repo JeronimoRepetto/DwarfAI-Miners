@@ -7,11 +7,11 @@
 //   `thread/resume` (ADR-015 item 5: `adopt` stays false whatever S-015-1 finds).
 import type { ProviderCapabilities } from '../../../domain/capabilities'
 
-/** The verdicts of the committed records this row follows (`spike-results/`). */
+/** The verdicts of the committed records this row follows (the spike records). */
 export interface SpikeRecords {
-  /** `spike-results/SP-12.md`: a per-session MCP entry through the protocol. */
+  /** spike SP-12: a per-session MCP entry through the protocol. */
   readonly sp12: 'passed' | 'partial' | 'failed'
-  /** `spike-results/S-015-1.md`: adopt through the app-server daemon. */
+  /** spike S-015-1: adopt through the app-server daemon. */
   readonly s0151: 'passed' | 'failed'
 }
 

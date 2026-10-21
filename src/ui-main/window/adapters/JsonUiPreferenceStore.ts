@@ -41,7 +41,9 @@ export const UI_PREFERENCE_FILES: Readonly<Record<UiPreferenceStoreKey, string>>
   // NEW with the UiPreferencesMap (ISSUE-060): no store of today's holds it.
   startWithSystem: 'start-with-system-v1.json',
   // NEW with the Reset metrics UI step (ISSUE-061): no store of today's holds it.
-  resetEpochApplied: 'reset-epoch-applied-v1.json'
+  resetEpochApplied: 'reset-epoch-applied-v1.json',
+  // NEW with the ModeCoordinator (ISSUE-284): no store of today's holds it.
+  lastMode: 'last-mode-v1.json'
 }
 
 /** The older two-choice typography preference (Interface and Messaging faces), read while no typography file exists. */
@@ -100,7 +102,8 @@ const FORMATS: { readonly [K in UiPreferenceStoreKey]: FileFormat<K> } = {
   alwaysOnTop: inField('pinned', z.boolean()),
   shortcut: inField('accelerator', canonicalAccelerator),
   startWithSystem: inField('on', z.boolean()),
-  resetEpochApplied: inField('epoch', z.number().int().nonnegative())
+  resetEpochApplied: inField('epoch', z.number().int().nonnegative()),
+  lastMode: inField('mode', z.enum(['panel', 'veta', 'valle']))
 }
 
 export interface JsonUiPreferenceStoreOptions {

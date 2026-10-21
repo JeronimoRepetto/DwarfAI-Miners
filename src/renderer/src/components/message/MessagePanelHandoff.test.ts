@@ -1,0 +1,104 @@
+// @vitest-environment jsdom
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { DwarfId, MineId, ModeTransition } from '@dwarfai/contracts'
+import { createFakeWindowApi } from '../../../../contracts/ipc/testing/fakeWindowApi'
+import { modeTransitionPart } from '../../composables/useModeTransition'
+import { defaultDwarf } from '../../testing/factories'
+import DwarfMessagePanel from './DwarfMessagePanel.vue'
+
+/*
+ * ISSUE-284: the MessagePanel hands its open chat to a mode transition run (ADR-025 item 3; ADR-024 item 3; 07
+ * machine 9): as the source it flushes its draft and its view state before t0; as the target it takes them back
+ * before its content shows. Mounted against the generated fake `window.api` (ADR-033 item 7).
+ */
+
+enableAutoUnmount(afterEach)
+
+const MINE = '01920000-0000-7000-8000-00000000a001' as MineId
+const RUN = '01920000-0000-7000-8000-00000000f001'
+
+let listener: ((t: ModeTransition) => void) | null = null
+const patches: unknown[] = []
+const done: string[] = []
+let carried = { draft: '', selection: { start: 0, end: 0, direction: 'none' as const } }
+
+beforeEach(() => {
+  vi.useFakeTimers({ now: 50_000 })
+  listener = null
+  patches.length = 0
+  done.length = 0
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    writable: true,
+    value: createFakeWindowApi({
+      onModeTransition: (h) => {
+        listener = h
+        return () => (listener = null)
+      },
+      modeTransitionDone: (p) => void done.push(p.transitionId),
+      patchUiSession: (p) => void patches.push(p),
+      getUiSession: () =>
+        Promise.resolve({
+          drafts: carried.draft === '' ? {} : { [DWARF]: carried.draft },
+          chatViews: { [DWARF]: { scrollAnchor: 'bottom', selection: carried.selection } },
+          askPicks: {},
+          openChat: {},
+          currentMine: {},
+          valle: {}
+        })
+    })
+  })
+  // The window's part is running before any chat opens (the panel registers with it).
+  modeTransitionPart()
+})
+
+afterEach(() => {
+  modeTransitionPart().dispose()
+  vi.useRealTimers()
+  Reflect.deleteProperty(window, 'api')
+})
+
+const dwarf = defaultDwarf({ textDelivery: 'terminal' })
+const DWARF = dwarf.id as DwarfId
+
+describe('MessagePanel chat hand-off (ISSUE-284)', () => {
+  it('[US-VETA-009.AC03, S9.01, S27.05] the open chat flushes its draft and selection as a source and takes them back as a target', async () => {
+    const wrapper = mount(DwarfMessagePanel, { props: { dwarf } })
+    const box = wrapper.find('.dm-composer textarea')
+    await box.setValue('half a thought')
+    const field = box.element as HTMLTextAreaElement
+    field.setSelectionRange(2, 7, 'backward')
+
+    listener!({
+      transitionId: RUN,
+      from: 'panel',
+      to: 'hidden',
+      t0: Date.now() + 16,
+      role: 'source'
+    })
+    expect(patches).toEqual([
+      { kind: 'draft', dwarfId: DWARF, text: 'half a thought' },
+      {
+        kind: 'chat-view',
+        dwarfId: DWARF,
+        view: { scrollAnchor: 'bottom', selection: { start: 2, end: 7, direction: 'backward' } }
+      }
+    ])
+
+    // Another window carried the chat back with a changed draft and caret: they are shown before the content is.
+    carried = { draft: 'carried back', selection: { start: 4, end: 4, direction: 'none' } }
+    listener!({
+      transitionId: '01920000-0000-7000-8000-00000000f002',
+      from: 'veta',
+      to: 'panel',
+      t0: Date.now() + 16,
+      role: 'target',
+      chat: { dwarfId: DWARF, mineId: MINE }
+    })
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(field.value).toBe('carried back')
+    expect([field.selectionStart, field.selectionEnd]).toEqual([4, 4])
+  })
+})

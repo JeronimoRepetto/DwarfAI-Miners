@@ -1,3 +1,0 @@
-managed:kimi-code  type=kimi  models=4  source=oauth
-
-Default model: kimi-code/kimi-for-coding-highspeed

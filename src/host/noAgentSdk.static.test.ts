@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest'
  * skipped on purpose: its `R11-no-claude-agent-sdk` canary plants exactly this import so the lint rule is proven to fire.
  */
 const ROOT = resolve(import.meta.dirname, '..', '..')
-const SOURCE_ROOTS = ['src', 'scripts', 'e2e', 'spikes']
+const SOURCE_ROOTS = ['src', 'scripts', 'e2e']
 const SOURCE_FILE = /\.(c|m)?[jt]sx?$|\.vue$/
 const SDK = '@anthropic-ai/claude-agent-sdk'
 

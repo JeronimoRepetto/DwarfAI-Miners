@@ -51,7 +51,9 @@ export const UI_PREFERENCE_DEFAULTS: Readonly<UiPreferenceStoreMap> = {
   // ON by default, also on a fresh install (OQ-65; ADR-027 item 7; 07 S40.01).
   startWithSystem: true,
   // No reset applied yet: the Host's first Reset metrics epoch (1) is newer (14 §4.3 rule 4).
-  resetEpochApplied: 0
+  resetEpochApplied: 0,
+  // The Panel until a mode transition ran (S10.01; ADR-034: the Panel ships first).
+  lastMode: 'panel'
 }
 
 /** A fresh copy of a store's defaults, so a caller that edits it cannot edit the defaults. */
@@ -98,7 +100,8 @@ const STORED_FORMS: StoredForms = {
   alwaysOnTop: (v) => v,
   shortcut: (v) => v,
   startWithSystem: (v) => v,
-  resetEpochApplied: (v) => v
+  resetEpochApplied: (v) => v,
+  lastMode: (v) => v
 }
 
 /** The one stored form of `value` for `key`: what a setter stores and answers (ADR-024 item 9). */

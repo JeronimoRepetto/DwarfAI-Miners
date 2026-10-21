@@ -3,7 +3,7 @@
 // adapter, and nowhere in the domain; every other function takes the OS as a value, so a macOS or
 // Linux rule is asserted on any host.
 //
-// S-030-1 passed (spike-results/S-030-1.md, Decision). On every OS the answer comes from the folder
+// S-030-1 passed (spike S-030-1, Decision). On every OS the answer comes from the folder
 // itself, never from the OS name: take the nearest component of the real path whose name has a
 // cased letter, swap the case of that name, and stat both spellings in the same parent directory.
 // The same file (device and inode, read as bigint so a 64-bit NTFS file index keeps its precision)

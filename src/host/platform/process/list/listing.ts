@@ -4,7 +4,7 @@
 // or ends anything. Every OS read is a dependency, so the same code runs against scripted OS
 // answers in the L3 tests and against the real OS in the L8 lane.
 //
-// Adopted from spike S-014-1 (`spikes/S-014-1/pidSource.ts`): the stem rule, procfs on Linux,
+// Adopted from spike S-014-1 (the S-014-1 spike harness): the stem rule, procfs on Linux,
 // `ps` + `lsof` on macOS, and on Windows CIM `Win32_Process` with the working folder read from each
 // match's process parameters (PEB) by a non-elevated reader, which Node cannot do. Its attribution
 // by start time is not adopted: the kill identity stays `no-identity` until S-014-1 passes.

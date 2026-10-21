@@ -33,7 +33,7 @@ node scripts/release/sbom.mjs --input release/licenses/pnpm-sbom.json
 ## S-008-1 records
 
 A provider adapter or library ships inside the app only when its S-008-1 row says it may (ADR-008 item 1). The rows
-live in one record, the results table of [`spike-results/S-008-1.md`](../../spike-results/S-008-1.md), with one row
+live in one record, the results table of [`S-008-1.md`](S-008-1.md), with one row
 per package and pinned version. `scripts/release/s008-records.mjs` reads that table.
 
 A package is in scope when `S008_SCOPE` in `scripts/release/s008-records.mjs` names it, or when an S-008-1 row names
@@ -42,7 +42,7 @@ change.
 
 ### Row template
 
-Add a row to the results table of `spike-results/S-008-1.md` with these columns. A row with a new version replaces
+Add a row to the results table of `docs/licenses/S-008-1.md` with these columns. A row with a new version replaces
 nothing: a pin that moves gets its own row.
 
 | Column                      | What to write                                                                                         |

@@ -251,6 +251,12 @@ export interface DwarfAiMinersApi {
   onRevealDwarfChat: (
     listener: (payload: TargetResult<'mode:revealDwarfChat'>) => void
   ) => () => void
+  /** A-N13 · `mode:move` · invoke · NEW · target shape */
+  moveToMode: (request: TargetRequest<'mode:move'>) => Promise<TargetResult<'mode:move'>>
+  /** A-N14 · `mode:transition` · push · NEW · target shape */
+  onModeTransition: (listener: (payload: TargetResult<'mode:transition'>) => void) => () => void
+  /** A-N15 · `mode:transition:done` · send · NEW · target shape */
+  modeTransitionDone: (request: TargetRequest<'mode:transition:done'>) => void
   /** A-N31 · `claude:hooks:set` · invoke · NEW · target shape */
   setClaudeHooksEnabled: (
     request: TargetRequest<'claude:hooks:set'>
@@ -454,6 +460,16 @@ const api: DwarfAiMinersApi = {
     ipcRenderer.on('mode:revealDwarfChat', wrapped)
     return () => ipcRenderer.removeListener('mode:revealDwarfChat', wrapped)
   },
+  moveToMode: (request) => invokeOrReject(() => ipcRenderer.invoke('mode:move', request)),
+  onModeTransition: (listener) => {
+    const wrapped = (_event: IpcRendererEvent, payload: unknown): void => {
+      listener(payload as TargetResult<'mode:transition'>)
+    }
+    ipcRenderer.on('mode:transition', wrapped)
+    return () => ipcRenderer.removeListener('mode:transition', wrapped)
+  },
+  modeTransitionDone: (request) =>
+    sendOrDrop(() => ipcRenderer.send('mode:transition:done', request)),
   setClaudeHooksEnabled: (request) =>
     invokeOrReject(() => ipcRenderer.invoke('claude:hooks:set', request)),
   setAskStep: (request) => invokeOrReject(() => ipcRenderer.invoke('ask:step:set', request)),

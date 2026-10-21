@@ -13,7 +13,7 @@ import {
   type IdentityReader
 } from './volumeCase'
 
-// S-030-1 passed (spike-results/S-030-1.md, Decision): the rules probe the folder itself, on every
+// S-030-1 passed (spike S-030-1, Decision): the rules probe the folder itself, on every
 // OS, with a case-swapped stat of the nearest cased component. These cases drive the detection
 // over a synthetic volume, so a Windows, macOS or Linux rule is asserted on any host.
 

@@ -20,7 +20,7 @@ const SAMPLE_FILES = new Set([
 ])
 
 /** Roots that hold code; generated output and dependencies are not walked. The canaries import deleted files on purpose. */
-const ROOTS = ['src', 'e2e', 'scripts', 'perf', 'fixtures', 'spikes', 'testing']
+const ROOTS = ['src', 'e2e', 'scripts', 'perf', 'fixtures', 'testing']
 const SKIPPED_DIRS = new Set(['node_modules', 'out', 'dist', '.git'])
 const CODE_FILE = /\.(ts|tsx|mts|cts|js|mjs|cjs|vue)$/
 /** `from '…'`, `import '…'`, `import('…')`, `require('…')`, `vi.mock('…')` and `export … from '…'`. */
