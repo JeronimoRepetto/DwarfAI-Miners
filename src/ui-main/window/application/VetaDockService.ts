@@ -170,7 +170,7 @@ export function createVetaDockService(deps: VetaDockServiceDeps): VetaDockServic
       case 'drag-start': {
         if (!deps.dockingAvailable()) return result(false)
         const surface = displayUnder(displays(), request.screenX, request.screenY)
-        placedArea = surface.workArea
+        // The drag surface is not a place: `placedArea` stays the work area Veta is docked against (S21.12).
         window.placeAt(surface.workArea)
         return { applied: true, displayKey: surface.displayKey, dock: { ...at.dock } }
       }

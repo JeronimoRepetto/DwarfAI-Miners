@@ -59,8 +59,4 @@ function down(event: PointerEvent): void {
   width: 44px;
   height: 32px;
 }
-
-.veta-grip:focus-visible {
-  outline: var(--px) solid var(--brass);
-}
 </style>
