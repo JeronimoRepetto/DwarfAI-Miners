@@ -4,6 +4,7 @@ export { CHANNELS, PRELOAD_HELPERS, todayShapeOf } from './channels'
 export { TODAY_SHAPES, type TodayShape } from './todayShapes'
 export { ROW_IDS, type RowId } from './rowIds'
 export { BUILD_PROFILES, builtModesOf, type BuiltMode } from './builtModes'
+export { vetaOverlayFrame, type VetaOverlayFrame } from './vetaOverlay'
 export {
   MEMBER_REMOVED,
   RETIRED,

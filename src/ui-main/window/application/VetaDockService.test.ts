@@ -194,8 +194,8 @@ describe('the Veta dock in UI main (07 machine 21; UC-045)', () => {
     // Docking unavailable (S21.16): a drag or an arrow key changes nothing.
     expect(dock.layout({ kind: 'drag-start', screenX: 100, screenY: 100 }).applied).toBe(false)
     expect(dock.layout({ kind: 'dock-key', edge: 'top' }).applied).toBe(false)
-    // The kinds of later issues answer `applied: false` until they are built.
-    for (const request of [{ kind: 'fold' }, { kind: 'overlay', bounds: null }] as const) {
+    // The kinds of later issues answer `applied: false` until they are built. AMENDED for ISSUE-288: `overlay` is built.
+    for (const request of [{ kind: 'fold' }] as const) {
       expect(dock.layout(request).applied).toBe(false)
     }
   })
@@ -213,5 +213,39 @@ describe('the Veta dock in UI main (07 machine 21; UC-045)', () => {
     })
     expect(placed.at(-1)).toEqual({ x: 2560 - 16 - 480, y: 1392 - 72, width: 480, height: 72 })
     expect(pushed).toEqual([])
+  })
+
+  it('[ADR-025, S22.01, S22.16] an overlay grows the window toward the screen, the island staying put, and closing it shrinks it back', () => {
+    const { dock, placed, store } = world()
+    const island = { x: 2560 - 16 - 480, y: 1392 - 72, width: 480, height: 72 }
+    expect(dock.bounds()).toEqual(island)
+    // The picker (wider than the island) opens: the window grows up and to the left, the island's corner unmoved.
+    expect(dock.layout({ kind: 'overlay', bounds: { width: 600, height: 300 } })).toMatchObject({
+      applied: true,
+      displayKey: PRIMARY.displayKey
+    })
+    expect(placed.at(-1)).toEqual({
+      x: 2560 - 16 - 600,
+      y: 1392 - 72 - 300,
+      width: 600,
+      height: 372
+    })
+    // A new length meanwhile keeps the overlay's room.
+    dock.layout({ kind: 'island-resize', length: 400 })
+    expect(placed.at(-1)).toEqual({
+      x: 2560 - 16 - 600,
+      y: 1392 - 72 - 300,
+      width: 600,
+      height: 372
+    })
+    // Closed: the window hugs the island again. Nothing about an overlay is ever saved.
+    dock.layout({ kind: 'overlay', bounds: null })
+    expect(placed.at(-1)).toEqual({ x: 2560 - 16 - 400, y: 1392 - 72, width: 400, height: 72 })
+    expect(store.load('vetaDock')).toEqual({})
+    // A drag forgets an open overlay: its drop lands the island alone.
+    dock.layout({ kind: 'overlay', bounds: { width: 200, height: 100 } })
+    dock.layout({ kind: 'drag-start', screenX: 1000, screenY: 1380 })
+    dock.layout({ kind: 'drag-end', screenX: 1000, screenY: 1380 })
+    expect(placed.at(-1)).toMatchObject({ width: 400, height: 72 })
   })
 })
