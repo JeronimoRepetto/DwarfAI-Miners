@@ -256,7 +256,7 @@ export interface BootOptions {
    * Wraps the real `--mcp-config` file store the stream-json driver writes through, so a case can
    * stand in a slow disk; the real store, unwrapped, by default.
    */
-  mcpConfigFiles?: (real: McpConfigFiles) => McpConfigFiles
+  mcpConfigFiles?: (real: McpConfigFiles, clock: FakeClock) => McpConfigFiles
 }
 
 /** The real catalogue, whose `launchable()` also answers a launch-enabled Claude once detected. */
@@ -485,7 +485,10 @@ export async function bootHost(w: World, options: BootOptions) {
             execPath: join(w.root, 'DwarfAI-Miners'),
             hostEntryPath: join(w.root, 'out', 'host', 'main.js'),
             hostDataDir: w.root,
-            mcpConfigFiles: (options.mcpConfigFiles ?? ((real) => real))(new NodeMcpConfigFiles())
+            mcpConfigFiles: (options.mcpConfigFiles ?? ((real) => real))(
+              new NodeMcpConfigFiles(),
+              clock
+            )
           }
           const wiredDelegation = wireDelegation(delegationDeps)
           delegation = wiredDelegation

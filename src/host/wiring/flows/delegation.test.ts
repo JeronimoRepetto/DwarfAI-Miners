@@ -56,6 +56,7 @@ import {
   SIMULATED,
   type JevRouteAnswers
 } from './testing/delegationHost'
+import { slowMcpConfigFiles } from './testing/sessionSpawns'
 
 const TASK = 'Map the old shafts below the north seam'
 // ISSUE-209's boot sweep: synthetic launches and the dwarf a live token is bound to.
@@ -1254,6 +1255,33 @@ describe('the delegation module wired into the Host (ISSUE-209)', () => {
         { launch_id: KEPT, revoked: 0 }
       ].sort((a, b) => a.launch_id.localeCompare(b.launch_id))
     )
+  })
+
+  it('[SP-08, S5.19] a "Let Jev choose" Claude launch waits for its files on a slow disk and launches', async () => {
+    // The relay's `--mcp-config` file is a real file: the launch helper waits for the spawn with the
+    // clock frozen, so the disk answers and the launch settles (the handshake budget starts at the
+    // spawn, S5.19). A helper that moved the clock across the write never saw it answer.
+    const w = wiredWorld()
+    const recorded = claudeRecording()
+    const h = await bootWiredHost(w, {
+      epoch: 'epoch-209-a',
+      processes: ({ clock, scheduler }) =>
+        claudeSpawn(clock, scheduler, recorded.allow, recorded.help),
+      installed: ['claude'],
+      jevKey: JEV_KEY,
+      jevClaudeModels: ['sonnet'],
+      jevCapabilities: DELEGATION_CAPABILITIES,
+      mcpConfigFiles: (real, clock) => slowMcpConfigFiles(real, clock, 20_000)
+    })
+    const mineId = await h.mine()
+    const ui = await h.attach()
+
+    const launched = await launchClaudeWithJev(h, ui, mineId, recorded.prompt)
+
+    expect(h.crew.crew.queries.get(launched.dwarfId)).toMatchObject({
+      owned: true,
+      departed: false
+    })
   })
 
   it('[INV-80] a launch without both gates gets no relay entry from the SessionStarter bridge', async () => {

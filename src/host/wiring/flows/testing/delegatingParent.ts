@@ -18,7 +18,8 @@ import type { JevDeps } from '../../../modules/jev'
 import { readFixtureSet, type FixtureProcess } from '../../../modules/suppliers/testing/fixtureSet'
 import { FixtureTransport } from '../../../modules/suppliers/testing/fixtureTransport'
 import { RecordingSpawn } from '../../../modules/suppliers/testing/recordingSpawn'
-import { evts, type Host } from './cut3aHost'
+import type { Host } from './cut3aHost'
+import { nextSessionSpawn, notifySessionSpawn, settleClaudeLaunch } from './sessionSpawns'
 
 const CLAUDE_FIXTURES = new URL('../../../../../fixtures/claude/stream-json/', import.meta.url)
 
@@ -40,28 +41,23 @@ export function claudeRecording(): { help: string; allow: FixtureProcess; prompt
   }
 }
 
-/** The spawn double built for each clock, so a launch helper can wait on what it spawned. */
-const spawnsOfClock = new WeakMap<FakeClock, RecordingSpawn>()
-
-/** How many `claude -p` sessions the Host started on `clock` so far (0 for an unknown clock). */
-function sessionSpawnsOn(clock: FakeClock): number {
-  return (spawnsOfClock.get(clock)?.spawns ?? []).filter((spawn) => spawn.args.includes('-p'))
-    .length
-}
-
-/** `claude --help` answers the recorded help; every `claude -p` replays `recorded`. */
+/**
+ * `claude --help` answers the recorded help; every `claude -p` replays `recorded` and is reported to
+ * the waiting launch helper (testing/sessionSpawns.ts).
+ */
 export function claudeSpawn(
   clock: FakeClock,
   scheduler: FakeScheduler,
   recorded: FixtureProcess,
   help: string
 ): RecordingSpawn {
-  const spawn = new RecordingSpawn({
+  return new RecordingSpawn({
     clock,
     scheduler,
     decide: (spec) => {
       if (spec.args.includes('--help')) return { kind: 'exit', afterMs: 0, code: 0, stdout: help }
       if (spec.args.includes('-p')) {
+        notifySessionSpawn(clock)
         return {
           kind: 'fixture',
           transport: new FixtureTransport({
@@ -74,8 +70,6 @@ export function claudeSpawn(
       return { kind: 'exit', afterMs: 0, code: 1, stdout: '' }
     }
   })
-  spawnsOfClock.set(clock, spawn)
-  return spawn
 }
 
 /** The simulated worker's one launch target, and Claude's for the parent's "Let Jev choose". */
@@ -121,10 +115,6 @@ export function jevPicks(provider: string) {
   }
 }
 
-interface LaunchChanged {
-  launch: { launchId: LaunchId; state: string; dwarfId?: DwarfId }
-}
-
 /** "Subagent delegation" turned on through B-M preferences.set, as the person turns it on. */
 export async function turnDelegationOn(h: Host, ui: Parameters<Host['settle']>[0]): Promise<void> {
   const set = await h.call(ui, 'preferences.set', {
@@ -147,7 +137,7 @@ export async function launchClaudeWithJev(
   letJevChoose = true
 ): Promise<{ launchId: LaunchId; dwarfId: DwarfId }> {
   if (letJevChoose) h.router.queue(jevPicks('claude'))
-  const spawnedBefore = sessionSpawnsOn(h.clock)
+  const spawned = nextSessionSpawn(h.clock)
   const answered = await h.call(ui, 'launching.launch', {
     mineId,
     way: letJevChoose ? { kind: 'jev' } : { kind: 'supplier', providerId: 'claude' },
@@ -158,24 +148,6 @@ export async function launchClaudeWithJev(
   })
   expect(answered).toMatchObject({ ok: true })
   const launchId = (answered as { result?: { launchId?: LaunchId } }).result?.launchId
-  const settledFrame = () =>
-    evts<LaunchChanged>(ui, 'launch.changed').find(
-      (frame) => frame.launch.launchId === launchId && frame.launch.state === 'succeeded'
-    )
-  // The relay's credential and `--mcp-config` files are real files, written before the session is
-  // spawned. Until that spawn happened, each step first gives the disk many settle rounds with the
-  // clock frozen, so a slow disk cannot let a handshake or routing budget run out mid-write. The
-  // clock still advances afterwards on every OS, so a launch that needs fake time is never stuck.
-  const spawned = () => sessionSpawnsOn(h.clock) > spawnedBefore
-  const failed = () => evts(ui, 'launch.failed').length > 0
-  for (let step = 0; step < 400 && settledFrame() === undefined; step += 1) {
-    if (failed()) break
-    for (let round = 0; round < 100 && !spawned() && !failed(); round += 1) await h.settle(ui)
-    await h.run(50, ui)
-  }
-  const settled = settledFrame()?.launch
-  if (settled?.dwarfId === undefined) {
-    throw new Error(`claude did not launch: ${JSON.stringify(evts(ui, 'launch.failed'))}`)
-  }
-  return { launchId: settled.launchId, dwarfId: settled.dwarfId }
+  if (launchId === undefined) throw new Error('the launch was answered with no launch id')
+  return settleClaudeLaunch(h, ui, launchId, spawned)
 }
