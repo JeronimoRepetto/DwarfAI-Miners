@@ -256,6 +256,25 @@ describe('the risen chat hand-off (ISSUE-293)', () => {
     expect(card.element.style.resize).toBe('')
   })
 
+  it('[S24.12, S24.14] once Veta has played its half of the run to the Panel its risen chat folds at once, its draft kept', async () => {
+    world = await mountVeta(TWO_MINES, { runs: true })
+    dwarf(BORIN).click()
+    await flushPromises()
+    await world.root.get('[data-veta-risen] textarea').setValue('typed in Veta')
+    await world.root.get('[data-veta-risen] [data-open-in-panel]').trigger('click')
+    await flushPromises()
+    // Under reduced motion the half lasts 0 ms: at t0 the window is veiled and the chat folds, with no motion.
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    await flushPromises()
+    expect(shownRisen()).toBe('none')
+    expect(world.layouts.at(-1)).toEqual({ kind: 'fold' })
+    expect(world.patches.filter((patch) => patch.kind === 'draft').at(-1)).toEqual({
+      kind: 'draft',
+      dwarfId: BORIN,
+      text: 'typed in Veta'
+    })
+  })
+
   it('[S24.18] a run into Veta carrying a chat rises it once the window landed, with the draft from the session store', async () => {
     world = await mountVeta(TWO_MINES, {
       session: { drafts: { [BORIN]: 'carried from the Panel' }, chatViews: {} } as never

@@ -246,6 +246,29 @@ describe('the chat hand-off of a run (ISSUE-293)', () => {
     expect(rises).toHaveLength(1)
   })
 
+  it("[S24.14, S24.12] a window that played a run's source half is told it left once its content is veiled, never before", async () => {
+    const s = setup()
+    const left: string[] = []
+    s.transition.onLeft((t) => left.push(`${t.from}->${t.to}`))
+    s.push({ role: 'source', from: 'veta', to: 'panel', chat: { dwarfId: DWARF, mineId: MINE } })
+    s.clock.advance(16)
+    await flush()
+    // Still playing its half: the chat it hosts fades with it.
+    expect(left).toEqual([])
+    s.finish()
+    await flush()
+    expect(s.events.slice(-2)).toEqual(['veil true', 'done t-1'])
+    expect(left).toEqual(['veta->panel'])
+    // A target half tells nothing of the kind.
+    s.push({ role: 'target', transitionId: 't-2', from: 'panel', to: 'veta' })
+    await flush()
+    s.clock.advance(16)
+    await flush()
+    s.finish()
+    await flush()
+    expect(left).toEqual(['veta->panel'])
+  })
+
   it('[US-MSG-010.AC01, S27.01] a target opens the carried chat before it restores it, and never restores a draft into another chat', async () => {
     const s = setup({
       session: { drafts: { [DWARF]: 'carried text' }, chatViews: { [DWARF]: VIEW } }

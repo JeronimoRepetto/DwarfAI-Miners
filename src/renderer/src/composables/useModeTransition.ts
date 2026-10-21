@@ -17,7 +17,9 @@
  * The chat hand-off (ISSUE-293; 07 machine 9; UC-051): before the source flushes, an input-method composition in
  * progress is ended, so what it held travels as draft text (S9.02, US-DLG-006.AC03). A target carrying a chat first
  * opens it (`onArrival`: the Panel's mine column and chat), and restores the draft and view into that chat alone. A
- * window that hears the carried chat after landing (`onLanded`: Veta's rise, S24.18) is told M + 60 ms after `t0`.
+ * window that hears the carried chat after landing (`onLanded`: Veta's rise, S24.18) is told M + 60 ms after `t0`. A
+ * window that left a run (`onLeft`) is told once its source half ended, its content veiled: a hidden frameless window
+ * does not reliably report itself hidden, so this is when Veta folds its risen chat (S24.14).
  * Under reduced motion both halves last 0 ms and the answer goes at `t0` (S27.06, NFR-TIM-02). An
  * in-progress IME composition is not carried: the hand-off ends it before the flush; how each OS commits it is
  * S-025-1's record.
@@ -84,6 +86,8 @@ export interface ModeTransitionPart {
   onArrival(open: (chat: CarriedChat) => Promise<void> | void): () => void
   /** Hears the carried chat once this window landed as a run's target; answers the unregister. */
   onLanded(hear: (chat: CarriedChat) => void): () => void
+  /** Hears each run this window left, once its source half ended and its content is veiled; answers the unregister. */
+  onLeft(hear: (t: ModeTransition) => void): () => void
   dispose(): void
 }
 
@@ -95,6 +99,7 @@ export function useModeTransition(deps: ModeTransitionDeps): ModeTransitionPart 
   let handoff: ChatHandoff | null = null
   let arrival: ((chat: CarriedChat) => Promise<void> | void) | null = null
   let landed: ((chat: CarriedChat) => void) | null = null
+  let left: ((t: ModeTransition) => void) | null = null
   /** A carried chat opened here whose panel has not registered yet, and what its registration settles. */
   let awaited: { dwarfId: DwarfId; registered: () => void } | null = null
   /** The runs this renderer took part in: one answer each. */
@@ -175,6 +180,8 @@ export function useModeTransition(deps: ModeTransitionDeps): ModeTransitionPart 
   function answer(t: ModeTransition): void {
     if (t.role === 'source') deps.veil(true)
     bridge.modeTransitionDone({ transitionId: t.transitionId })
+    // The window is going away: what it hosts may close now, unseen (Veta's risen chat folds at once, S24.14).
+    if (t.role === 'source') left?.(t)
   }
 
   function onTransition(t: ModeTransition): void {
@@ -229,6 +236,12 @@ export function useModeTransition(deps: ModeTransitionDeps): ModeTransitionPart 
       landed = hear
       return () => {
         if (landed === hear) landed = null
+      }
+    },
+    onLeft(hear) {
+      left = hear
+      return () => {
+        if (left === hear) left = null
       }
     },
     dispose() {
@@ -294,6 +307,7 @@ export function modeTransitionPart(): ModeTransitionPart {
       register: () => () => {},
       onArrival: () => () => {},
       onLanded: () => () => {},
+      onLeft: () => () => {},
       dispose: () => {}
     }
   }
@@ -302,6 +316,7 @@ export function modeTransitionPart(): ModeTransitionPart {
     register: (handoff) => part.register(handoff),
     onArrival: (open) => part.onArrival(open),
     onLanded: (hear) => part.onLanded(hear),
+    onLeft: (hear) => part.onLeft(hear),
     dispose: () => {
       part.dispose()
       shared = null

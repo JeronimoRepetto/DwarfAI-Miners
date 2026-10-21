@@ -1057,6 +1057,8 @@ const risen = useWindowVetaRisen({
 
 /** Stops hearing runs into Veta that carry a chat (S24.18). */
 let stopLanding: (() => void) | null = null
+/** Stops hearing the runs Veta leaves (S24.14). */
+let stopLeaving: (() => void) | null = null
 
 const risenOpen = computed(() => {
   const now = risen.machine.value.state
@@ -1226,6 +1228,11 @@ onMounted(() => {
       )
     })
   })
+  // S24.14 (ISSUE-293): once Veta played its half of a run away, its content veiled, the risen chat folds at once, its
+  // draft and view kept. A hidden frameless window does not reliably report itself hidden (`visibilitychange`).
+  stopLeaving = modeTransitionPart().onLeft(() => {
+    void risen.dispatch({ type: 'interrupt', why: 'hidden' })
+  })
   document.addEventListener('keydown', escape)
   window.addEventListener('resize', resized)
 })
@@ -1238,6 +1245,7 @@ onBeforeUnmount(() => {
   life.stop()
   risen.stop()
   stopLanding?.()
+  stopLeaving?.()
   choreo.stop()
   motion.dispose()
   board.stop()
