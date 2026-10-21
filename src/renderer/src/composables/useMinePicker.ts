@@ -39,12 +39,7 @@ import {
 } from '../lib/veta/gripMenu'
 import { pickerRows, type PickerMine, type PickerRow } from '../lib/veta/minePicker'
 import type { MineDeclareResult } from '../types'
-
-/**
- * The Mines page's line when the declare channel itself could not be reached (`useProjectBrowse`'s `UNREACHABLE`,
- * #85): S22.15 shows the Mines page's own error, and this is its text for that case.
- */
-const UNREACHABLE = 'DwarfAI-Miners could not open the folder picker.'
+import { DECLARE_UNREACHABLE } from './useProjectBrowse'
 
 /** The seam A members the menu and the picker use (14 §2.1 A-30, A-31; §2.2 A-N13). */
 export interface MinePickerBridge {
@@ -98,7 +93,7 @@ export function useMinePicker(deps: MinePickerDeps): MinePickerPart {
       answer = await deps.bridge.declareMine()
     } catch {
       dispatch({ type: 'folder-picked' })
-      fail(UNREACHABLE)
+      fail(DECLARE_UNREACHABLE)
       return
     }
     if (answer.outcome === 'cancelled') {
@@ -112,7 +107,7 @@ export function useMinePicker(deps: MinePickerDeps): MinePickerPart {
       try {
         answer = await deps.bridge.declareMainProject()
       } catch {
-        fail(UNREACHABLE)
+        fail(DECLARE_UNREACHABLE)
         return
       }
     }
