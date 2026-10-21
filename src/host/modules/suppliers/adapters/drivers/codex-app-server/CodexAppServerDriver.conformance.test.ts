@@ -643,6 +643,33 @@ describe('CodexAppServerDriver', () => {
     })
   })
 
+  it('[C-05, US-MSG-002.AC03] the echo of a turn whose files DwarfAI named in its text item is the words the person typed alone', async () => {
+    // The queued-turn recording, with the userMessage item Codex echoes for the queued turn
+    // carrying the text item as DwarfAI sent it: the file named ahead of the words.
+    const recorded = variantOf('queued-turn')
+    const named =
+      '"content":[{"type":"text","text":"Attached file: /work/mine/log.txt\\nqueued text"'
+    const variant: FixtureVariant = {
+      ...recorded,
+      received: recorded.received.replace('"content":[{"type":"text","text":"queued text"', named)
+    }
+    expect(variant.received).toContain(named)
+    const run = await runScript(factoryWith(), [{ do: 'launch' }], { variant }, OPTIONS)
+    const session = run.session as DriverSession
+    await session
+      .sendTurn({
+        messageId: 'm-2' as never,
+        kind: 'message',
+        text: 'queued text',
+        attachments: [{ path: '/work/mine/log.txt', name: 'log.txt', bytes: 40 }]
+      })
+      .catch(() => undefined)
+    await session.interrupt()
+    await settle()
+    const echo = run.events.find((event) => event.t === 'message' && event.record.echoOf === 'm-2')
+    expect(echo).toMatchObject({ record: { role: 'person', text: 'queued text', echoOf: 'm-2' } })
+  })
+
   it('[C-21] a reached rate limit is error rate-limited and a provider error carries its code word', async () => {
     expect(await againstExpected('limits-and-errors')).toEqual([])
   })

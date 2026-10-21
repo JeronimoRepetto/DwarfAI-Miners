@@ -425,6 +425,11 @@ interface OpenAsk {
 /** A turn/start DwarfAI sent: its echo correlation, and its turn id once the provider names it. */
 interface StartedTurn {
   readonly correlation: string | null
+  /**
+   * The words the person typed, when DwarfAI named files ahead of them in the text item (#1463):
+   * the echo shows these, as the Claude and Antigravity drivers do; null, the item's text as is.
+   */
+  readonly words: string | null
   turnId: string | null
 }
 
@@ -638,7 +643,8 @@ class AppServerSession implements DriverSession {
       this.working = true
       this.emit({ t: 'status', value: 'working' })
     }
-    const entry: StartedTurn = { correlation, turnId: null }
+    const named = attachments.some((file) => !isImageFile(file))
+    const entry: StartedTurn = { correlation, words: named ? text : null, turnId: null }
     this.started.push(entry)
     try {
       const result = asRecord(
@@ -903,14 +909,14 @@ class AppServerSession implements DriverSession {
     if (completed) {
       const message = messageOf(event.item)
       if (message !== null) {
-        const echoOf =
-          message.role === 'person' && turnId !== null ? this.correlationOf(turnId) : null
+        const started = message.role === 'person' && turnId !== null ? this.startedOf(turnId) : null
+        const echoOf = started?.correlation ?? null
         this.attribute(turnId, {
           t: 'message',
           record: {
             sourceKey: this.key(event.id),
             role: message.role,
-            text: message.text,
+            text: echoOf === null ? message.text : (started?.words ?? message.text),
             providerTime: event.at,
             ...(echoOf === null ? {} : { echoOf })
           }
@@ -925,12 +931,8 @@ class AppServerSession implements DriverSession {
     })
   }
 
-  private correlationOf(turnId: string): string | null {
-    return (
-      this.started.find((entry) => entry.turnId === turnId)?.correlation ??
-      this.bindTurn(turnId)?.correlation ??
-      null
-    )
+  private startedOf(turnId: string): StartedTurn | null {
+    return this.started.find((entry) => entry.turnId === turnId) ?? this.bindTurn(turnId)
   }
 
   private onTokenUsage(params: Record<string, unknown>): void {
