@@ -95,6 +95,8 @@ export function useModeTransition(deps: ModeTransitionDeps): ModeTransitionPart 
   let handoff: ChatHandoff | null = null
   let arrival: ((chat: CarriedChat) => Promise<void> | void) | null = null
   let landed: ((chat: CarriedChat) => void) | null = null
+  /** A carried chat opened here whose panel has not registered yet, and what its registration settles. */
+  let awaited: { dwarfId: DwarfId; registered: () => void } | null = null
   /** The runs this renderer took part in: one answer each. */
   const seen = new Set<string>()
   const timers = new Set<() => void>()
@@ -115,6 +117,11 @@ export function useModeTransition(deps: ModeTransitionDeps): ModeTransitionPart 
     if (handoff?.open() !== chat.dwarfId && arrival !== null) {
       try {
         await arrival(chat)
+        // The chat's panel may mount a moment after it opened: the content waits for it, at most the shell motion's
+        // length. A window that opens nothing here (Veta, whose chat rises once landed) waits for nothing.
+        if (handoff?.open() !== chat.dwarfId) {
+          await registration(chat.dwarfId, t.t0 + MODE_MOTION_MS)
+        }
       } catch {
         // The chat could not be opened here: the window shows what it shows, and the run still plays.
       }
@@ -131,6 +138,29 @@ export function useModeTransition(deps: ModeTransitionDeps): ModeTransitionPart 
     } catch {
       // The session store could not be read: the chat opens as it is, and the run still plays.
     }
+  }
+
+  /**
+   * Resolves once a hand-off for `dwarfId` registers (its panel mounted, which the host may do a moment after it opened
+   * the chat), or at `until` when none did: the content waits for it at most that long, never the run.
+   */
+  function registration(dwarfId: DwarfId, until: number): Promise<void> {
+    return new Promise((resolve) => {
+      const cancel = clock.after(Math.max(0, until - clock.now()), () => {
+        timers.delete(cancel)
+        if (awaited?.dwarfId === dwarfId) awaited = null
+        resolve()
+      })
+      timers.add(cancel)
+      awaited = {
+        dwarfId,
+        registered: () => {
+          cancel()
+          timers.delete(cancel)
+          resolve()
+        }
+      }
+    })
   }
 
   /** Runs `fire` at `t0` (at once when `t0` has passed). */
@@ -180,6 +210,11 @@ export function useModeTransition(deps: ModeTransitionDeps): ModeTransitionPart 
   return {
     register(next) {
       handoff = next
+      if (awaited !== null && next.open() === awaited.dwarfId) {
+        const { registered } = awaited
+        awaited = null
+        registered()
+      }
       return () => {
         if (handoff === next) handoff = null
       }

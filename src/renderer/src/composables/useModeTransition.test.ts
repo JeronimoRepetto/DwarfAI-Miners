@@ -289,6 +289,39 @@ describe('the chat hand-off of a run (ISSUE-293)', () => {
     await flush()
     expect(bare.events).toEqual(['veil false', 'play 1'])
   })
+
+  it('[US-MSG-010.AC01, S27.05] a carried chat whose panel mounts after the arrival is restored once it registers', async () => {
+    const s = setup({
+      session: { drafts: { [DWARF]: 'carried text' }, chatViews: { [DWARF]: VIEW } }
+    })
+    s.transition.register({
+      open: () => OTHER,
+      draft: () => '',
+      view: () => VIEW,
+      restore: () => void s.events.push('restore other')
+    })
+    // The window opens the chat, whose panel mounts a moment later (the dock's slot is the host's).
+    s.transition.onArrival(() => {
+      s.events.push('open carried')
+    })
+    s.push({ role: 'target', from: 'veta', to: 'panel', chat: { dwarfId: DWARF, mineId: MINE } })
+    await flush()
+    s.transition.register({
+      open: () => DWARF,
+      draft: () => '',
+      view: () => VIEW,
+      restore: (state) => void s.events.push(`restore carried ${state.draft}`)
+    })
+    await flush()
+    s.clock.advance(16)
+    await flush()
+    expect(s.events).toEqual([
+      'open carried',
+      'restore carried carried text',
+      'veil false',
+      'play 1'
+    ])
+  })
 })
 
 describe('the window part of a run (ISSUE-284)', () => {

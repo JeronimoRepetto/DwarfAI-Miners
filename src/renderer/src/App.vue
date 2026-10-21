@@ -54,6 +54,7 @@ import { useTypography } from './composables/useTypography'
 import { useHostConnection } from './composables/useHostConnection'
 import { useRecoveryReport } from './composables/useRecoveryReport'
 import { useWelcomeStep } from './composables/useWelcomeStep'
+import { modeTransitionPart } from './composables/useModeTransition'
 import { INTERIOR_ART_SIZE } from './lib/art'
 import {
   MINE_COLUMN_ART_INSET,
@@ -208,6 +209,13 @@ async function revealDwarfChat(target: { mineId: string; dwarfId: string | null 
   card?.scrollIntoView?.({ block: 'nearest' })
 }
 /* --- end of the ISSUE-114 block --------------------------------------------- */
+
+/* --- Chat hand-off landing (ISSUE-293) — one block, appended ---------------- */
+// A run into the Panel carrying a chat (a risen Veta chat's "▢ Open in the Panel", 07 S24.12; UC-051) lands on that
+// dwarf's mine column with its chat open, before the run restores its draft, scroll anchor and caret (S27.01,
+// US-MSG-010.AC01): the reveal's own gesture, so a dwarf no longer on the board opens its mine alone (S9.08).
+let stopHandoffArrival: (() => void) | undefined
+/* --- end of the ISSUE-293 block --------------------------------------------- */
 
 /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
 /**
@@ -1220,6 +1228,9 @@ onMounted(() => {
   /* --- Notification reveal (ISSUE-114) — one block, appended ---------------- */
   unlistenRevealDwarfChat = window.api.onRevealDwarfChat((target) => void revealDwarfChat(target))
   /* --- end of the ISSUE-114 block ------------------------------------------- */
+  /* --- Chat hand-off landing (ISSUE-293) — one block, appended -------------- */
+  stopHandoffArrival = modeTransitionPart().onArrival((chat) => revealDwarfChat(chat))
+  /* --- end of the ISSUE-293 block ------------------------------------------- */
   /* --- Typography preferences (#370) — one block, appended ----------------- */
   // Adopts the stored faces, and listens to main's broadcast of them — which
   // since #635 only ever comes from this window's own Settings, applied twice.
@@ -1266,6 +1277,7 @@ onBeforeUnmount(() => {
   stopFollowingHostBoard()
   /* --- Notification reveal (ISSUE-114) — one block, appended ---------------- */
   unlistenRevealDwarfChat?.()
+  stopHandoffArrival?.()
   /* --- end of the ISSUE-114 block ------------------------------------------- */
   /* --- Typography preferences (#370) — one block, appended ----------------- */
   unlistenTypography?.()
