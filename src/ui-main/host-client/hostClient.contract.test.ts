@@ -234,7 +234,8 @@ describe('HostClient against FakeHost (16 §4.14.1)', () => {
     expect(host.received).toHaveLength(0)
   })
 
-  it('[ADR-002 D9, 14 §3.10] a query asked while the Host is being spawned answers once the first attach completes', async () => {
+  // ADR-002 D9, 14 §3.10
+  it('[ADR-002, ADR-003] a query asked while the Host is being spawned answers once the first attach completes', async () => {
     let release: (r: EnsureHostResult) => void = () => {}
     const spawning = new Promise<EnsureHostResult>((resolve) => {
       release = resolve
@@ -261,7 +262,8 @@ describe('HostClient against FakeHost (16 §4.14.1)', () => {
     expect(outcome).toMatchObject({ chunks: [meta] })
   })
 
-  it('[14 §3.10] a query still waiting at its deadline rejects with TIMEOUT', async () => {
+  // 14 §3.10
+  it('[ADR-003] a query still waiting at its deadline rejects with TIMEOUT', async () => {
     const spawning = new Promise<EnsureHostResult>(() => {})
     const { client, timers, handler } = world({ launcher: () => spawning })
     client.subscribe(handler)
@@ -277,7 +279,8 @@ describe('HostClient against FakeHost (16 §4.14.1)', () => {
     expect((error as HostCallError).error).toMatchObject({ code: 'TIMEOUT', retryable: true })
   })
 
-  it('[ADR-002 D9] a mutation before the first attach still rejects HOST_UNAVAILABLE (guard: holds before and after the change)', async () => {
+  // ADR-002 D9
+  it('[ADR-002] a mutation before the first attach still rejects HOST_UNAVAILABLE (guard: holds before and after the change)', async () => {
     const spawning = new Promise<EnsureHostResult>(() => {})
     const { client, handler } = world({ launcher: () => spawning })
     client.subscribe(handler)
