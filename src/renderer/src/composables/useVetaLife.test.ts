@@ -1,16 +1,19 @@
 import type { HostFrame, SnapshotParams } from '@dwarfai/contracts'
 import { describe, expect, it } from 'vitest'
-import { effectScope } from 'vue'
+import { effectScope, nextTick } from 'vue'
+import type { VetaChamberView } from '../lib/veta/lifeState'
 import {
   BORIN,
   DAIN,
   EREBOR,
   frame,
   MORIA,
+  NALI,
   dwarfWire,
   mineWire,
   snapshotPage
 } from '../lib/veta/testing/vetaFixtures'
+import { useVetaChoreography } from './useVetaChoreography'
 import { useVetaLife, type VetaLifeBridge } from './useVetaLife'
 
 /*
@@ -173,4 +176,160 @@ describe('useVetaLife', () => {
     expect(heard).toHaveLength(2)
     scope.stop()
   })
+
+  // APPENDED for ISSUE-296: the Host connection dropping (UC-067; ADR-002 D9; ADR-033 item 3), the life state and machine
+  // 26 wired together as the Veta root wires them.
+  it('[S20.15, ADR-002] while reconnecting or unreachable Veta keeps every chamber and dwarf as last known and draws no walk', async () => {
+    const host = connectedHost(
+      snapshotPage(10, {
+        minesEverKnown: true,
+        mines: [mineWire(MORIA), mineWire(EREBOR)],
+        dwarfs: [dwarfWire(BORIN, MORIA), dwarfWire(DAIN, EREBOR, { status: 'working' })]
+      })
+    )
+    const strip = stripOf(host)
+    await strip.life.start()
+    host.connection({ state: 'connected' })
+    await settle()
+    expect(strip.life.held.value).toBe(false)
+    const known = crewOf(strip.life.chambers.value)
+    expect(known).toEqual([`${MORIA}:${BORIN}`, `${EREBOR}:${DAIN}`])
+
+    // The connection drops: nothing is cleared, nothing walks.
+    for (const view of [
+      { state: 'reconnecting' },
+      { state: 'unavailable', reason: 'crash-loop' },
+      { state: 'connecting' },
+      { state: 'unavailable', reason: 'unresponsive' }
+    ]) {
+      host.connection(view)
+      await settle()
+      expect(strip.life.held.value, view.state).toBe(true)
+      expect(strip.life.state.value).toBe('sessions-working')
+      expect(crewOf(strip.life.chambers.value)).toEqual(known)
+      expect(crewOf(strip.choreo.chambers.value)).toEqual(known)
+      expect(strip.choreo.walking.value.size).toBe(0)
+    }
+    expect(strip.cues).toEqual([])
+    strip.stop()
+  })
+
+  it('[S20.16, S26.15, ADR-033] a re-snapshot missing a dwarf removes it with no walk-out and a new dwarf stands at its station', async () => {
+    const host = connectedHost(
+      snapshotPage(10, {
+        minesEverKnown: true,
+        mines: [mineWire(MORIA), mineWire(EREBOR)],
+        dwarfs: [dwarfWire(DAIN, MORIA)]
+      })
+    )
+    const strip = stripOf(host)
+    await strip.life.start()
+    // Borin arrives by a frame and walks in: the choreography knows him as walked in.
+    host.push([frame(11, 'dwarf.arrived', { dwarf: dwarfWire(BORIN, MORIA), announce: true })])
+    await settle()
+    expect(strip.cues).toEqual(['walk-in'])
+    expect([...strip.choreo.arrived.value]).toEqual([BORIN])
+
+    // The Host is lost and comes back with a new epoch: the snapshot lacks Borin and has Nali, new, in Erebor.
+    host.connection({ state: 'reconnecting' })
+    host.answer = Promise.resolve(
+      snapshotPage(
+        3,
+        {
+          minesEverKnown: true,
+          mines: [mineWire(MORIA), mineWire(EREBOR)],
+          dwarfs: [dwarfWire(DAIN, MORIA), dwarfWire(NALI, EREBOR)]
+        },
+        'epoch-veta-2'
+      )
+    )
+    host.connection({ state: 'connected' })
+    await settle()
+    expect(strip.life.held.value).toBe(false)
+    const now = [`${MORIA}:${DAIN}`, `${EREBOR}:${NALI}`]
+    expect(crewOf(strip.life.chambers.value)).toEqual(now)
+    // Borin vanished and Nali stands at his station: nothing walked out, nothing walked in, no chamber opened.
+    expect(crewOf(strip.choreo.chambers.value)).toEqual(now)
+    expect(strip.cues).toEqual(['walk-in'])
+    expect(strip.choreo.walking.value.size).toBe(0)
+    expect(strip.choreo.machine.value.state).toBe('settled')
+    expect([...strip.choreo.arrived.value]).toEqual([])
+    expect(strip.chats).toEqual([])
+    strip.stop()
+  })
 })
+
+/** A Host whose snapshot answer and A-N04 pushes the test scripts (ISSUE-296). */
+function connectedHost(first: unknown) {
+  const frames = new Set<(frames: readonly HostFrame[]) => void>()
+  const views = new Set<(view: unknown) => void>()
+  const host: {
+    answer: Promise<unknown>
+    bridge: VetaLifeBridge
+    push(pushed: HostFrame[]): void
+    connection(view: unknown): void
+  } = {
+    answer: Promise.resolve(first),
+    bridge: {
+      onHostEvent(listener) {
+        frames.add(listener as (frames: readonly HostFrame[]) => void)
+        return () => frames.delete(listener as (frames: readonly HostFrame[]) => void)
+      },
+      getHostSnapshot: () => host.answer,
+      onHostConnection(listener) {
+        views.add(listener)
+        return () => views.delete(listener)
+      },
+      moveToMode: () => Promise.resolve({ ok: true, value: undefined })
+    } satisfies VetaLifeBridge,
+    push(pushed: HostFrame[]) {
+      for (const listener of [...frames]) listener(pushed)
+    },
+    connection(view: unknown) {
+      for (const listener of [...views]) listener(view)
+    }
+  }
+  return host
+}
+
+/** The life state and machine 26 over one window, as the Veta root wires them; every motion ends at once. */
+function stripOf(host: ReturnType<typeof connectedHost>) {
+  const cues: string[] = []
+  const chats: string[] = []
+  const scope = effectScope()
+  const parts = scope.run(() => {
+    const life = useVetaLife({ bridge: host.bridge, visibility: visibility(true).deps })
+    const choreo = useVetaChoreography({
+      facts: () => life.chambers.value,
+      onFacts: (listener) => life.onFacts(listener),
+      shown: () => life.shown.value,
+      reduced: () => false,
+      drawn: () => life.chambers.value.map((c) => c.mine.id),
+      opens: () => true,
+      fit: () => Promise.resolve(),
+      grow: () => Promise.resolve(),
+      shrink: () => Promise.resolve(),
+      fold: () => Promise.resolve(),
+      play(cue) {
+        cues.push(cue.kind)
+        cue.mutate?.()
+        return Promise.resolve()
+      },
+      cancel: () => undefined,
+      chat: (dwarfId, cause) => chats.push(`${dwarfId}:${cause}`),
+      timers: { set: () => null, clear: () => undefined }
+    })
+    return { life, choreo }
+  })!
+  return { ...parts, cues, chats, stop: () => scope.stop() }
+}
+
+const crewOf = (chambers: readonly VetaChamberView[]): string[] =>
+  chambers.flatMap((c) => c.dwarfs.map((d) => `${c.mine.id}:${d.id}`))
+
+async function settle(): Promise<void> {
+  for (let i = 0; i < 10; i += 1) {
+    await Promise.resolve()
+    await nextTick()
+  }
+}

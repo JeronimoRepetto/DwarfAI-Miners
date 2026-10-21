@@ -76,6 +76,8 @@ export type RisenEvent =
   | { readonly type: 'departed'; readonly dwarfId: DwarfId; readonly cause: DepartureCause }
   /** A mine was removed. */
   | { readonly type: 'mine-removed'; readonly mineId: MineId }
+  /** A re-snapshot was applied that lacks this dwarf: no `dwarf.departed` came for it (S20.16; UC-067). */
+  | { readonly type: 'vanished'; readonly dwarfId: DwarfId }
   /** A drag started, Veta's display went away, or the window was hidden. */
   | { readonly type: 'interrupt'; readonly why: 'drag' | 'display' | 'hidden' }
   /** `onRevealDwarfChat` while Veta is the mode; `present` whether the named dwarf is still there. */
@@ -286,6 +288,18 @@ function transition(machine: RisenWindow, event: RisenEvent, context: RisenConte
         id: 'S24.10',
         to: { state: 'read-only', content },
         effects: [{ kind: 'drop-draft', dwarfId: event.dwarfId }]
+      }
+    }
+    case 'vanished': {
+      // UC-067 (ISSUE-296; a package gap: 07 machine 24 lists no row for it): the dwarf vanished with no walk-out
+      // (S20.16, S26.15), so its chat closes outright as S24.11 closes one, the draft dropped (INV-113), with no
+      // walk-out after it. A `read-only` chat's dwarf had departed already, by a frame: it stays readable (S24.10).
+      const live = state === 'rising' || state === 'risen-chat' || state === 'replacing'
+      if (!live || openChat === null || openChat.dwarfId !== event.dwarfId) return null
+      const closing = fold(machine, 'S20.16', false)
+      return {
+        ...closing,
+        effects: [{ kind: 'drop-draft', dwarfId: event.dwarfId }, ...(closing.effects ?? [])]
       }
     }
     case 'mine-removed':
