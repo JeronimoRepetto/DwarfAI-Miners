@@ -232,9 +232,4 @@ defineExpose({
   font: var(--fs-section) / 1 var(--f-label);
   color: var(--brass);
 }
-/* The input atom draws its own "Clear search"; Chromium's own cancel glyph on a search field would be a second one. */
-.dm-picker :deep(input::-webkit-search-cancel-button) {
-  appearance: none;
-  display: none;
-}
 </style>
