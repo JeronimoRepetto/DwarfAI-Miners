@@ -469,3 +469,19 @@ export const modeTransitionSchema = z
   .strict() satisfies z.ZodType<ModeTransition>
 
 export const modeTransitionDoneSchema = z.object({ transitionId: z.string().uuid() }).strict()
+
+// A-N22 `setVetaClickThrough`, A-N24 `getWindowingLimits` (14 §2.2; ADR-025 items 4, 6; ISSUE-285): the Veta
+// renderer's hit-test result, and what the windowing of this session allows (NFR-PLAT-05). Booleans only.
+export interface VetaClickThroughParams {
+  ignore: boolean
+}
+export interface WindowingLimitsView {
+  dockingAvailable: boolean
+  alwaysOnTopAvailable: boolean
+}
+export const vetaClickThroughParamsSchema = z
+  .object({ ignore: z.boolean() })
+  .strict() satisfies z.ZodType<VetaClickThroughParams>
+export const windowingLimitsSchema = z
+  .object({ dockingAvailable: z.boolean(), alwaysOnTopAvailable: z.boolean() })
+  .strict() satisfies z.ZodType<WindowingLimitsView>

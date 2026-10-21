@@ -101,7 +101,9 @@ import {
   uiPreferenceWriteSchema,
   uiSessionChangeSchema,
   uiSessionPatchSchema,
-  uiSessionSnapshotSchema
+  uiSessionSnapshotSchema,
+  vetaClickThroughParamsSchema,
+  windowingLimitsSchema
 } from './windowApi'
 
 const none = noPayloadSchema
@@ -835,6 +837,25 @@ export const CHANNELS = {
     status: 'new',
     request: modeTransitionDoneSchema,
     response: none
+  },
+  // A-N22 `setVetaClickThrough`, A-N24 `getWindowingLimits` (ADR-025 items 4, 6; NFR-PLAT-05; ISSUE-285): the Veta
+  // renderer's hit-test toggles click-through over the island's transparent corners (Windows and macOS; nothing on
+  // Linux), and any mode window reads whether docking and always-on-top are available. Booleans only
+  'veta:clickThrough': {
+    name: 'veta:clickThrough',
+    kind: 'send',
+    placement: 'ui-local',
+    status: 'new',
+    request: vetaClickThroughParamsSchema,
+    response: none
+  },
+  'window:limits': {
+    name: 'window:limits',
+    kind: 'invoke',
+    placement: 'ui-local',
+    status: 'new',
+    request: none,
+    response: windowingLimitsSchema
   },
   // A-N31 `setClaudeHooksEnabled` (AMENDMENT-7, OQ-68; ADR-016 items 5–7): Settings → Integrations "Claude Code ·
   // instant updates", the equivalent of A-53 for the Claude hook entry; relays B-M39 `preferences.setClaudeHooks`

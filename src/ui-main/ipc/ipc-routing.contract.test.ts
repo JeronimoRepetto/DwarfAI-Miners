@@ -470,7 +470,10 @@ describe('release cut-0 (21 §2 cut 0)', () => {
       // AMENDED for ISSUE-284: A-N13…A-N15 join them, born `ui-local` in the release that declares them (22 §5).
       'mode:move': 'cut-5',
       'mode:transition': 'cut-5',
-      'mode:transition:done': 'cut-5'
+      'mode:transition:done': 'cut-5',
+      // AMENDED for ISSUE-285: A-N22 and A-N24 join them the same way.
+      'veta:clickThrough': 'cut-5',
+      'window:limits': 'cut-5'
     })
   })
 

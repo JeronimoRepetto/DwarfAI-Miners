@@ -123,6 +123,8 @@ const MEMBERS = {
   'mode:move': 'moveToMode', // A-N13 (ISSUE-284)
   'mode:transition': 'onModeTransition', // A-N14 (ISSUE-284)
   'mode:transition:done': 'modeTransitionDone', // A-N15 (ISSUE-284)
+  'veta:clickThrough': 'setVetaClickThrough', // A-N22 (ISSUE-285)
+  'window:limits': 'getWindowingLimits', // A-N24 (ISSUE-285)
   'claude:hooks:set': 'setClaudeHooksEnabled', // A-N31 (unrouted until cut 2)
   'ask:step:set': 'setAskStep', // A-N07 (unrouted until cut 2)
   'welcome:answer': 'answerWelcome', // A-N32 (unrouted until cut 2)

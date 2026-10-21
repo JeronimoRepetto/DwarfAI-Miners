@@ -257,6 +257,10 @@ export interface DwarfAiMinersApi {
   onModeTransition: (listener: (payload: TargetResult<'mode:transition'>) => void) => () => void
   /** A-N15 · `mode:transition:done` · send · NEW · target shape */
   modeTransitionDone: (request: TargetRequest<'mode:transition:done'>) => void
+  /** A-N22 · `veta:clickThrough` · send · NEW · target shape */
+  setVetaClickThrough: (request: TargetRequest<'veta:clickThrough'>) => void
+  /** A-N24 · `window:limits` · invoke · NEW · target shape */
+  getWindowingLimits: () => Promise<TargetResult<'window:limits'>>
   /** A-N31 · `claude:hooks:set` · invoke · NEW · target shape */
   setClaudeHooksEnabled: (
     request: TargetRequest<'claude:hooks:set'>
@@ -470,6 +474,9 @@ const api: DwarfAiMinersApi = {
   },
   modeTransitionDone: (request) =>
     sendOrDrop(() => ipcRenderer.send('mode:transition:done', request)),
+  setVetaClickThrough: (request) =>
+    sendOrDrop(() => ipcRenderer.send('veta:clickThrough', request)),
+  getWindowingLimits: () => invokeOrReject(() => ipcRenderer.invoke('window:limits')),
   setClaudeHooksEnabled: (request) =>
     invokeOrReject(() => ipcRenderer.invoke('claude:hooks:set', request)),
   setAskStep: (request) => invokeOrReject(() => ipcRenderer.invoke('ask:step:set', request)),
