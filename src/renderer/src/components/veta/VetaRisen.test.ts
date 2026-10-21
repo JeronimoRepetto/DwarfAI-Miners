@@ -121,4 +121,17 @@ describe('the window risen above the Veta strip', () => {
     const folds = world.layouts.filter((r) => r.kind === 'fold')
     expect(folds).toHaveLength(1)
   })
+
+  it('[US-VETA-005.AC03, S24.08] a draft typed in the risen chat is kept in the session store when it folds', async () => {
+    world = await mountVeta(TWO_MINES)
+    dwarf(BORIN).click()
+    await flushPromises()
+    await world.root.get('[data-veta-risen] textarea').setValue('typed in Veta')
+    expect(world.patches).toContainEqual({ kind: 'draft', dwarfId: BORIN, text: 'typed in Veta' })
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await flushPromises()
+    // The fold keeps what was typed, never an empty draft over it.
+    const drafts = world.patches.filter((patch) => patch.kind === 'draft')
+    expect(drafts.at(-1)).toEqual({ kind: 'draft', dwarfId: BORIN, text: 'typed in Veta' })
+  })
 })

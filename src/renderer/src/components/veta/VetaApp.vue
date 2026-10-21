@@ -623,7 +623,9 @@ function dwarfHit(mineId: MineId, dwarfId: DwarfId): void {
   void risen.dispatch({ type: 'dwarf-hit', dwarfId, mineId })
 }
 
+/** The chat's draft as it is typed: held by the hosted dock, and kept in the session store. */
 function risenDraft(dwarfId: string, text: string): void {
+  chat.setDraft(dwarfId, text)
   risen.draft(dwarfId as DwarfId, text)
 }
 
