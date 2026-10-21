@@ -9,6 +9,9 @@
  * - Facts are followed whether or not Veta is the shown window; what arrives while it is hidden runs no choreography,
  *   and the next show renders the settled state (S20.17).
  * - `state` is `null` until the first snapshot: nothing is drawn before the Host has said anything.
+ * - The Host connection lost (UC-067; ISSUE-296): while A-N04 says anything but `connected` the facts are `held` as last
+ *   known, read-only, every chamber and dwarf kept (S20.15); `connected` again reads a fresh snapshot, which machine 26
+ *   applies with no walk (S20.16, S26.15).
  *
  * The overflow (07 machine 25; UC-049; ISSUE-291), carried out by `useVetaOverflow` over `lib/veta/overflow.ts`: which
  * run of chambers is drawn and which mines fold into "+N". A resize, an edge change or a chamber set change
@@ -34,7 +37,7 @@ import type {
   SnapshotParams,
   SnapshotSection
 } from '@dwarfai/contracts'
-import { HOST_FRAME_SCHEMAS } from '@dwarfai/contracts'
+import { HOST_FRAME_SCHEMAS, hostConnectionViewSchema } from '@dwarfai/contracts'
 import {
   computed,
   getCurrentScope,
@@ -105,6 +108,8 @@ export interface VetaLifePart {
   mines: Readonly<Ref<readonly VetaMineView[]>>
   /** The last step machine 20 took or refused. */
   last: Readonly<Ref<LifeStep | null>>
+  /** The Host connection is not `connected`: the facts are held as last known, read-only (S20.15). */
+  held: Readonly<Ref<boolean>>
   /** Hears the arrival and departure frames once drawn, and each snapshot (machine 26's inputs). */
   onFacts(listener: (facts: readonly VetaFact[]) => void): () => void
   /** Follows the Host; answers whether the first snapshot was read. */
@@ -198,11 +203,24 @@ export function useVetaLife(deps: VetaLifeDeps): VetaLifePart {
   let follower: HostFollower | null = null
   let stopVisibility: (() => void) | null = null
 
+  /*
+   * S20.15 (ADR-002 D9; ADR-033 item 3): any state but `connected` holds the facts as last known. Nothing here clears a
+   * store or drops a dwarf; the follower reads a fresh snapshot once A-N04 says `connected` again (S20.16).
+   */
+  const held = shallowRef(false)
+  let stopConnection: (() => void) | null = null
+  function connectionChanged(view: unknown): void {
+    const parsed = hostConnectionViewSchema.safeParse(view)
+    if (parsed.success) held.value = parsed.data.state !== 'connected'
+  }
+
   function stop(): void {
     follower?.stop()
     follower = null
     stopVisibility?.()
     stopVisibility = null
+    stopConnection?.()
+    stopConnection = null
   }
   if (getCurrentScope() !== undefined) onScopeDispose(stop)
 
@@ -212,6 +230,7 @@ export function useVetaLife(deps: VetaLifeDeps): VetaLifePart {
     chambers,
     mines,
     last,
+    held,
     onFacts(listener) {
       factListeners.add(listener)
       return () => factListeners.delete(listener)
@@ -219,6 +238,7 @@ export function useVetaLife(deps: VetaLifeDeps): VetaLifePart {
     async start() {
       stopVisibility ??= deps.visibility.onChange(visibilityChanged)
       visibilityChanged()
+      stopConnection ??= deps.bridge.onHostConnection(connectionChanged)
       follower ??= followHost(
         {
           subscribe: (listener) => deps.bridge.onHostEvent(listener),

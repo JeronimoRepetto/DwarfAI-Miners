@@ -73,6 +73,14 @@
  * shrinks after the motion, never during one: the length and the tab band wait while anything moves. This window plays
  * the motion (`play`) on the bounded runner (`createVetaMotion`), transform and opacity only, 0 ms under reduced motion
  * and with the lantern steady. A departing dwarf's risen chat follows S24.10 / S24.11 as it walks out. No sound plays.
+ *
+ * The Host connection lost (ISSUE-296; UC-067; ADR-002 D9; ADR-033 item 3): while it is not `connected` the strip is
+ * held as last known, read-only (`data-held`), every chamber and dwarf kept and nothing walked; the snapshot read once
+ * it is back is applied with no choreography: a dwarf missing from it vanishes, a new one stands at its station, and a
+ * risen chat of a missing dwarf closes with no walk, its draft dropped (S20.16, S26.15). The Panel's one Host-state
+ * message with its Retry shows in this window (`VetaHostState`), over a window first grown to the risen window's room
+ * (DR-03), and the mode never changes to show it; while it shows the window takes the pointer and nothing behind it
+ * folds. Every shrink of the window, a re-snapshot's included, waits for the "+N" hover gate.
  */
 import { VETA_ISLAND, type DwarfId, type DwarfWire, type MineId } from '@dwarfai/contracts'
 import type { MineWorktreeOf } from '../../types'
@@ -140,7 +148,8 @@ import VetaIsland from './VetaIsland.vue'
 import VetaOverflow from './VetaOverflow.vue'
 import DwarfLabel from './DwarfLabel.vue'
 import VetaRisen from './VetaRisen.vue'
-import type { RisenContent } from '../../lib/veta/risenWindow'
+import VetaHostState from './VetaHostState.vue'
+import { risenGeometry, type RisenContent } from '../../lib/veta/risenWindow'
 
 const life = useWindowVetaLife()
 const { state, chambers } = life
@@ -558,6 +567,9 @@ watch(
   }
 )
 
+/** The Host-state message shows in this window (ISSUE-296): it holds the window, as the worktree question does. */
+const hostStateShown = ref(false)
+
 // While shown, a change of the overlay's size (a refusal line, a search) re-sizes its room.
 let resizes: ResizeObserver | null = null
 watch(overlayBox, (box) => {
@@ -589,6 +601,8 @@ function chooseItem(id: GripMenuItemId): void {
 /** A press anywhere: outside the open overlay it closes it (S22.03, S22.16). */
 function pressed(event: PointerEvent): void {
   swallow = false
+  // The Host-state message holds the window: a press on it folds nothing behind it (ISSUE-296).
+  if (hostStateShown.value) return
   const target = event.target as Element | null
   // Outside the risen window, the strip included (S24.08); a press on a dwarf is its click's (S24.05).
   if (
@@ -616,7 +630,7 @@ function blurred(): void {
  * The island and the overlay card take it; out of an overlay, and while dragged, the window is all island.
  */
 const clickThrough = useWindowVetaClickThrough((x, y) => {
-  if (dragging.value || question.value !== null) return true
+  if (dragging.value || question.value !== null || hostStateShown.value) return true
   return vetaTakesPointer(document.elementFromPoint?.(x, y) ?? null)
 })
 
@@ -1055,6 +1069,28 @@ const risen = useWindowVetaRisen({
   unhovered: whenUnhovered
 })
 
+// A re-snapshot (the Host back, `events_lost`, a new Host epoch) closes a risen chat whose dwarf it lacks (S20.16).
+const stopResnapshot = life.onFacts((facts) => {
+  if (facts.some((fact) => fact.kind === 'snapshot')) void risen.resnapshot()
+})
+
+/*
+ * The Host-state message's room (ISSUE-296; DR-03): the risen window's, centred on the island (07 machine 24's
+ * geometry), held as an overlay's beside the band. An open menu or picker closes first: one thing holds the window.
+ */
+async function hostStateRoom(open: boolean): Promise<void> {
+  if (!open) {
+    await overlay.close()
+    return
+  }
+  if (overlayKind.value !== null) {
+    picker.dispatch({ type: 'interrupt' })
+    await nextTick()
+  }
+  const { size, island } = measureStage()
+  await overlay.open(risenGeometry(dock.dock.value, size, island, island.length / 2).room)
+}
+
 /** Stops hearing runs into Veta that carry a chat (S24.18). */
 let stopLanding: (() => void) | null = null
 /** Stops hearing the runs Veta leaves (S24.14). */
@@ -1113,7 +1149,7 @@ function risenDraft(dwarfId: string, text: string): void {
 
 /** Esc outside the risen window folds it (S24.08); inside it the panel's own Esc closes it, the rename's first. */
 function escape(event: KeyboardEvent): void {
-  if (event.key !== 'Escape' || !risenOpen.value) return
+  if (event.key !== 'Escape' || !risenOpen.value || hostStateShown.value) return
   const target = event.target as Element | null
   if (typeof target?.closest === 'function' && target.closest('[data-veta-risen]') !== null) return
   void risen.dispatch({ type: 'esc', renaming: false })
@@ -1191,7 +1227,10 @@ watch(length, (now) => {
   if (choreo.moving.value) return
   const already = grown === now
   grown = null
-  if (started && !already) void placeIsland()
+  if (!started || already) return
+  // A shorter island (a re-snapshot that lacks a dwarf, ISSUE-296) waits for the hover gate; a longer one is placed now.
+  if (placed !== null && now < placed) void placeAfterMotion()
+  else void placeIsland()
 })
 
 // The fit is measured again on an edge or display change (S21.09, S21.11, S21.12, S25.03).
@@ -1243,6 +1282,7 @@ onBeforeUnmount(() => {
   resizes?.disconnect()
   dock.dispose()
   life.stop()
+  stopResnapshot()
   risen.stop()
   stopLanding?.()
   stopLeaving?.()
@@ -1263,6 +1303,7 @@ onBeforeUnmount(() => {
     data-veta-root
     :data-edge="dock.dock.value.edge"
     :data-life="state ?? 'unknown'"
+    :data-held="life.held.value ? 'true' : undefined"
     :data-add-panel-for="addPanelFor ?? undefined"
     @pointermove="hovered"
   >
@@ -1409,6 +1450,12 @@ onBeforeUnmount(() => {
       @draft="risenDraft"
       @close="risen.dispatch({ type: 'esc', renaming: false })"
       @open-in-panel="risen.dispatch({ type: 'open-in-panel' })"
+    />
+    <!-- An incompatible Host's Stop everything and quit goes to the Panel, which holds its confirmation (ISSUE-296). -->
+    <VetaHostState
+      :room="hostStateRoom"
+      :on-stop-everything="() => life.openPanel()"
+      @shown="hostStateShown = $event"
     />
     <WorktreeDialog
       :question="question"

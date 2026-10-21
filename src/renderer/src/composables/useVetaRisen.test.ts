@@ -332,4 +332,35 @@ describe('useVetaRisen', () => {
       'motion rise'
     ])
   })
+
+  // APPENDED for ISSUE-296: a re-snapshot after the Host connection came back (UC-067; ADR-033 item 3; S20.16).
+  it('[ADR-033, INV-113] a risen chat whose dwarf is missing from the re-snapshot closes with no walk and its draft is dropped', async () => {
+    // The fake host knows only Borin as present: Dain is missing from the snapshot.
+    const { risen, log, motionEnds } = world({ drafts: { [DAIN]: 'unsent' } })
+    await risen.dispatch({ type: 'dwarf-hit', dwarfId: DAIN, mineId: EREBOR })
+    await motionEnds()
+    expect(risen.machine.value.state).toBe('risen-chat')
+    log.length = 0
+
+    await risen.resnapshot()
+    // No `dwarf.departed` came, so nothing walks and nothing goes read-only: the chat closes, nothing kept.
+    expect(log).toEqual(['dropDraft dain', 'motion fold'])
+    await motionEnds()
+    expect(log.slice(2)).toEqual([
+      'layoutVeta {"kind":"fold"}',
+      'patch {"kind":"veta-risen-chat","dwarfId":null}',
+      'clear'
+    ])
+    expect(risen.machine.value.state).toBe('folded')
+    expect(log.filter((line) => line.includes('"draft"') || line.includes('chat-view'))).toEqual([])
+
+    // A chat whose dwarf is still there stays as it is.
+    const kept = world()
+    await kept.risen.dispatch({ type: 'dwarf-hit', dwarfId: BORIN, mineId: MORIA })
+    await kept.motionEnds()
+    kept.log.length = 0
+    await kept.risen.resnapshot()
+    expect(kept.log).toEqual([])
+    expect(kept.risen.machine.value.state).toBe('risen-chat')
+  })
 })
