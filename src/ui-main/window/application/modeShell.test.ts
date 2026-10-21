@@ -215,4 +215,31 @@ describe('the mode shell with a Veta window (ISSUE-285; ADR-025 items 1, 3)', ()
     expect(await back).toEqual({ ok: true, value: undefined })
     expect(veta.visible).toBe(false)
   })
+
+  it('[ADR-002, S10.18] a confirmation the Panel shows, asked for while Veta is shown, moves to the Panel first', async () => {
+    const veta = new FakeModeWindow()
+    const s = setup('hidden', false, {
+      built: ['panel', 'veta'],
+      veta: { window: () => veta, bounds: () => ({ x: 0, y: 1000, width: 480, height: 72 }) }
+    })
+    s.shell.panel.toggleVisible()
+    s.answer()
+    await Promise.resolve()
+    const toVeta = s.shell.coordinator.moveToMode({ mode: 'veta' })
+    s.answer()
+    s.shell.coordinator.transitionDone('veta', {
+      transitionId: s.transitions().at(-1)!.transitionId
+    })
+    await toVeta
+    expect(s.shell.coordinator.mode()).toBe('veta')
+    // Stop everything and quit's confirmation surface is the Panel (US-RES-002.AC08): the Panel is shown at once,
+    // inactive, as the target of a run from Veta, so the dialog pushed next is on screen.
+    s.shell.surfacePanel()
+    expect(s.state.shown).toBe(true)
+    expect(s.transitions().at(-1)).toMatchObject({ from: 'veta', to: 'panel', role: 'target' })
+    // From hidden it is the ordinary restore (S10.09).
+    const h = setup('hidden')
+    h.shell.surfacePanel()
+    expect(h.transitions()).toMatchObject([{ from: 'hidden', to: 'panel' }])
+  })
 })

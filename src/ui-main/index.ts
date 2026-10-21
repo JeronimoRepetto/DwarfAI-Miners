@@ -1265,10 +1265,11 @@ export async function startUiMain({
     panel !== undefined && host !== undefined && tray !== undefined
       ? createStopEverything({
           host: host.client,
-          // The confirmation shows in the Panel: a hidden Panel is shown first (US-RES-002.AC08; S10.18).
+          // The confirmation shows in the Panel: a hidden Panel is shown first (US-RES-002.AC08; S10.18), and with Veta
+          // shown the Panel is moved to, since only the Panel draws the confirmation (ISSUE-285).
           windows: {
             anyOpen: () => panel.visible(),
-            open: () => shownPanel.show(),
+            open: () => (shell === undefined ? shownPanel.show() : shell.surfacePanel()),
             push: (channel, payload) => {
               for (const window of modeWindowList()) window.send(channel, payload)
             }

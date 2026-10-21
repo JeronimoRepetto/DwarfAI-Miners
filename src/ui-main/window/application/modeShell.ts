@@ -61,6 +61,8 @@ export interface ModeShell {
   dispose(): void
   /** The Panel whose hide, show and toggle are the coordinator's runs. */
   panel: PanelWindowUseCases
+  /** Shows the Panel for a dialog only the Panel draws (Stop everything and quit's confirmation). */
+  surfacePanel(): void
 }
 
 export function composeModeShell(deps: ModeShellDeps): ModeShell {
@@ -147,6 +149,13 @@ export function composeModeShell(deps: ModeShellDeps): ModeShell {
     dispose: () => {
       stopDepartures?.()
       stopClosing?.()
+    },
+    // Only the Panel draws Stop everything and quit's confirmation (US-RES-002.AC08; S10.18): with another mode shown,
+    // the Panel is the target of a run, shown at once at its final bounds; from hidden it is the ordinary restore.
+    surfacePanel: () => {
+      const shown = coordinator.mode()
+      if (shown === 'hidden' || shown === 'panel') void coordinator.restore()
+      else void coordinator.moveToMode({ mode: 'panel' })
     },
     panel: {
       ...panel,
