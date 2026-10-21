@@ -60,6 +60,8 @@ node perf/_harness/releaseEvidence.mjs --from <folder> [--commit <released sha>]
 
 - It fails (exit 1) when either Veta idle scene, for the Veta renderer or the app, is missing on Windows, macOS or Linux,
   and names each missing row. Every other scene is listed beside them.
+- In CI the `perf-evidence` job runs it on every release tag once the three perf legs are done, over their
+  downloaded `perf-results-<os>` artifacts and the tagged commit (`--from artifacts --commit "$GITHUB_SHA"`).
 - It applies no CPU threshold: each OS is recorded without a gate until the lead records its baseline and margin in `17`
   §1.11. It reads only, and never runs on a pull request.
 

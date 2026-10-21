@@ -560,6 +560,44 @@ jobs:
           path: perf-results/**
           if-no-files-found: warn
 
+  # The release-check reader of the perf lane (ADR-034 item 4; ADR-025 Verification; 17 §1.11; ISSUE-297): on a
+  # release tag, once the three perf legs are done, it downloads their perf-results-<os> artifacts and prints one
+  # evidence row per OS, scene and process for the tagged commit. It fails when a Veta idle record (no sessions; every
+  # dwarf asleep; the Veta renderer and the app) is missing on Windows, macOS or Linux. It applies no CPU threshold
+  # until the lead records each OS's baseline in 17 §1.11, it runs even when a leg failed so it names what is missing,
+  # and it never runs on a pull request, so it is never a merge check (HO-38).
+  perf-evidence:
+    name: Perf release evidence
+    needs: perf
+    if: >-
+      !cancelled() &&
+      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pnpm and Node.js
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          version: 11.1.1
+          runtime: node@24
+          cache: false
+          install: false
+
+      # Each artifact lands in artifacts/perf-results-<runner os>/<os>/<date>.json.
+      - name: Download the perf results of the three OSes
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: perf-results-*
+          path: artifacts
+
+      - name: Read the release evidence
+        run: node perf/_harness/releaseEvidence.mjs --from artifacts --commit "$GITHUB_SHA"
+
   # The licence report, the SBOM of each artifact OS and the S-008-1 record check (20 §2.1 `license-sbom`, §2.4,
   # §3.2; 18 C-35, C-36; ISSUE-272). It runs on Linux on every push to main and on every event the package job runs
   # on (a `v*` tag, a manual dispatch), and never on a pull request, so it is not a merge check. It fails on a denied

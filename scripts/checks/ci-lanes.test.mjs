@@ -175,6 +175,30 @@ describe('release lanes in CI (17 §1.13, §5.2; 20 §2.1)', () => {
     expect(jobText('checks')).not.toContain('pnpm test:perf')
     expect(job).not.toContain(REQUIRED_CHECK)
   })
+
+  // ADDED for ISSUE-297: the release-check reader of the perf lane (ADR-034 item 4; 17 §1.11).
+  it('[ADR-034, NFR-OBS-03] on a release tag, after the perf legs, the perf-evidence job reads the three OS records with the release-check reader', () => {
+    const job = jobText('perf-evidence')
+    expect(job).toContain('needs: perf\n')
+    const condition = jobCondition(job)
+    expect(condition).toContain("github.event_name == 'push'")
+    expect(condition).toContain(RELEASE_TAG)
+    expect(condition, 'it reads what the legs left even when one failed').toContain('!cancelled()')
+    expect(condition, 'never nightly').not.toContain('schedule')
+    expect(condition, 'never on a pull request').not.toContain('pull_request')
+    expect(job).toMatch(/uses: actions\/download-artifact@[0-9a-f]{40} # v\d+\.\d+\.\d+\n/)
+    expect(job).toContain('pattern: perf-results-*\n')
+    expect(job).toContain('path: artifacts\n')
+    expect(job).toContain(
+      'run: node perf/_harness/releaseEvidence.mjs --from artifacts --commit "$GITHUB_SHA"\n'
+    )
+    expect(job.indexOf('pattern: perf-results-*'), 'it downloads before it reads').toBeLessThan(
+      job.indexOf('releaseEvidence.mjs')
+    )
+    expect(jobText('checks')).not.toContain('releaseEvidence.mjs')
+    expect(jobText('release'), 'the publish job is unchanged').not.toContain('perf-evidence')
+    expect(job).not.toContain(REQUIRED_CHECK)
+  })
 })
 
 // ADDED for the internal cut build (owner, 2026-10-02): `.github/workflows/internal-build.yml` packages the installers
