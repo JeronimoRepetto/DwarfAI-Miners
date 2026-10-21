@@ -173,6 +173,14 @@ function keydown(event: KeyboardEvent): void {
 .dm-field input:disabled {
   cursor: not-allowed;
 }
+/*
+ * A search field draws its own Clear search (`.dm-field__clear`); Chromium's own cancel glyph on a search input would
+ * be a second one beside it (ISSUE-288), on every search field: the Mines page, the mine picker.
+ */
+.dm-field input::-webkit-search-cancel-button {
+  appearance: none;
+  display: none;
+}
 .dm-field :deep(.dm-icon .c-o) {
   fill: var(--wood);
 }

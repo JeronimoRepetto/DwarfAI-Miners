@@ -156,8 +156,10 @@ describe('the Veta strip (07 machine 20; ISSUE-287)', () => {
     await entrance.trigger('click')
     await flushPromises()
     expect(veta.moves).toEqual([])
-    // Until the picker lands (ISSUE-288), the intent is all the entrance emits.
-    expect(veta.root.get('[data-veta-root]').attributes('data-picker-intent')).toBe('empty')
+    // AMENDED for ISSUE-288 (was: the entrance only emitted the intent until the picker landed): the empty picker opens.
+    expect(document.querySelector('[data-mine-picker] .dm-picker__none')?.textContent).toBe(
+      'No mines yet. Add a project folder to start.'
+    )
   })
 
   it('[US-VETA-001.AC01] a chamber holding an asking dwarf lights its lamp and outline, the dwarf raises ?, and mines keep their order', async () => {

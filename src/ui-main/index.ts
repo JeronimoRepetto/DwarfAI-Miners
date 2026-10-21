@@ -1851,8 +1851,13 @@ function electronNativeRows(panelWindow: () => BrowserWindow | undefined): {
     }),
     clipboard: new ElectronClipboard(clipboard),
     opener: new ElectronExternalOpener(shell),
-    // Cut 0 has one mode window, the Panel, where every attach and add control is pressed.
-    parentWindow: () => ({ windowId: panelWindow()?.id ?? -1 }),
+    // AMENDED for ISSUE-288 (was: the Panel, cut 0's one mode window): the window the person pressed the control in,
+    // which holds the focus as they press it — Veta for its mine picker's Add a mine (07 S22.10), the Panel for its
+    // own controls — so the dialog is modal to, and shows over, the window that asked. With no window of the app
+    // focused, the Panel.
+    parentWindow: () => ({
+      windowId: (BrowserWindow.getFocusedWindow() ?? panelWindow())?.id ?? -1
+    }),
     // A-13's execute half (ISSUE-170): the console target the Host resolved, raised or opened in the OS terminal.
     consoles: new TerminalConsoleRaiser()
   })

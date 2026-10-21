@@ -167,4 +167,30 @@ describe('useVetaDock (07 machine 21; 14 §2.2 A-N23, A-N28)', () => {
     expect(requests.at(-1)).toEqual({ kind: 'island-resize', length: 230 })
     expect(dock.dock.value).toEqual(HOME)
   })
+  it('[US-VETA-002.AC07, S21.05, S22.01] a press released under the threshold reports the grip click, and a drag does not', async () => {
+    const clicks: string[] = []
+    const dock = useVetaDock({
+      bridge: createFakeWindowApi({
+        layoutVeta: () => Promise.resolve({ applied: true, displayKey: KEY, dock: HOME }),
+        onVetaDockChanged: () => () => {},
+        onUiPreferencesReset: () => () => {},
+        onModeTransition: () => () => {},
+        getUiPreferences: () => Promise.resolve({})
+      }),
+      islandLength: () => 480,
+      windowOrigin: () => ({ x: 0, y: 0 }),
+      onClick: () => clicks.push('click')
+    })
+    const at = (x: number) => ({ screenX: x, screenY: 1380, clientX: x, clientY: 20 })
+    dock.pointerDown(at(100))
+    dock.pointerMove(at(103), { width: 480, height: 72 })
+    dock.pointerUp(at(103))
+    expect(clicks).toEqual(['click'])
+    // Moved 5 px or more: a drag, never a click.
+    dock.pointerDown(at(100))
+    dock.pointerMove(at(110), { width: 480, height: 72 })
+    dock.pointerUp(at(110))
+    await settle()
+    expect(clicks).toEqual(['click'])
+  })
 })

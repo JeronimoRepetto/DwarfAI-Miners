@@ -15,8 +15,11 @@ import { useHostConnection } from './useHostConnection'
  */
 const UNREADABLE = 'DwarfAI-Miners could not read your projects.'
 
-/** Said when the declare channel itself could not be reached (#85). */
-const UNREACHABLE = 'DwarfAI-Miners could not open the folder picker.'
+/**
+ * Said when the declare channel itself could not be reached (#85). Exported for Veta's mine picker, which shows the
+ * Mines page's own words when Add a mine fails there (07 S22.15; ISSUE-288).
+ */
+export const DECLARE_UNREACHABLE = 'DwarfAI-Miners could not open the folder picker.'
 
 /**
  * Said when the removal channel itself could not be reached (#169).
@@ -241,7 +244,7 @@ export function useProjectBrowse() {
       }
       return result.mineId ?? added.id
     } catch {
-      addError.value = UNREACHABLE
+      addError.value = DECLARE_UNREACHABLE
       return undefined
     } finally {
       adding.value = false
@@ -281,7 +284,7 @@ export function useProjectBrowse() {
       }
       return result.mineId ?? added.id
     } catch {
-      addError.value = UNREACHABLE
+      addError.value = DECLARE_UNREACHABLE
       return undefined
     } finally {
       adding.value = false

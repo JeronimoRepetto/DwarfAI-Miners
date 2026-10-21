@@ -109,6 +109,7 @@ import {
   type MineTier
 } from '../types'
 import { at as sampleTime, silenceMs, type GoldenSample } from './sample'
+import MinePicker from '../components/veta/MinePicker.vue'
 import VetaChamber from '../components/veta/VetaChamber.vue'
 import VetaEntrance from '../components/veta/VetaEntrance.vue'
 import VetaIsland from '../components/veta/VetaIsland.vue'
@@ -1936,6 +1937,11 @@ export const RENDERS: Record<string, Render> = {
   'organisms/veta-strip#no-sessions': vetaStrip(false),
   'molecules/mine-chamber#needs-you': vetaChamber,
   'molecules/mine-chamber#all-idle': vetaChamber,
+  // The mine picker on first run (ISSUE-288): no mine yet, so no row; its words are its own.
+  'molecules/mine-picker#first-run': () => ({
+    component: MinePicker,
+    props: { rows: [], notice: null }
+  }),
   'molecules/mine-card#needs-you': mineCard,
   'molecules/mine-card#default': mineCard,
   'molecules/mine-card#hover': mineCard,

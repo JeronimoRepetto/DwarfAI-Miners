@@ -14,6 +14,7 @@ import ActionButton from '../controls/ActionButton.vue'
 import ModalDialog from '../overlay/ModalDialog.vue'
 import MineCard from './MineCard.vue'
 import TierInfo from './TierInfo.vue'
+import WorktreeDialog from './WorktreeDialog.vue'
 import {
   REMOVE_BODY,
   countText,
@@ -36,13 +37,6 @@ import {
 } from '../../lib/browse/cardMotion'
 import { createBoundedMotion, type MotionAnimate } from '../../lib/shell/boundedMotion'
 import { designTierLabel } from '../../lib/presentation'
-import {
-  WORKTREE_BODY_LEAD,
-  WORKTREE_BODY_TAIL,
-  worktreeMineName,
-  worktreeQuestionAccept,
-  worktreeQuestionTitle
-} from '../../lib/worktree'
 import { MINE_TIERS } from '../../types'
 import type { MineTier, MineWorktreeOf } from '../../types'
 
@@ -142,20 +136,6 @@ function removalAction(index: number): void {
     exitingId.value = pendingRemoval.value.id
     emit('remove', pendingRemoval.value.id)
   }
-}
-
-const worktreeActions = computed(() => [
-  { label: 'Cancel' },
-  {
-    label: props.worktreeQuestion ? worktreeQuestionAccept(props.worktreeQuestion) : '',
-    variant: 'primary' as const,
-    disabled: props.adding
-  }
-])
-
-function worktreeAction(index: number): void {
-  if (index === 0) emit('dismiss-worktree')
-  else if (!props.adding) emit('open-main-project')
 }
 
 const tierInfoOpen = ref(false)
@@ -353,19 +333,12 @@ function cardLeave(element: Element, done: () => void): void {
       <p>{{ REMOVE_BODY }}</p>
       <p v-if="removeError" role="alert">{{ removeError }}</p>
     </ModalDialog>
-    <ModalDialog
-      :open="worktreeQuestion !== null"
-      :title="worktreeQuestion ? worktreeQuestionTitle(worktreeQuestion) : ''"
-      :actions="worktreeActions"
-      @action="worktreeAction"
-      @cancel="emit('dismiss-worktree')"
-    >
-      <!-- The mine is a folder's name: stripped, and bidi-isolated (C-08). -->
-      <p v-if="worktreeQuestion">
-        {{ WORKTREE_BODY_LEAD }}<bdi>{{ worktreeMineName(worktreeQuestion) }}</bdi
-        >{{ WORKTREE_BODY_TAIL }}
-      </p>
-    </ModalDialog>
+    <WorktreeDialog
+      :question="worktreeQuestion"
+      :adding="adding"
+      @accept="emit('open-main-project')"
+      @dismiss="emit('dismiss-worktree')"
+    />
     <ModalDialog
       :open="tierInfoOpen"
       title="Tiers and ore"

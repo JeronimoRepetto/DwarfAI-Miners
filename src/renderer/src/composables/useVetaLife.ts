@@ -27,7 +27,8 @@ import {
   type LifeStep,
   type VetaChamberView,
   type VetaFacts,
-  type VetaLifeState
+  type VetaLifeState,
+  type VetaMineView
 } from '../lib/veta/lifeState'
 import { createReadModel, followHost, type HostFollower } from './readModel'
 
@@ -55,6 +56,8 @@ export interface VetaLifePart {
   shown: Readonly<Ref<boolean>>
   /** The chambers to draw, in mine order. */
   chambers: Readonly<Ref<readonly VetaChamberView[]>>
+  /** Every live mine with its present crew, in mine order: the mine picker's list (07 S22.07). */
+  mines: Readonly<Ref<readonly VetaMineView[]>>
   /** The last step machine 20 took or refused. */
   last: Readonly<Ref<LifeStep | null>>
   /** Follows the Host; answers whether the first snapshot was read. */
@@ -86,11 +89,13 @@ export function useVetaLife(deps: VetaLifeDeps): VetaLifePart {
   const shown = shallowRef(false)
   const chambers = shallowRef<readonly VetaChamberView[]>([])
   const last = shallowRef<LifeStep | null>(null)
+  const mines = shallowRef<readonly VetaMineView[]>([])
 
   function publish(): void {
     state.value = life.state
     shown.value = life.shown
     chambers.value = life.chambers
+    mines.value = life.mines
     last.value = life.last
   }
 
@@ -121,6 +126,7 @@ export function useVetaLife(deps: VetaLifeDeps): VetaLifePart {
     state,
     shown,
     chambers,
+    mines,
     last,
     async start() {
       stopVisibility ??= deps.visibility.onChange(visibilityChanged)

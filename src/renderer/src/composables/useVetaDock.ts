@@ -9,6 +9,8 @@
  *   stands; a failed call puts the island back the same way as a cancel.
  * - `restore` (a cancelled drag, S21.10): UI main re-places the island at its place for its length (`island-resize`),
  *   saving nothing.
+ * - `click` (a press released under the threshold, S21.05): the grip's click, handed to `onClick`, which opens the
+ *   grip menu (07 S22.01; ISSUE-288).
  * - Arrow keys on the focused grip dock to the named edge (S21.11); the edge it is on already does nothing.
  * - A-N28: UI main re-placed Veta after a display change; the place is taken at once and a drag in progress is
  *   cancelled (FM-112). A-N12: after Reset metrics the renderer re-reads `vetaDock` (A-N20) and takes its stored place
@@ -53,6 +55,8 @@ export interface VetaDockDeps {
   islandLength(): number
   /** The window's top-left corner on the screen (`window.screenX`, `window.screenY`). */
   windowOrigin(): Point
+  /** A grip press released under the drag threshold (S21.05): the grip menu's click (07 S22.01; ISSUE-288). */
+  onClick?(): void
 }
 
 /** A pointer event's positions on the screen and in the window. */
@@ -144,6 +148,8 @@ export function useVetaDock(deps: VetaDockDeps) {
         void replace()
         return
       case 'click':
+        deps.onClick?.()
+        return
       case 'none':
         return
     }
@@ -269,10 +275,11 @@ export function useVetaDock(deps: VetaDockDeps) {
 export type VetaDockPart = ReturnType<typeof useVetaDock>
 
 /** The dock over the page's own `window.api` and window (R13: `window.api` is read in composables only). */
-export function useWindowVetaDock(islandLength: () => number): VetaDockPart {
+export function useWindowVetaDock(islandLength: () => number, onClick?: () => void): VetaDockPart {
   return useVetaDock({
     bridge: window.api,
     islandLength,
+    ...(onClick === undefined ? {} : { onClick }),
     windowOrigin: () => ({ x: window.screenX, y: window.screenY })
   })
 }

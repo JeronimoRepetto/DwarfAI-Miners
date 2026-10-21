@@ -8,7 +8,12 @@
 //   `drag-end` lands the island on the edge nearest the pointer (S21.08) and saves `vetaDock[displayKey]` (S21.09,
 //   S21.15); `dock-key` docks it to the named edge keeping its end and offset (S21.11); `island-resize` re-places it for
 //   its new length, saving nothing (S21.19), which is also how the renderer puts it back after a cancelled drag
-//   (S21.10). The other kinds answer `applied: false` until their issue builds them.
+//   (S21.10); `overlay` (ISSUE-288; 07 N-25; ADR-025 item 2) grows the window before a menu or the mine picker shows,
+//   toward the screen and aligned to the island's anchored end (`vetaOverlayFrame`; the renderer pins the island and
+//   the overlay by the same rule), so the island never moves on the screen, and `null` shrinks it back once the
+//   overlay closed. An overlay
+//   is never saved, and a drag forgets it (the renderer closes it silently, S22.17). The other kinds answer
+//   `applied: false` until their issue builds them.
 // - A landing whose bounds the OS refused (the read-back differs, `dockingAvailable` false) puts the island back where
 //   it was and saves nothing (S21.20); with docking unavailable (native Wayland, S21.16) a drag or an arrow key changes
 //   nothing.
@@ -17,12 +22,13 @@
 //   usage rule: the renderer re-reads its preferences on A-N12).
 // - Saves go through `UiPreferences` (the whole map, one atomic write, ADR-024 item 1); nothing is saved before a
 //   landing, so a crash or a quit mid-drag saves nothing (S21.18).
-import type {
-  ChannelKey,
-  VetaDock,
-  VetaDockChanged,
-  VetaLayoutRequest,
-  VetaLayoutResult
+import {
+  vetaOverlayFrame,
+  type ChannelKey,
+  type VetaDock,
+  type VetaDockChanged,
+  type VetaLayoutRequest,
+  type VetaLayoutResult
 } from '@dwarfai/contracts'
 import type { UiLog } from '../../diagnostics/uiLogger'
 import {
@@ -98,6 +104,8 @@ export function createVetaDockService(deps: VetaDockServiceDeps): VetaDockServic
   const { screen, prefs, window, log } = deps
   let island: IslandExtent = { ...deps.island }
   let place: VetaPlace | null = null
+  /** The open overlay's room beside the island, or `null` while none is open. */
+  let overlay: { width: number; height: number } | null = null
   /** The work area Veta was last placed (or first found) against, to tell a work-area change (S21.12). */
   let placedArea: Rect = { x: 0, y: 0, width: 0, height: 0 }
 
@@ -115,7 +123,17 @@ export function createVetaDockService(deps: VetaDockServiceDeps): VetaDockServic
     }
     return place
   }
-  const boundsAt = (at: VetaPlace): Rect => vetaBounds(areaOf(at.displayKey), at.dock, island)
+  const boundsAt = (at: VetaPlace): Rect => {
+    const hugging = vetaBounds(areaOf(at.displayKey), at.dock, island)
+    if (overlay === null) return hugging
+    const frame = vetaOverlayFrame(at.dock, island, overlay)
+    return {
+      x: hugging.x - frame.island.x,
+      y: hugging.y - frame.island.y,
+      width: frame.width,
+      height: frame.height
+    }
+  }
   const putAt = (at: VetaPlace): void => {
     placedArea = areaOf(at.displayKey)
     window.placeAt(boundsAt(at))
@@ -169,6 +187,7 @@ export function createVetaDockService(deps: VetaDockServiceDeps): VetaDockServic
     switch (request.kind) {
       case 'drag-start': {
         if (!deps.dockingAvailable()) return result(false)
+        overlay = null
         const surface = displayUnder(displays(), request.screenX, request.screenY)
         // The drag surface is not a place: `placedArea` stays the work area Veta is docked against (S21.12).
         window.placeAt(surface.workArea)
@@ -191,6 +210,11 @@ export function createVetaDockService(deps: VetaDockServiceDeps): VetaDockServic
       }
       case 'island-resize': {
         island = { ...island, length: request.length }
+        putAt(at)
+        return result(true)
+      }
+      case 'overlay': {
+        overlay = request.bounds === null ? null : { ...request.bounds }
         putAt(at)
         return result(true)
       }
