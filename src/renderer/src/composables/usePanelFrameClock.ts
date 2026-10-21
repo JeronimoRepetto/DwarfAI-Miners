@@ -12,12 +12,8 @@
  * playing while Veta is shown.
  */
 import type { App } from 'vue'
-import {
-  browserFrameClockEnv,
-  createFrameClock,
-  type PausableFrameClock
-} from '../lib/sprite/frameClock'
-import { FRAME_CLOCK_KEY } from './useFramePlayer'
+import type { PausableFrameClock } from '../lib/sprite/frameClock'
+import { FRAME_CLOCK_KEY, sharedFrameClock } from './useFramePlayer'
 
 /** What the Panel hears from UI main about its own window (A-P1 and its first read). */
 export interface PanelVisibilitySource {
@@ -34,7 +30,7 @@ export interface PanelVisibilitySource {
 export function usePanelFrameClock(
   app: App,
   source: PanelVisibilitySource,
-  clock: PausableFrameClock = createFrameClock(browserFrameClockEnv())
+  clock: PausableFrameClock = sharedFrameClock()
 ): { clock: PausableFrameClock; stop(): void } {
   let pushed = false
   const follow = (visible: boolean): void => {
