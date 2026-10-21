@@ -26,6 +26,11 @@
 // `cancelled`; a session that ends denies every call still open (fail closed, 15 §2.7). Only the
 // two delegation tools are ever pre-approved, and only on a gated launch (ISSUE-201).
 //
+// Attachments (#1463; 15 §1.2 `TurnInput.attachments`, US-MSG-002.AC03): each Host-revalidated path
+// is named on its own `Attached file: <path>` line ahead of the words of the user line
+// (`userContentOf`), and claude opens it with its own tools. Only paths travel, on stdin; the echo
+// DwarfAI records is the person's words alone.
+//
 // No Agent SDK anywhere (OQ-52, R11), no provider credential read (ADR-008 item 2), no auto-approve
 // flag (ADR-008 item 3: `buildArgv` refuses one). The driver never signals a process: ending one is
 // ADR-014's `SessionTerminator` (`close('end-thread')` closes stdin, then the tree kill); the only
@@ -689,10 +694,7 @@ class StreamJsonSession implements DriverSession {
     if (this.exited || this.closing) {
       throw sendError('session-closed', 'the session has ended')
     }
-    if (input.attachments.length > 0) {
-      throw sendError('channel-error', 'this driver does not send attachments yet')
-    }
-    const held = this.writeUser(input.text, input.messageId, input.messageId)
+    const held = this.writeUser(input.text, input.messageId, input.messageId, input.attachments)
     // No stream-json acknowledgement of a user line exists (S-022-1): written, not confirmed.
     return { confidence: 'unconfirmed', heldUntilTurnEnd: held, correlation: input.messageId }
   }
@@ -767,7 +769,12 @@ class StreamJsonSession implements DriverSession {
   // ---------- writing ----------
 
   /** Writes one user line; returns whether it queues behind a running turn. */
-  private writeUser(text: string, uuid: string, echoOf: string | null): boolean {
+  private writeUser(
+    text: string,
+    uuid: string,
+    echoOf: string | null,
+    attachments: TurnInput['attachments'] = []
+  ): boolean {
     const held = this.openTurns > 0
     if (!held) this.emit({ t: 'status', value: 'working' })
     this.openTurns += 1
@@ -783,7 +790,7 @@ class StreamJsonSession implements DriverSession {
     })
     const line = {
       type: 'user',
-      message: { role: 'user', content: text },
+      message: { role: 'user', content: userContentOf(text, attachments) },
       parent_tool_use_id: null,
       session_id: this.ref.providerSessionId,
       uuid
@@ -1055,4 +1062,25 @@ function spawnFailure(error: unknown): DriverLaunchError {
   const code = (error as { code?: unknown } | null)?.code
   const named = typeof code === 'string' ? code : 'failed'
   return launchError(named === 'ENOENT' ? 'not-installed' : 'could-not-start', `spawn ${named}`)
+}
+
+/**
+ * The line DwarfAI writes ahead of each file a turn carries (#1463): the same words the legacy held
+ * route (`attachmentDelivery.ts` `heldContentFor`, #408) named a file with when it did not send its
+ * bytes. Kept here, not imported: a module adapter never imports `contracts` (R9), and the literal
+ * the renderer reads is `contracts/text/heldSessionText.ts` `ATTACHED_FILE_PREFIX`.
+ */
+export const ATTACHED_FILE_PREFIX = 'Attached file: '
+
+/**
+ * A user line's text (15 §1.2 `TurnInput.attachments`; US-MSG-002.AC03; package gap, recorded in the
+ * #1463 hand-off): one `Attached file: <path>` line per Host-revalidated file, in the order sent,
+ * then the person's words, so the person's own claude opens each file with its own tools. Only the
+ * path travels, on stdin (never argv); the bytes are never read here (INV-62). A turn with no file
+ * is its words exactly as before.
+ */
+export function userContentOf(text: string, attachments: TurnInput['attachments']): string {
+  if (attachments.length === 0) return text
+  const named = attachments.map((file) => `${ATTACHED_FILE_PREFIX}${file.path}`)
+  return [...named, ...(text === '' ? [] : [text])].join('\n')
 }

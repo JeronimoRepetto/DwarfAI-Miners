@@ -15,6 +15,8 @@ import { FakeScheduler } from '../../../../kernel/fakes/FakeScheduler'
 import type { SpawnSpec } from '../../../../kernel/ports/processControl'
 import { POWERSHELL_ARGS, TMUX_LIST_PANES_ARGS, powerShellStdinLine } from './consoleKeys'
 import {
+  BRACKETED_PASTE_END,
+  BRACKETED_PASTE_START,
   SUBMIT_SPLIT_DELAY_MS,
   terminalTabTextArgs,
   tmuxLoadBufferArgs,
@@ -252,5 +254,57 @@ describe('ConsoleTextDelivery on macOS and Linux: the tmux pane or Terminal.app 
     const linux = posix('linux', noPane)
     expect(await linux.settle(linux.delivery.write(TARGET, MESSAGE))).toBe('not-targeted')
     expect(linux.writes()).toEqual([])
+  })
+})
+
+/*
+ * APPENDED for #1463: an observed Claude session's files travel with its message as legacy
+ * measured them (#408): each Host-revalidated path as a bracketed paste ahead of the relay text,
+ * through the same per-OS write, after the same identity check.
+ */
+describe('ConsoleTextDelivery with files (#1463)', () => {
+  const PATH = 'C:\\work\\red.png'
+  const PASTE = `${BRACKETED_PASTE_START}${PATH}${BRACKETED_PASTE_END}`
+
+  it('[US-MSG-002.AC03] Windows: each path as its own bracketed paste ahead of the relay text, in the one console write', async () => {
+    const { tools, delivery } = world('win32')
+    expect(await delivery.write(TARGET, MESSAGE, [PATH])).toBe('written')
+    expect([...tools.stdinOf.values()]).toEqual([
+      powerShellStdinLine(windowsTextWriteScript(TARGET.pid, RELAYED, [PASTE])!)
+    ])
+    expect(tools.events).toEqual([`probe ${TARGET.pid}`, `spawn ${POWERSHELL_ARGS.join(' ')}`])
+  })
+
+  it('[US-MSG-002.AC03] Windows: a message of files alone is written too', async () => {
+    const { tools, delivery } = world('win32')
+    expect(await delivery.write(TARGET, ' ', [PATH])).toBe('written')
+    expect([...tools.stdinOf.values()]).toEqual([
+      powerShellStdinLine(windowsTextWriteScript(TARGET.pid, '', [PASTE])!)
+    ])
+  })
+
+  it('[US-MSG-002.AC03] tmux and Terminal.app: the pastes and the relay text are the one payload, from stdin or as an argument', async () => {
+    const pane = posix('linux')
+    expect(await pane.settle(pane.delivery.write(TARGET, MESSAGE, ['/work/red.png']))).toBe(
+      'written'
+    )
+    const loads = pane.tools.spawns.findIndex((s) => s.args[0] === 'load-buffer')
+    const paste = `${BRACKETED_PASTE_START}/work/red.png${BRACKETED_PASTE_END}`
+    expect(pane.tools.stdinOf.get(9_000 + loads)).toBe(`${paste}${RELAYED}`)
+    expect(pane.tools.spawns.some((s) => s.args.some((a) => a.includes('red.png')))).toBe(false)
+
+    const tab = posix('darwin', { panes: { code: 0, stdout: '' } })
+    expect(await tab.settle(tab.delivery.write(TARGET, MESSAGE, ['/work/red.png']))).toBe('written')
+    expect(tab.tools.events.slice(-1)).toEqual([
+      `spawn ${terminalTabTextArgs('/dev/pts/4', `${paste}${RELAYED}`)!.join(' ')}`
+    ])
+  })
+
+  it('[ADR-012] a path no terminal can take whole writes nothing at all, words included', async () => {
+    const { tools, delivery } = world('win32')
+    expect(await delivery.write(TARGET, MESSAGE, ['/work/ok.png', '/work/a\nb.png'])).toBe(
+      'not-targeted'
+    )
+    expect(tools.events).toEqual([])
   })
 })

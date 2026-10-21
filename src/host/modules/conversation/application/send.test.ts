@@ -15,7 +15,9 @@ import type { ConversationEntry, TurnInput } from '../../suppliers'
 import type { Delivery } from '../domain/messages'
 import type { MessageLog } from '../ports/messageLog'
 import type { TurnHandOver, TurnSender, TurnSendResult } from '../ports/turnSender'
+import { attachmentKindOf } from '../domain/attachments'
 import { InMemoryMessageLog } from '../testing/InMemoryMessageLog'
+import { ConversationRetry } from './retry'
 import { ConversationSender, type SendEvent } from './send'
 import { SentEchoes } from './sentEchoes'
 
@@ -74,7 +76,7 @@ afterEach(() => {
 })
 
 /** The sender over an in-memory log whose `settleDelivery` a case can make fail. */
-function harness() {
+function harness(disk: Map<string, number> = new Map()) {
   let open = false
   const scope = { isInTransaction: () => open }
   const clock = new FakeClock(T0)
@@ -113,8 +115,15 @@ function harness() {
   let turnEnded: (end: TurnEnded) => void = () => undefined
   const sender = new ConversationSender({
     log,
-    // ISSUE-169: no file is described in this file's cases; every path is refused.
-    attachments: { describe: async () => ({ refused: 'unreadable' }) },
+    // ISSUE-169: a path is a file only while the case's `disk` holds it (#1463); any other is refused.
+    attachments: {
+      describe: async (path: string) => {
+        const bytes = disk.get(path)
+        if (bytes === undefined) return { refused: 'unreadable' as const }
+        const name = path.split('/').pop() as string
+        return { path, attachment: { path, name, kind: attachmentKindOf(name), bytes } }
+      }
+    },
     transactions,
     bus,
     onTurnEnded: (handler) => {
@@ -134,6 +143,14 @@ function harness() {
     bus,
     diagnostics,
     clock,
+    /** Retry over the same log and sender (application/retry.ts, S7.09). */
+    retry: new ConversationRetry({
+      log,
+      transactions,
+      recipients: { canReceiveMessages: () => true },
+      clock,
+      sender
+    }),
     failSettleWith(error: () => Error) {
       failSettle = error
     },
@@ -467,5 +484,114 @@ describe('ConversationSender: transcript-match correlation (S-022-1)', () => {
       h.ingest([person(TEXT, T0 + 5, { echoOf: 'echo-1' }), dwarf()])
       expect(h.stored()?.phase).toBe('delivered')
     }
+  })
+})
+
+/*
+ * APPENDED for #1463: a message's files (UC-035; 11 F4 step 2). The turn carries the Host-revalidated
+ * paths, the bubble the Host publishes carries `AttachmentMeta` (name and size, never the path or
+ * the bytes, INV-62), and Retry hands the same files over again, revalidated again, as the same
+ * message (S7.09, US-MSG-003.AC02).
+ */
+describe('ConversationSender: a message with files (#1463)', () => {
+  const PNG = '/work/mine/red.png'
+  const NOTES = '/work/mine/notes.txt'
+  const files = () =>
+    new Map([
+      [PNG, 900],
+      [NOTES, 120]
+    ])
+
+  it('[US-MSG-002.AC03, INV-62] the turn carries the revalidated paths, and the appended message only their names and sizes', async () => {
+    const h = harness(files())
+    const sent = await h.sender.send(DWARF, TEXT, [PNG, NOTES], request(30))
+    expect(sent.ok).toBe(true)
+    await settle()
+    expect(h.turns.turns.map((turn) => turn.attachments)).toEqual([
+      [
+        { path: PNG, name: 'red.png', bytes: 900 },
+        { path: NOTES, name: 'notes.txt', bytes: 120 }
+      ]
+    ])
+    const appended = h.bus.ofType('MessagesAppended').map((e) => e.payload.messages[0])
+    expect(appended.map((view) => view?.attachments)).toEqual([
+      [
+        { name: 'red.png', bytes: 900 },
+        { name: 'notes.txt', bytes: 120 }
+      ]
+    ])
+    expect(JSON.stringify(h.bus.ofType('MessagesAppended'))).not.toContain('/work/mine')
+  })
+
+  it('[US-MSG-003.AC02, US-MSG-002.AC03, S7.09] Retry hands the same files over again, as the same message', async () => {
+    const h = harness(files())
+    const sent = await h.sender.send(DWARF, TEXT, [PNG, NOTES], request(31))
+    if (!sent.ok) throw new Error('refused')
+    await settle()
+    h.turns.answer({ ok: false, error: { kind: 'channel-error', reason: 'the write failed' } })
+    await settle()
+    expect(h.stored()?.phase).toBe('failed')
+
+    expect(await h.retry.retry(sent.value, request(32))).toEqual({ ok: true, value: undefined })
+    await settle()
+    expect(h.turns.turns).toHaveLength(2)
+    expect(h.turns.turns[1]).toEqual({ ...h.turns.turns[0], messageId: sent.value })
+    expect(h.turns.turns[1]?.attachments.map((file) => file.path)).toEqual([PNG, NOTES])
+  })
+
+  it('[US-MSG-003.AC04, US-MSG-002.AC03] a file gone since the send fails the retry as a channel error, and nothing is handed over', async () => {
+    const disk = files()
+    const h = harness(disk)
+    const sent = await h.sender.send(DWARF, TEXT, [PNG, NOTES], request(33))
+    if (!sent.ok) throw new Error('refused')
+    await settle()
+    h.turns.answer({ ok: false, error: { kind: 'channel-error', reason: 'the write failed' } })
+    await settle()
+
+    disk.delete(NOTES)
+    expect((await h.retry.retry(sent.value, request(34))).ok).toBe(true)
+    await settle()
+    expect(h.turns.turns).toHaveLength(1)
+    expect(h.stored()).toMatchObject({
+      phase: 'failed',
+      failure: { kind: 'channel-error', reason: expect.stringContaining('attached file') }
+    })
+  })
+
+  it('[US-MSG-002.AC03, INV-62] an observed Claude row carrying [Image #1] and the typed words confirms the send with files', async () => {
+    const h = harness(files())
+    const sent = await h.sender.send(DWARF, TEXT, [PNG], request(37))
+    if (!sent.ok) throw new Error('refused')
+    await settle()
+    h.turns.answer({ ok: true, value: TRANSCRIPT_RECEIPT })
+    await settle()
+
+    h.ingest([person(`[Image #1] ${TEXT}`, T0 + 5), dwarf()])
+    expect(h.stored()).toMatchObject({ phase: 'reacted' })
+    expect(h.bus.ofType('MessageReactedTo').map((e) => e.payload.messageId)).toEqual([sent.value])
+  })
+
+  it('[US-MSG-002.AC03] a row with the files’ tokens but different words does not confirm the send', async () => {
+    const h = harness(files())
+    const sent = await h.sender.send(DWARF, TEXT, [PNG, NOTES], request(38))
+    if (!sent.ok) throw new Error('refused')
+    await settle()
+    h.turns.answer({ ok: true, value: TRANSCRIPT_RECEIPT })
+    await settle()
+
+    h.ingest([person(`${NOTES}[Image #1] another line entirely`, T0 + 5), dwarf()])
+    h.ingest([person(TEXT, T0 + 6), dwarf()])
+    expect(h.stored()?.phase).toBe('delivered')
+    expect(h.bus.ofType('MessageReactedTo')).toEqual([])
+  })
+
+  it('[US-MSG-003.AC02, S7.09] a retried message that carried no file is handed over with none', async () => {
+    const h = harness()
+    const messageId = await h.send(35)
+    h.turns.answer({ ok: false, error: { kind: 'channel-error', reason: 'the write failed' } })
+    await settle()
+    expect((await h.retry.retry(messageId, request(36))).ok).toBe(true)
+    await settle()
+    expect(h.turns.turns[1]?.attachments).toEqual([])
   })
 })

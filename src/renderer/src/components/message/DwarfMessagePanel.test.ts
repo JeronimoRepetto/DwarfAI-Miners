@@ -12,7 +12,7 @@ import {
   SESSION_CLOSED_REASON
 } from '../../lib/delivery/actionBar'
 /* --- Message attachments (#408) — one block, appended -------------------- */
-import { NO_ATTACH_CHANNEL_HINT, refusalSentence } from '../../lib/delivery/attachments'
+import { NO_ATTACH_AT_ALL_HINT, refusalSentence } from '../../lib/delivery/attachments'
 /* --- end of the #408 block ----------------------------------------------- */
 // AMENDED for #635 (was: SEND_AGAIN_LABEL): the design's Retry, decision log, Failed delivery.
 import { COPY_LABEL, RETRY_LABEL, sendMarker } from '../../lib/delivery/deliveryVerdict'
@@ -2592,28 +2592,42 @@ describe('DwarfMessagePanel attachments (#408)', () => {
     expect(wrapper.findAll('.dm-composer__files .dm-composer__file')).toHaveLength(0)
   })
 
-  it('disables the control with its reason on a channel that carries text only', () => {
+  /*
+   * AMENDED for #1463 (was: a `claude-relay` dwarf whose `capabilities.attach` is null, refused with
+   * NO_ATTACH_CHANNEL_HINT): US-MSG-002.AC04 makes a file follow text, so the refusal belongs to a
+   * dwarf with no route for a message at all, and its sentence is that one.
+   */
+  it('[US-MSG-002.AC04] disables the control with its reason on a dwarf that cannot receive a message', () => {
     fakeApi()
     const wrapper = panel({
-      dwarf: defaultDwarf({ textDelivery: 'claude-relay', capabilities: CANNOT_ATTACH })
+      dwarf: defaultDwarf({ textDelivery: undefined, capabilities: CANNOT_ATTACH })
     })
     const control = wrapper.find('.dm-composer__attach')
     expect(control.attributes('disabled')).toBeDefined()
-    expect(control.attributes('title')).toBe(NO_ATTACH_CHANNEL_HINT)
+    expect(control.attributes('title')).toBe(NO_ATTACH_AT_ALL_HINT)
   })
 
-  it('refuses a drop on that same channel with the same sentence, and asks main nothing', async () => {
+  it('[US-MSG-002.AC04] refuses a drop on that same dwarf with the same sentence, and asks main nothing', async () => {
     const api = fakeApi()
     const wrapper = panel({
-      dwarf: defaultDwarf({ textDelivery: 'claude-relay', capabilities: CANNOT_ATTACH })
+      dwarf: defaultDwarf({ textDelivery: undefined, capabilities: CANNOT_ATTACH })
     })
 
     await wrapper.find('.dm-composer').trigger('drop', dropEvent(['red.png']))
     await flushPromises()
 
     expect(api.describeDwarfAttachments).not.toHaveBeenCalled()
-    expect(wrapper.find('.dm-composer__hint[role="alert"]').text()).toBe(NO_ATTACH_CHANNEL_HINT)
+    expect(wrapper.find('.dm-composer__hint[role="alert"]').text()).toBe(NO_ATTACH_AT_ALL_HINT)
     expect(wrapper.findAll('.dm-composer__files .dm-composer__file')).toHaveLength(0)
+  })
+
+  it('[US-MSG-002.AC04] offers the control on a text-only channel too: a file follows text, and the Host answers for the route', () => {
+    fakeApi()
+    const wrapper = panel({
+      dwarf: defaultDwarf({ textDelivery: 'claude-relay', capabilities: CANNOT_ATTACH })
+    })
+    expect(wrapper.find('.dm-composer__attach').attributes('disabled')).toBeUndefined()
+    expect(wrapper.html()).not.toContain('carries text only')
   })
 
   it('marks the composer while a drag is over it, and unmarks it on leave', async () => {
@@ -2653,6 +2667,62 @@ describe('DwarfMessagePanel attachments (#408)', () => {
     expect(focus).toHaveBeenCalled()
   })
 })
+
+/* --- Attachments on a Host dwarf (#1463) — one block, appended ------------- */
+/**
+ * GitHub #1463: the board dwarf the Host serves (`useMines.toBoardDwarf`) carries no `capabilities`
+ * record, which only the legacy overlay set, so Attach was disabled on every dwarf after cut 5.
+ * US-MSG-002.AC04 makes a file follow text: a session that can take a message can take its files,
+ * and one that cannot take a message takes no file either, with the same sentence.
+ */
+describe('DwarfMessagePanel attachments on a Host dwarf (#1463)', () => {
+  const hostDwarf = (canReceiveMessages: boolean) => ({
+    ...defaultDwarf({ textDelivery: undefined }),
+    canReceiveMessages,
+    owned: false
+  })
+
+  afterEach(() => {
+    delete (window as unknown as { api?: unknown }).api
+  })
+
+  it('[US-MSG-002.AC01, US-MSG-002.AC04] offers Attach on a Host dwarf that can receive messages, with no capability record', () => {
+    fakeApi()
+    const control = panel({ dwarf: hostDwarf(true) }).find('.dm-composer__attach')
+    expect(control.attributes('disabled')).toBeUndefined()
+    expect(control.attributes('title')).toBe('Attach a file')
+  })
+
+  it('[US-MSG-002.AC03] a file dropped on a Host dwarf travels with the send, and the chips clear', async () => {
+    const api = fakeApi([[{ path: SHOT.path, attachment: SHOT }]])
+    const wrapper = panel({ dwarf: hostDwarf(true) })
+
+    await wrapper.find('.dm-composer').trigger('drop', dropEvent(['red.png']))
+    await flushPromises()
+    expect(api.describeDwarfAttachments).toHaveBeenCalledWith([SHOT.path])
+    await wrapper.find('.dm-composer textarea').setValue('look at this')
+    await wrapper.find('.dm-composer textarea').trigger('keydown', { key: 'Enter' })
+
+    expect(wrapper.emitted('send')).toEqual([
+      [{ text: 'look at this', pressEnter: true, attachments: [SHOT] }]
+    ])
+    expect(wrapper.findAll('.dm-composer__files .dm-composer__file')).toHaveLength(0)
+  })
+
+  it('[US-MSG-002.AC04] a dwarf that cannot receive a message takes no file either: Attach disabled with its reason, and a drop asks main nothing', async () => {
+    const api = fakeApi()
+    const wrapper = panel({ dwarf: hostDwarf(false) })
+    const control = wrapper.find('.dm-composer__attach')
+    expect(control.attributes('disabled')).toBeDefined()
+    expect(control.attributes('title')).toBe(NO_ATTACH_AT_ALL_HINT)
+
+    await wrapper.find('.dm-composer').trigger('drop', dropEvent(['red.png']))
+    await flushPromises()
+    expect(api.describeDwarfAttachments).not.toHaveBeenCalled()
+    expect(wrapper.find('.dm-composer__hint[role="alert"]').text()).toBe(NO_ATTACH_AT_ALL_HINT)
+  })
+})
+/* --- end of the #1463 block ------------------------------------------------ */
 
 /* --- The Codex resume channel (#450) — appended ------------------------------ */
 
@@ -2928,10 +2998,12 @@ describe('DwarfMessagePanel chrome controls', () => {
     expect(wrapper.emitted('close')).toHaveLength(1)
   })
 
-  // A dwarf whose provider declares no `attach` capability, which is every
-  // dwarf the fixtures build and most dwarfs in the wild.
-  it('disables Attach on a channel that carries no file, and says why on its title', () => {
-    const attach = panel().get('.dm-composer__attach')
+  // AMENDED for #1463 (was: `panel()`, a terminal dwarf with no `attach` capability): Attach
+  // follows text (US-MSG-002.AC04), so the disabled control is a dwarf with no route at all.
+  it('disables Attach on a dwarf that cannot receive a message, and says why on its title', () => {
+    const attach = panel({ dwarf: defaultDwarf({ textDelivery: undefined }) }).get(
+      '.dm-composer__attach'
+    )
     expect(attach.attributes('disabled')).toBeDefined()
     // The reason is on the hover line, which is why no CSS `pointer-events: none` may stand in
     // for the disabled state: it would take the title with it.

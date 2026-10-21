@@ -15,7 +15,10 @@
 //   never a regular file — makes the send `attachment-refused`, rolled back the same way. Files
 //   that pass meet the same receive check as text: a dwarf that cannot receive text cannot receive
 //   files either (US-MSG-002.AC04). The accepted files travel in `TurnInput.attachments` with their real paths, names and
-//   sizes; the row stores none of them and no byte is read (INV-62).
+//   sizes; no byte is read (INV-62). The appended `MessageView` carries their `AttachmentMeta`
+//   (name and size, 11 F4 step 2, #1463); the stored row does not yet, because `MessageLog.writeSent`
+//   takes no attachments (recorded in the #1463 hand-off). Retry hands the same files over again
+//   from Host memory, revalidated again (`resume`).
 // - Durable dedupe (14 §1.6): a `requestId` already stored for this dwarf — also after a Host
 //   restart — answers that row's `messageId`, publishes nothing and hands nothing over. It is looked
 //   up before the receive check, so a repeat is never answered `cannot-receive` for a message that
@@ -64,10 +67,10 @@ import type { DomainEventBus } from '../../../kernel/ports/domainEventBus'
 import type { IdGenerator } from '../../../kernel/ports/idGenerator'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
 import type { ConversationEntry } from '../../suppliers'
-import { echoesSentText } from '../domain/consoleText'
+import { echoesSentText, type EchoedFile } from '../domain/consoleText'
 import { advance, startDelivery, type DeliveryFact } from '../domain/delivery'
 import type { MessagesAppended } from '../domain/events'
-import type { Delivery, MessageView } from '../domain/messages'
+import { mayEchoTypedSend, type Delivery, type MessageView } from '../domain/messages'
 import { MESSAGES_PER_DWARF } from '../domain/retention'
 import type { AttachmentReader } from '../ports/attachmentReader'
 import type { DeliverySettlement, MessageLog } from '../ports/messageLog'
@@ -142,14 +145,28 @@ const EARLY_ECHOES_KEPT = 16
 interface EchoWatch {
   dwarfId: DwarfId
   text: string
+  /** #1463: the files the send carried, whose tokens the transcript row carries too (memory only). */
+  files: readonly EchoedFile[]
   sentAt: Instant
   correlation: string | null
   echoSeen: boolean
   repliedAfterEcho: boolean
   earlyEchoes: Array<{ echoOf: string; replied: boolean }>
+  /** #1463/#1464: ingest already claimed a transcript row as this send's echo (once per send). */
+  claimed: boolean
   /** The receipt said `transcript-match`: a reply after the echo is ✓✓ now. */
   live: boolean
 }
+
+/** The files a sent message carried, kept for its Retry (#1463; Host memory only, never stored). */
+interface KeptFiles {
+  dwarfId: DwarfId
+  files: readonly RevalidatedAttachment[]
+}
+
+/** The reason a Retry fails when a file it carried changed or went away since the send (UC-035). */
+export const ATTACHMENT_CHANGED_REASON =
+  'an attached file changed or is gone since the message was sent'
 
 /** A message the driver queued behind a running turn, with what its receipt said. */
 interface Held {
@@ -189,6 +206,8 @@ export class ConversationSender implements Pick<ConversationSendCommand, 'send'>
   private readonly held = new Map<MessageId, Held>()
   private readonly watched = new Map<MessageId, Watched>()
   private readonly echoes = new Map<MessageId, EchoWatch>()
+  /** #1463: the revalidated files of each message Retry may still hand over again. */
+  private readonly files = new Map<MessageId, KeptFiles>()
 
   constructor(private readonly deps: ConversationSendDeps) {
     deps.onTurnEnded((end) => this.turnEnded(end))
@@ -228,18 +247,20 @@ export class ConversationSender implements Pick<ConversationSendCommand, 'send'>
     if (written.existing) return { ok: true, value: messageId }
 
     const { delivery } = startDelivery({ messageId, dwarfId, kind: 'message', at })
-    this.track(delivery, text)
+    this.track(delivery, text, files ?? [])
     const view: MessageView = {
       id: messageId,
       dwarfId,
       role: 'person',
       text,
-      attachments: [],
+      // 11 F4 step 2: name and size only, never the path or the bytes (INV-62).
+      attachments: (files ?? []).map(({ name, bytes }) => ({ name, bytes })),
       delivery,
       providerTime: null,
       createdAt: at
     }
     this.publish('MessagesAppended', { dwarfId, messages: [view] })
+    this.keepFiles(delivery, files ?? [])
     this.handOverLater(delivery, text, files ?? [])
     return { ok: true, value: messageId }
   }
@@ -248,27 +269,45 @@ export class ConversationSender implements Pick<ConversationSendCommand, 'send'>
    * S7.09 (application/retry.ts, ISSUE-168): a retried message's `sending` delivery, already
    * committed by `MessageLog.resend` (AMENDMENT-20), walks its marks again as the same message —
    * `MessageSent`, then the hand-over with the same `TurnInput.messageId` (ADR-022 item 5) — with
-   * no second bubble (no `MessagesAppended`). The row stores no attachments (`MessageView.attachments`
-   * is `[]` at send), so the retry hands over the stored text alone.
+   * no second bubble (no `MessagesAppended`). #1463: the files the message carried go again, from
+   * Host memory (the row keeps no path, INV-62), revalidated again before the hand-over; one that
+   * changed or went away since fails the retry `channel-error` with nothing handed over (UC-035
+   * "A path changed between describe and send"). A Host restarted since the send no longer holds
+   * them (known risk, recorded in the #1463 hand-off).
    */
   resume(delivery: Delivery, text: string): void {
-    this.track(delivery, text)
-    this.handOverLater(delivery, text, [])
+    const kept = this.files.get(delivery.messageId)
+    this.track(delivery, text, kept?.files ?? [])
+    this.handOverLater(delivery, text, kept?.files ?? [], kept !== undefined)
+  }
+
+  /**
+   * The files of a message that may still be retried, in Host memory only (`files`), bounded per
+   * dwarf like the ✓✓ watch: the oldest goes first.
+   */
+  private keepFiles(delivery: Delivery, files: readonly RevalidatedAttachment[]): void {
+    if (files.length === 0) return
+    const { messageId, dwarfId } = delivery
+    const ofDwarf = [...this.files].filter(([, kept]) => kept.dwarfId === dwarfId)
+    if (ofDwarf.length >= WATCHED_PER_DWARF) this.files.delete(ofDwarf[0]?.[0] as MessageId)
+    this.files.set(messageId, { dwarfId, files: [...files] })
   }
 
   /** The Host-memory tracking of a delivery just put in `sending`, sent at `delivery.phaseAt`. */
-  private track(delivery: Delivery, text: string): void {
+  private track(delivery: Delivery, text: string, files: readonly RevalidatedAttachment[]): void {
     const { messageId, dwarfId } = delivery
     this.deliveries.set(messageId, delivery)
     this.inFlight.set(messageId, { dwarfId, endsSeen: [], sessionEnded: false })
     this.echoes.set(messageId, {
       dwarfId,
       text,
+      files: files.map(({ path, name }) => ({ path, name })),
       sentAt: delivery.phaseAt,
       correlation: null,
       echoSeen: false,
       repliedAfterEcho: false,
       earlyEchoes: [],
+      claimed: false,
       live: false
     })
   }
@@ -277,15 +316,27 @@ export class ConversationSender implements Pick<ConversationSendCommand, 'send'>
   private handOverLater(
     delivery: Delivery,
     text: string,
-    attachments: readonly RevalidatedAttachment[]
+    attachments: readonly RevalidatedAttachment[],
+    revalidate = false
   ): void {
     const { messageId, dwarfId } = delivery
     this.publish('MessageSent', { messageId, dwarfId, kind: 'message' })
     // The hand-over continues after this answer, with no caller (14 §1.7). It never rejects: an
     // unhandled rejection would end the Host (wiring/uncaught.ts).
     void Promise.resolve()
-      .then(() => this.handOver(dwarfId, messageId, text, attachments))
+      .then(() => (revalidate ? this.revalidated(attachments) : attachments))
+      .then((files) => this.handOver(dwarfId, messageId, text, files))
       .catch((error: unknown) => this.dropAfter(error, messageId, dwarfId))
+  }
+
+  /** A retry's files checked again (16 §4.6), or null when one changed or went away since. */
+  private revalidated(
+    files: readonly RevalidatedAttachment[]
+  ): Promise<RevalidatedAttachment[] | null> {
+    return revalidateAttachments(
+      files.map((file) => file.path),
+      this.deps.attachments
+    )
   }
 
   /**
@@ -305,6 +356,30 @@ export class ConversationSender implements Pick<ConversationSendCommand, 'send'>
     for (const [messageId, watched] of [...this.watched]) {
       if (watched.dwarfId === dwarfId) this.forget(messageId)
     }
+  }
+
+  /**
+   * Whether an observed transcript row is the echo of a message this Host relayed and still waits
+   * on (INV-60; GitHub #1463, #1464): a person row with no echo correlation (the relay cannot carry
+   * one, S-022-1), whose text is the send's as typed — its files' tokens taken off
+   * (`echoesSentText`) — at or after the send. The oldest such send claims it, once; ingest then
+   * keeps the row's key and writes no second bubble, as ISSUE-182 does for a live-stream echo. The
+   * send path still hears the row itself for its marks (`entriesIngested`). Host memory only: after
+   * a restart nothing waits, and the row is a message of its own (known risk).
+   */
+  claimTranscriptEcho(dwarfId: DwarfId, entry: ConversationEntry): boolean {
+    if (!mayEchoTypedSend(entry, 'transcript')) return false
+    const at = entry.providerTime ?? this.deps.clock.now()
+    const claimed = [...this.echoes.values()].find(
+      (w) =>
+        w.dwarfId === dwarfId &&
+        !w.claimed &&
+        at >= w.sentAt &&
+        echoesSentText(entry.text, w.text, w.files)
+    )
+    if (claimed === undefined) return false
+    claimed.claimed = true
+    return true
   }
 
   /**
@@ -338,21 +413,26 @@ export class ConversationSender implements Pick<ConversationSendCommand, 'send'>
     dwarfId: DwarfId,
     messageId: MessageId,
     text: string,
-    attachments: readonly RevalidatedAttachment[]
+    attachments: readonly RevalidatedAttachment[] | null
   ): Promise<void> {
     let result: Awaited<ReturnType<TurnSender['send']>>
     // The echo can arrive before this hand-over answers (INV-60): it is claimed by its text now.
     this.deps.echoes.track(dwarfId, messageId, text)
-    try {
-      result = await this.deps.turns.send(dwarfId, {
-        messageId,
-        kind: 'message',
-        text,
-        attachments
-      })
-    } catch {
-      // A sender that throws instead of answering is a channel error, never a silent loss.
-      result = { ok: false, error: { kind: 'channel-error', reason: 'the hand-over failed' } }
+    if (attachments === null) {
+      // A retried file that changed or went away (#1463): nothing is handed over without it.
+      result = { ok: false, error: { kind: 'channel-error', reason: ATTACHMENT_CHANGED_REASON } }
+    } else {
+      try {
+        result = await this.deps.turns.send(dwarfId, {
+          messageId,
+          kind: 'message',
+          text,
+          attachments
+        })
+      } catch {
+        // A sender that throws instead of answering is a channel error, never a silent loss.
+        result = { ok: false, error: { kind: 'channel-error', reason: 'the hand-over failed' } }
+      }
     }
     if (result.ok) this.deps.echoes.correlate(messageId, result.value.correlation)
     else this.deps.echoes.forget(messageId)
@@ -531,6 +611,11 @@ export class ConversationSender implements Pick<ConversationSendCommand, 'send'>
         this.deps.log.settleDelivery(messageId, settlementOf(next), next.phaseAt)
       )
       this.deliveries.set(messageId, next)
+      // Only a `channel-error` is retried with the files still held (S7.09); any other settled
+      // phase never hands them over again (#1463).
+      if (next.phase !== 'sending' && next.failure?.kind !== 'channel-error') {
+        this.files.delete(messageId)
+      }
       if (next.phase === 'failed' && next.failure !== undefined) {
         this.forget(messageId)
         this.publish('MessageDeliveryFailed', { messageId, dwarfId, failure: next.failure })
@@ -589,7 +674,7 @@ function noteEcho(
   if (origin !== 'transcript') return
   const at = entry.providerTime ?? now
   const claimed = watching.find(
-    (w) => !w.echoSeen && echoesSentText(entry.text, w.text) && at >= w.sentAt
+    (w) => !w.echoSeen && echoesSentText(entry.text, w.text, w.files) && at >= w.sentAt
   )
   if (claimed !== undefined) claimed.echoSeen = true
 }

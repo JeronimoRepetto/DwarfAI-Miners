@@ -25,8 +25,12 @@
 //   text from stdin into a named buffer, a bracketed paste deleted after, Enter in a call of its own).
 // - `terminalTabWrite.ts` `buildTerminalTabWriteCommand(tty, payload, true)` — KEPT as
 //   `terminalTabTextArgs` (measured on macOS 2026-09-18, #367, #471).
-// - `attachmentDelivery.ts` (paths as bracketed pastes) — not carried: an observed relay takes no
-//   attachment (ISSUE-169 owns attachments; `send` refuses them before any row today).
+// - `attachmentDelivery.ts` `consoleChunksFor` (paths as bracketed pastes, then the words, Enter
+//   alone; a path past one chunk refused, never split) — ADAPTED for #1463 to `relayPayloadOf` /
+//   `pastedPathOf`: the same markers, order and bound, on the relay text instead of `toConsoleLine`,
+//   plus a refusal of a path carrying a control character (a line break would submit, an escape
+//   could end the paste). `heldContentFor` (Agent SDK content blocks) — not carried: no Agent SDK
+//   (R11); the stream-json driver names the paths in its user line instead.
 
 import { normalizeConsoleText } from '../../domain/consoleText'
 
@@ -44,6 +48,54 @@ export function relayTextOf(text: string): string | null {
   const flat = normalizeConsoleText(text)
   if (flat === '' || Array.from(flat).length > MAX_RELAY_TEXT_CODE_POINTS) return null
   return flat
+}
+
+/**
+ * The VT markers a terminal wraps a dropped path in (legacy `attachmentDelivery.ts`, #408): a path
+ * that arrives between them is read as the person's own paste, so Claude Code attaches an image and
+ * takes any other path as text it opens with its own tools.
+ */
+export const BRACKETED_PASTE_START = '\u001b[200~'
+export const BRACKETED_PASTE_END = '\u001b[201~'
+
+/** C0 and C1 controls and DEL: a line break would submit, an escape could end the paste early. */
+const CONTROL = /[\u0000-\u001f\u007f-\u009f]/
+
+/** What a message hands a terminal: its files as bracketed pastes, then its relay text. */
+export interface RelayPayload {
+  readonly pastes: readonly string[]
+  /** The relay text (`relayTextOf`'s rule); empty for a message of files alone. */
+  readonly words: string
+}
+
+/**
+ * One path as the bracketed paste a terminal is handed, or null when no terminal can take it whole:
+ * empty, carrying a control character, or longer than one console chunk (a path split across two
+ * writes would attach nothing, #425, so it is refused rather than split).
+ */
+export function pastedPathOf(path: string): string | null {
+  if (path === '' || CONTROL.test(path)) return null
+  const paste = `${BRACKETED_PASTE_START}${path}${BRACKETED_PASTE_END}`
+  return Array.from(paste).length > MAX_CONSOLE_CHUNK_CODE_POINTS ? null : paste
+}
+
+/**
+ * A message's files and words for a terminal (#1463; legacy `consoleChunksFor`, measured
+ * 2026-09-16): every path pasted, in the order sent, ahead of the relay text. Null — nothing is
+ * typed — when one path cannot be pasted whole, when there is neither a file nor a word, or when
+ * the whole passes MAX_RELAY_TEXT_CODE_POINTS: a message is never sent without some of its files.
+ */
+export function relayPayloadOf(text: string, paths: readonly string[]): RelayPayload | null {
+  const pastes: string[] = []
+  for (const path of paths) {
+    const paste = pastedPathOf(path)
+    if (paste === null) return null
+    pastes.push(paste)
+  }
+  const words = normalizeConsoleText(text)
+  if (pastes.length === 0 && words === '') return null
+  const length = Array.from(pastes.join('') + words).length
+  return length > MAX_RELAY_TEXT_CODE_POINTS ? null : { pastes, words }
 }
 
 /** `text` in chunks of at most MAX_CONSOLE_CHUNK_CODE_POINTS code points; never an empty chunk. */
@@ -72,15 +124,20 @@ const base64Utf16 = (text: string): string => Buffer.from(text, 'utf16le').toStr
 
 /**
  * PowerShell that types `text` (already the relay text) into the console input buffer of `pid`,
- * each bounded chunk in its own `WriteConsoleInputW` call and Enter in a last call of its own, in one
+ * after each of `pastes` (`pastedPathOf`, #1463) in a call of its own, each bounded chunk of the
+ * text in its own `WriteConsoleInputW` call and Enter in a last call of its own, in one
  * child and one attach, with no window raised and the foreground untouched. It must run in a child of
  * its own (`FreeConsole`, then `AttachConsole`) and take its handle from `CONIN$`. Exit codes: 2 the
  * attach was refused and 3 `CONIN$` would not open (nothing written), 4 a call was short or failed
  * (part may be written). Null for a pid that cannot name a process, or no text.
  */
-export function windowsTextWriteScript(pid: number, text: string): string | null {
-  if (!Number.isInteger(pid) || pid <= 0 || text === '') return null
-  const chunks = [...boundedChunks(text), ENTER_CHUNK]
+export function windowsTextWriteScript(
+  pid: number,
+  text: string,
+  pastes: readonly string[] = []
+): string | null {
+  if (!Number.isInteger(pid) || pid <= 0 || (text === '' && pastes.length === 0)) return null
+  const chunks = [...pastes, ...boundedChunks(text), ENTER_CHUNK]
   const lines = [
     // No cmdlet runs and no module is loaded (a fresh user's first cmdlet builds a module cache and
     // stalled CI there, ISSUE-141); only the language and .NET are used.

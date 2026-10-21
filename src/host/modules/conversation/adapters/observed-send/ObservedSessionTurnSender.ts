@@ -21,8 +21,12 @@
 // the echo is matched by text (S-022-1; ADR-007 item 3). Failures: the session's process gone, or a
 // thread the store no longer holds → `session-closed` (S7.07, Copy alone); nothing written because
 // the terminal cannot be targeted, a write that did not finish, or a queue that failed →
-// `channel-error` with its reason (S7.06, Retry). Attachments (ISSUE-169) and a delegation hand-off
-// (ADR-013 item 6) are not relayed. Nothing here logs the text.
+// `channel-error` with its reason (S7.06, Retry). A delegation hand-off (ADR-013 item 6) is not
+// relayed. Attachments (#1463): an observed Claude session gets each Host-revalidated path as a
+// bracketed paste ahead of its words (ConsoleTextDelivery, legacy #408), and a path no terminal can
+// take whole refuses the message before anything is typed; a Codex thread's queue carries text
+// only, so a message with files is refused whole rather than queued without them. Nothing here logs
+// the text or a path.
 import type { ProcessIdentity } from '../../../../kernel/domain/processIdentity'
 import type { DwarfId, ProviderId } from '../../../../kernel/domain/values'
 import type { TurnInput } from '../../../suppliers'
@@ -33,6 +37,7 @@ import type {
   TurnSendResult
 } from '../../ports/turnSender'
 import type { CodexQueueOutcome, CodexThreadQueue } from './CodexThreadQueue'
+import { pastedPathOf } from './consoleText'
 import type { ConsoleTextDelivery, TextWriteOutcome } from './ConsoleTextDelivery'
 
 /** What the composition knows of an observed dwarf's session: its provider identity and process. */
@@ -86,19 +91,24 @@ export class ObservedSessionTurnSender implements TurnSender {
   async send(dwarfId: DwarfId, turn: TurnInput): Promise<TurnSendResult> {
     const path = this.pathOf(dwarfId)
     if (path === null) return CLOSED
-    if (turn.attachments.length > 0) return channelError('an observed session takes no attachment')
     if (turn.kind !== 'message') {
       return channelError('a hand-off is not relayed into an observed session')
     }
+    const files = turn.attachments.map((file) => file.path)
     if (path.kind === 'terminal') {
+      if (files.some((file) => pastedPathOf(file) === null)) {
+        return channelError("an attached file's path cannot be typed into a terminal")
+      }
       let written: TextWriteOutcome
       try {
-        written = await this.deps.terminal.write(path.process, turn.text)
+        written = await this.deps.terminal.write(path.process, turn.text, files)
       } catch {
         written = 'incomplete'
       }
       return written === 'written' ? handedOver(turn) : { ok: false, error: WRITE_FAILURE[written] }
     }
+    // The queue carries one text argument and nothing else (legacy `ATTACHMENT_CHANNELS`, #408).
+    if (files.length > 0) return channelError("an observed Codex thread's queue takes no files")
     let queued: CodexQueueOutcome
     try {
       queued = await this.deps.codex.queue(path.thread, turn.text)

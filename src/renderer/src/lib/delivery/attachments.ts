@@ -17,7 +17,6 @@ import {
   MAX_DWARF_ATTACHMENT_BYTES,
   MAX_DWARF_ATTACHMENTS_TOTAL_BYTES,
   refuseAttachment,
-  type Dwarf,
   type DwarfAttachment,
   type DwarfAttachmentPick,
   type DwarfAttachmentRefusal
@@ -108,19 +107,16 @@ export const ATTACH_LOST_CONTACT = 'The panel lost contact with the app, so noth
 /** What the attach control says where a file can travel. */
 export const ATTACH_HINT = 'Attach images or files to this message.'
 /**
- * What it says where one cannot, in the kick hint's idiom: the fact, then the
- * way out.
- *
- * The way out is real and is the one the measurement found — a session's own
- * console takes a file, and a relay or a queue carries a sentence. A dwarf with
- * no channel at all is given no way out, because there is none to name.
+ * What it says where one cannot: a file follows text (US-MSG-002.AC04), so a session that cannot
+ * take a message takes no file either, and the sentence says the fact rather than naming a way out.
  */
-export const NO_ATTACH_CHANNEL_HINT =
-  "This session's channel carries text only; attach a file from its own console instead."
 export const NO_ATTACH_AT_ALL_HINT = "This session can't be written to, so it takes no files."
 
-/** The attach control's title, read off the capability rather than guessed. */
-export function attachHint(dwarf: Dwarf): string {
-  if (dwarf.capabilities?.attach != null) return ATTACH_HINT
-  return dwarf.capabilities?.sendText == null ? NO_ATTACH_AT_ALL_HINT : NO_ATTACH_CHANNEL_HINT
+/**
+ * The attach control's title, off the one fact the composer itself reads (#1463): whether the
+ * session can receive a message at all. A session that cannot take an attachment is treated as one
+ * that cannot take text (US-MSG-002.AC04), so there is no second capability to consult.
+ */
+export function attachHint(canReceive: boolean): string {
+  return canReceive ? ATTACH_HINT : NO_ATTACH_AT_ALL_HINT
 }

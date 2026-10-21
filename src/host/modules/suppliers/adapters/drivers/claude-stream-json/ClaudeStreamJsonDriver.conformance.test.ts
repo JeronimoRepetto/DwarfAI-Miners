@@ -994,7 +994,15 @@ describe('ClaudeStreamJsonDriver', () => {
     expect(await againstExpected('protocol-drift')).toEqual([])
   })
 
-  it('[C-05] a turn with attachments is refused as a channel error, never sent without them', async () => {
+  /*
+   * AMENDED for #1463 (was: a turn with attachments refused as a channel error): 15 §1.2 hands the
+   * driver the Host-revalidated paths (`TurnInput.attachments`) and US-MSG-002.AC03 wants them to
+   * travel. Package gap (15 is silent on the encoding), resolved as the legacy held route promised
+   * a file it did not send the bytes of: one `Attached file: <path>` line per file, then the words,
+   * in the user line's text, so the person's own claude opens each with its own tools. The paths
+   * travel on stdin, never argv; the echo DwarfAI records is the person's words alone.
+   */
+  it('[C-05, US-MSG-002.AC03] a turn with attachments names each revalidated path in the user line, ahead of the words', async () => {
     const run = await runScript(
       factoryWith(),
       [{ do: 'launch' }],
@@ -1002,15 +1010,57 @@ describe('ClaudeStreamJsonDriver', () => {
       OPTIONS
     )
     const session = run.session as DriverSession
-    await expect(
-      session.sendTurn({
-        messageId: 'm-1' as never,
-        kind: 'message',
-        text: 'look at this',
-        attachments: [{ path: '/work/mine/a.png', name: 'a.png', bytes: 3 }]
-      })
-    ).rejects.toEqual({ kind: 'channel-error', reason: expect.any(String) })
-    expect(run.transports[0]?.sent).toHaveLength(1)
+    const receipt = await session.sendTurn({
+      messageId: 'm-1' as never,
+      kind: 'message',
+      text: 'look at this',
+      attachments: [
+        { path: '/work/mine/a.png', name: 'a.png', bytes: 3 },
+        { path: '/work/mine/notes.txt', name: 'notes.txt', bytes: 12 }
+      ]
+    })
+    await settle()
+    expect(receipt).toEqual({
+      confidence: 'unconfirmed',
+      heldUntilTurnEnd: false,
+      correlation: 'm-1'
+    })
+    const sent = run.transports[0]?.sent ?? []
+    expect(sent).toHaveLength(2)
+    expect(JSON.parse(sent[1] as string)).toEqual({
+      type: 'user',
+      message: {
+        role: 'user',
+        content:
+          'Attached file: /work/mine/a.png\nAttached file: /work/mine/notes.txt\nlook at this'
+      },
+      parent_tool_use_id: null,
+      session_id: (run.session as DriverSession).ref.providerSessionId,
+      uuid: 'm-1'
+    })
+    const echo = run.events.find((event) => event.t === 'message' && event.record.echoOf === 'm-1')
+    expect(echo).toMatchObject({ record: { role: 'person', text: 'look at this', echoOf: 'm-1' } })
+  })
+
+  it('[C-05, US-MSG-002.AC03] a turn of files alone carries their paths and no empty line of words', async () => {
+    const run = await runScript(
+      factoryWith(),
+      [{ do: 'launch' }],
+      { variant: variantOf('s0201-readiness') },
+      OPTIONS
+    )
+    const session = run.session as DriverSession
+    await session.sendTurn({
+      messageId: 'm-2' as never,
+      kind: 'message',
+      text: '',
+      attachments: [{ path: 'C:\\work\\mine\\a.png', name: 'a.png', bytes: 3 }]
+    })
+    await settle()
+    const line = JSON.parse(run.transports[0]?.sent[1] as string) as {
+      message: { content: string }
+    }
+    expect(line.message.content).toBe('Attached file: C:\\work\\mine\\a.png')
   })
 })
 

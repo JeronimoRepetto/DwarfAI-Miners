@@ -46,6 +46,14 @@ const TURN: TurnInput = {
   attachments: []
 }
 
+/** A turn carrying one Host-revalidated file (#1463), and what a terminal must receive for it. */
+const ATTACHED_PATH = process.platform === 'win32' ? 'C:\\work\\red.png' : '/work/red.png'
+const ATTACHED_TURN: TurnInput = {
+  ...TURN,
+  attachments: [{ path: ATTACHED_PATH, name: 'red.png', bytes: 3 }]
+}
+const PASTED = `\u001b[200~${ATTACHED_PATH}\u001b[201~`
+
 /** The environment a stub process gets: only what node needs to start on each OS. */
 function stubEnv(): Record<string, string> {
   const env: Record<string, string> = {}
@@ -155,6 +163,35 @@ describe.runIf(process.platform === 'win32')('ObservedSessionTurnSender on Windo
     await sleep(QUIET_MS)
     expect(received()).toBe(`${RELAYED}\r`)
   }, 60_000)
+
+  // APPENDED for #1463: the files go first, each as a bracketed paste, then the words, then Enter.
+  it('[US-MSG-002.AC03] a stub terminal session receives each file as a bracketed paste ahead of the text, exactly once', async () => {
+    const child = start([READER, 'reader', '60000'])
+    const chunks: string[] = []
+    let buffered = ''
+    let listening!: () => void
+    const ready = new Promise<void>((resolve) => (listening = resolve))
+    child.stdout?.on('data', (chunk: Buffer) => {
+      buffered += chunk.toString('utf8')
+      const parts = buffered.split('\n')
+      buffered = parts.pop() ?? ''
+      for (const line of parts) {
+        const read = line.trim()
+        if (read === 'ready') listening()
+        else if (read.startsWith('key ')) chunks.push(read.slice(4))
+      }
+    })
+    await ready
+    const identity = await child.identity
+
+    const result = await sender(identity).send(DWARF, ATTACHED_TURN)
+    expect(result).toMatchObject({ ok: true, value: { confidence: 'unconfirmed' } })
+    const deadline = Date.now() + 10_000
+    const received = () => Buffer.from(chunks.join(''), 'hex').toString('utf8')
+    while (!received().endsWith('\r') && Date.now() < deadline) await sleep(50)
+    await sleep(QUIET_MS)
+    expect(received()).toBe(`${PASTED}${RELAYED}\r`)
+  }, 60_000)
 })
 
 /** A stub `ps` and `tmux` (the tmux one keeps its buffer and records each paste and key). */
@@ -192,6 +229,33 @@ describe.runIf(process.platform !== 'win32')(
         .map((line) => JSON.parse(line) as unknown)
       expect(sent).toEqual([
         ['paste', ['paste-buffer', '-p', '-d', '-b', 'dwarfai-miners', '-t', '%7'], RELAYED],
+        ['keys', ['send-keys', '-t', '%7', 'Enter']]
+      ])
+    }, 60_000)
+
+    // APPENDED for #1463: one buffer carries the file's bracketed paste, then the words.
+    it('[US-MSG-002.AC03] a stub terminal session receives each file as a bracketed paste ahead of the text, exactly once', async () => {
+      const identity = await start([SLEEPER, 'sleep', '60000']).identity
+      const dir = folder()
+      const tools = join(dir, 'tools.mjs')
+      writeFileSync(tools, POSIX_TOOLS)
+      const result = await sender(identity, {
+        commands: {
+          ps: { executable: process.execPath, prefix: [tools, 'ps', 'pts/77', dir] },
+          tmux: { executable: process.execPath, prefix: [tools, 'tmux', 'pts/77', dir] }
+        }
+      }).send(DWARF, ATTACHED_TURN)
+      expect(result).toMatchObject({ ok: true, value: { confidence: 'unconfirmed' } })
+      const sent = readFileSync(join(dir, 'sent.jsonl'), 'utf8')
+        .split('\n')
+        .filter((line) => line !== '')
+        .map((line) => JSON.parse(line) as unknown)
+      expect(sent).toEqual([
+        [
+          'paste',
+          ['paste-buffer', '-p', '-d', '-b', 'dwarfai-miners', '-t', '%7'],
+          `${PASTED}${RELAYED}`
+        ],
         ['keys', ['send-keys', '-t', '%7', 'Enter']]
       ])
     }, 60_000)

@@ -1,7 +1,7 @@
 // The conversation log's aggregate (06 §9.1; ADR-007 item 2) and the ingest rule for one entry
 // (09 §5.2 steps 1–2 and "Dropped records"). Pure: no I/O, no clock read (05 §2.2, R1).
 import type { AnswerRefusalReason, SourceKey } from '../../../kernel/domain/sharedContracts'
-import { echoesSentText } from './consoleText'
+import { echoesSentText, type EchoedFile } from './consoleText'
 import type {
   AskId,
   DwarfId,
@@ -221,14 +221,17 @@ export function mayEchoTypedSend(
 /**
  * Whether `entry` is the transcript echo of the waiting DwarfAI row `row` (ADR-007 item 3): the
  * same text as written, or as the console relay typed it (S-022-1, `echoesSentText`), at a provider time (or, without one, at `now`) inside the row's window.
+ * A send that carried `files` (#1463) is echoed by a record carrying their tokens and those words;
+ * the files come from Host memory, never from the row, which keeps no path (INV-62).
  */
 export function echoesTypedSend(
   entry: TypedEchoEntry,
   origin: 'live-stream' | 'transcript',
   row: { text: string; createdAt: Instant },
-  now: Instant
+  now: Instant,
+  files: readonly EchoedFile[] = []
 ): boolean {
-  if (!mayEchoTypedSend(entry, origin) || !echoesSentText(entry.text, row.text)) return false
+  if (!mayEchoTypedSend(entry, origin) || !echoesSentText(entry.text, row.text, files)) return false
   const at = entry.providerTime ?? now
   return at >= row.createdAt - TYPED_ECHO_SKEW_MS && at <= row.createdAt + TYPED_ECHO_WINDOW_MS
 }
