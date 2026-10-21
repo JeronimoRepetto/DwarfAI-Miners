@@ -515,6 +515,12 @@ export interface VetaDockChanged {
   reason: 'display-removed' | 'display-changed' | 'work-area-changed'
 }
 
+/**
+ * The island's size until the Veta strip measures its own (ISSUE-287): a stand-in, never a design value, shared by UI
+ * main (the window it places) and the Veta renderer (the length it reports with `island-resize`), so the two agree.
+ */
+export const VETA_ISLAND_STAND_IN = { length: 480, thickness: 72 } as const
+
 const vetaEdgeSchema = z.enum(['left', 'right', 'top', 'bottom'])
 export const vetaDockSchema = z
   .object({
