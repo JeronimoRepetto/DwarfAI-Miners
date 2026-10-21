@@ -187,6 +187,10 @@ export const en = {
   'veta.menu.newDwarf.hint': '▸',
   'veta.menu.hide': 'Hide window',
 
+  // The MessagePanel header's hand-off tool, drawn only when the chat rose from Veta (US-MSG-010; 07 S24.12;
+  // ISSUE-293): the design's own copy (DS/docs/copy.md, MessagePanel, "Also in the code"; screens/message.md, Header).
+  'message.tool.openInPanel': 'Open in the Panel',
+
   // The mine picker (US-LAUNCH-007; 07 machine 22; ISSUE-288): the design's own copy (DS/docs/copy.md, Mine picker,
   // its strings, "Built at run time" and "Also in the code").
   'minePicker.label': 'Choose a mine',

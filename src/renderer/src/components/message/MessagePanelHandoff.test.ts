@@ -101,4 +101,35 @@ describe('MessagePanel chat hand-off (ISSUE-284)', () => {
     expect(field.value).toBe('carried back')
     expect([field.selectionStart, field.selectionEnd]).toEqual([4, 4])
   })
+
+  // APPENDED for ISSUE-293: the header's hand-off tool (screens/message.md, Header; US-MSG-010; US-DLG-006).
+  it('[US-MSG-010.AC02, US-DLG-006.AC04] a chat opened directly in the Panel shows no Open in the Panel tool and no hand-off applies', async () => {
+    const wrapper = mount(DwarfMessagePanel, { props: { dwarf } })
+    expect(wrapper.find('button[title="Open in the Panel"]').exists()).toBe(false)
+    // Its tools are the Panel's: History, Console, ⋯ and Close, and History is the Panel's own.
+    const titles = wrapper.findAll('.dm-msg__tools button').map((b) => b.attributes('title'))
+    expect(titles).toEqual(['Mine history', 'Open console', 'More', 'Close chat'])
+    expect(wrapper.emitted('open-in-panel')).toBeUndefined()
+
+    // Hosted in Veta, the same component offers it, first among the tools, and asks for the hand-off.
+    const hosted = mount(DwarfMessagePanel, { props: { dwarf, hostedIn: 'veta' } })
+    const tool = hosted.find('.dm-msg__tools button[title="Open in the Panel"]')
+    expect(tool.exists()).toBe(true)
+    expect(hosted.findAll('.dm-msg__tools button')[0]!.element).toBe(tool.element)
+    await tool.trigger('click')
+    expect(hosted.emitted('open-in-panel')).toHaveLength(1)
+  })
+
+  it('[US-DLG-006.AC02, BR-19] a chat hosted in Veta offers no mine-history request until the Panel can be opened on the history (pending amendment)', async () => {
+    const hosted = mount(DwarfMessagePanel, { props: { dwarf, hostedIn: 'veta' } })
+    // Neither the History tool nor the ⋯ menu's Mine history is drawn: hidden until built (BR-19).
+    expect(hosted.find('.dm-msg__tools button[title="Mine history"]').exists()).toBe(false)
+    await hosted.get('.dm-msg__tools button[title="More"]').trigger('click')
+    const items = [...document.querySelectorAll('[role="menuitem"]')].map((i) =>
+      i.textContent?.trim()
+    )
+    expect(items).toContain('Open console')
+    expect(items).not.toContain('Mine history')
+    expect(hosted.emitted('history')).toBeUndefined()
+  })
 })

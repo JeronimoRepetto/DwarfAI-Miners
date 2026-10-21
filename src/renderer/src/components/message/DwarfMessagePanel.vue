@@ -38,6 +38,7 @@ import {
   STOP_DWARF_BODY,
   bubbleMark,
   dayLabel,
+  MENU_HISTORY,
   messagePanelChips,
   messagePanelMenu,
   messagePanelMenuAction,
@@ -60,6 +61,7 @@ import { launcherLabel } from '../../lib/message/launcherLabel'
 import {
   cleanDwarfName,
   filterDwarfName,
+  t,
   type DwarfId,
   type DwarfNameRefusal
 } from '@dwarfai/contracts'
@@ -200,6 +202,13 @@ const props = defineProps<{
    * just dropped. Taken once, on mount; nobody's rename is opened on their behalf otherwise.
    */
   renaming?: { value: string; refused?: DwarfNameRefusal }
+  /**
+   * The mode window hosting this chat (ISSUE-293; BR-21: one component in every mode). In Veta the header offers
+   * "▢ Open in the Panel" (screens/message.md, Header: "only when the chat rose from Veta"; US-MSG-010.AC02, AC03),
+   * and the mine-history request stays hidden until the Panel can be opened on the history (BR-19; 07 S24.13 waits on
+   * `ModeTransition.slot`). The Panel by default.
+   */
+  hostedIn?: 'panel' | 'veta'
 }>()
 
 const emit = defineEmits<{
@@ -228,6 +237,8 @@ const emit = defineEmits<{
   'open-console': []
   /** The mine history, which opens in the dock's slot in place of this panel (#635). */
   history: []
+  /** "▢ Open in the Panel", in a chat hosted in Veta (07 S24.12): the hand-off to the Panel. */
+  'open-in-panel': []
   /** An `edit`/`read` activity line's own path was pressed (#279): its exact target. */
   'open-path': [target: string]
   /** A link inside a bubble was pressed (#347): the address exactly as the transcript wrote it. */
@@ -743,6 +754,12 @@ const composerField = (): HTMLTextAreaElement | null =>
   composerRef.value?.querySelector('textarea') ?? null
 const stopHandoff = modeTransitionPart().register({
   open: () => props.dwarf.id as DwarfId,
+  // S9.02 (ISSUE-293): a composition in progress ends at the switch. Taking the focus from the composer commits it,
+  // so what it held is in the draft the flush reads; the IME state itself never travels.
+  endComposition: () => {
+    const field = composerField()
+    if (field !== null && document.activeElement === field) field.blur()
+  },
   draft: () => message.value,
   view: () => {
     const list = conversationRef.value
@@ -899,13 +916,21 @@ const { setName, resetName: resetDwarfName } = useDwarfRename()
  * never depends on the turn (OQ-54).
  */
 const offersReset = computed(() => props.dwarf.customName !== undefined)
-const menu = computed(() =>
-  messagePanelMenu(props.stopDisabled === true ? 'stopping' : null, offersReset.value)
-)
+/** Hosted in Veta: the hand-off tool shows, and the mine-history request is not offered yet (BR-19). */
+const inVeta = computed(() => props.hostedIn === 'veta')
+const menu = computed(() => {
+  const entries = messagePanelMenu(
+    props.stopDisabled === true ? 'stopping' : null,
+    offersReset.value
+  )
+  return inVeta.value ? entries.filter((_, i) => i !== MENU_HISTORY) : entries
+})
 const stopAsked = ref(false)
 
 function onMenu(index: number): void {
-  const picked = messagePanelMenuAction(index, offersReset.value)
+  // In Veta the menu lacks its Mine history row: a pick past it names the row one further down.
+  const row = inVeta.value && index >= MENU_HISTORY ? index + 1 : index
+  const picked = messagePanelMenuAction(row, offersReset.value)
   if (picked === 'console') emit('open-console')
   else if (picked === 'history') emit('history')
   else if (picked === 'reset-name') void resetName()
@@ -1103,7 +1128,21 @@ async function resetName(): Promise<void> {
         >
       </div>
       <div class="dm-msg__tools">
-        <ActionButton icon="history" size="sm" title="Mine history" @click="emit('history')" />
+        <ActionButton
+          v-if="inVeta"
+          icon="promote"
+          size="sm"
+          :title="t('message.tool.openInPanel')"
+          data-open-in-panel
+          @click="emit('open-in-panel')"
+        />
+        <ActionButton
+          v-else
+          icon="history"
+          size="sm"
+          title="Mine history"
+          @click="emit('history')"
+        />
         <ActionButton
           class="dm-msg__console"
           icon="console"
