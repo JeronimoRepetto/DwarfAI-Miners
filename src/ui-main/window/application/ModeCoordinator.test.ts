@@ -1,5 +1,5 @@
 // layer: L2
-import type { DwarfId, MineId, ModeTransition } from '@dwarfai/contracts'
+import type { DwarfId, MineId, ModeTransition, WindowMode } from '@dwarfai/contracts'
 import { describe, expect, it } from 'vitest'
 import { RecordingUiLog } from '../../hostLauncher/fakes/RecordingUiLog'
 import { FakeModeTiming } from '../ports/fakes/FakeModeTiming'
@@ -44,7 +44,13 @@ interface Setup {
 }
 
 function setup(
-  options: { built?: readonly AppMode[]; start?: ModeCoordinatorStart; lastMode?: AppMode } = {}
+  options: {
+    built?: readonly AppMode[]
+    start?: ModeCoordinatorStart
+    lastMode?: AppMode
+    /** Settings › General "Mode at launch" as stored (ISSUE-294); "Last used" when not given. */
+    modeAtLaunch?: 'last-used' | AppMode
+  } = {}
 ): Setup {
   const factory = new FakeWindowFactory()
   const win: Record<AppMode, FakeModeWindow> = {
@@ -55,6 +61,7 @@ function setup(
   const timing = new FakeModeTiming()
   const store = new InMemoryUiPreferenceStore()
   if (options.lastMode !== undefined) store.save('lastMode', options.lastMode)
+  if (options.modeAtLaunch !== undefined) store.save('modeAtLaunch', options.modeAtLaunch)
   const prefs = createUiPreferences({ store, modeWindows: () => [] })
   const log = new RecordingUiLog()
   const failing = new Set<AppMode>()
@@ -605,5 +612,94 @@ describe('ModeCoordinator (ADR-025 item 3; 07 machine 27)', () => {
     const bare = setup({ start: 'veta' })
     void bare.coordinator.moveToMode({ mode: 'panel' })
     expect(bare.coordinator.handoff()).toBeNull()
+  })
+})
+
+/* --- ISSUE-294: the first open follows "Mode at launch" ------------------------------------------- */
+/*
+ * S10.01 and S10.13 (US-SHELL-001.AC03, AC04; US-SET-002.AC09; ADR-034 item 2): the first window after a launch, or
+ * after a tray-only start (a `--background` login start, S10.03, S40.11), opens in "Mode at launch": the pinned mode,
+ * or `lastMode` with "Last used"; a stored mode this build does not ship opens the Panel. Once a mode was shown, a
+ * restore from hidden keeps `lastMode` (S10.09).
+ */
+describe('ModeCoordinator, Mode at launch (ISSUE-294; 07 S10.01, S10.13)', () => {
+  /** Opens the app from where it started, both renderers answering, and answers the mode it opened in. */
+  async function open(s: Setup): Promise<WindowMode> {
+    const opened = s.coordinator.restore()
+    // The window the open's run targets: the newest run told to any window (none when the mode was already shown).
+    const idOf = (mode: AppMode): number =>
+      Number(transitions(s.win[mode]).at(-1)?.transitionId.slice(2) ?? 0)
+    const newest = (Object.keys(s.win) as AppMode[]).reduce((a, b) => (idOf(b) > idOf(a) ? b : a))
+    const run = transitions(s.win[newest]).at(-1)?.role === 'target' ? newest : null
+    bothDone(s, null, run)
+    await opened
+    return s.coordinator.mode()
+  }
+
+  it('[US-SHELL-001.AC03, S10.01] with Last used the app opens in the last used mode', async () => {
+    for (const lastMode of ['veta', 'panel'] as const) {
+      const s = setup({ start: 'hidden', lastMode, modeAtLaunch: 'last-used' })
+      expect(shownWindows(s)).toEqual([])
+      expect(await open(s)).toBe(lastMode)
+      expect(shownWindows(s)).toEqual([lastMode])
+    }
+  })
+
+  it('[US-SHELL-001.AC04, S10.01] with a pinned mode the app opens in it whatever was last used', async () => {
+    for (const [pinned, lastMode] of [
+      ['veta', 'panel'],
+      ['panel', 'veta']
+    ] as const) {
+      const s = setup({ start: 'hidden', lastMode, modeAtLaunch: pinned })
+      expect(await open(s)).toBe(pinned)
+      expect(shownWindows(s)).toEqual([pinned])
+    }
+  })
+
+  it('[ADR-034] a stored mode that is not built opens the Panel', async () => {
+    // A build with the Panel and Veta (a release build until ISSUE-311): Valle, pinned or last used, is not built.
+    const built = ['panel', 'veta'] as const
+    for (const stored of [
+      { modeAtLaunch: 'valle', lastMode: 'veta' },
+      { modeAtLaunch: 'last-used', lastMode: 'valle' }
+    ] as const) {
+      const s = setup({ start: 'hidden', built, ...stored })
+      expect(await open(s)).toBe('panel')
+      expect(s.win.valle.calls).toEqual([])
+    }
+    // A Panel-only build: Veta pinned opens the Panel too.
+    const s = setup({ start: 'tray-only', built: ['panel'], modeAtLaunch: 'veta' })
+    expect(await open(s)).toBe('panel')
+    expect(s.win.veta.calls).toEqual([])
+  })
+
+  it('[S10.03, S10.13, S40.11] a login start opens no window and the next open follows Mode at launch', async () => {
+    const s = setup({ start: 'tray-only', lastMode: 'panel', modeAtLaunch: 'veta' })
+    // A `--background` start: tray-only, no window shown, no run.
+    expect(s.coordinator.ladder().state).toBe('tray-only')
+    expect(shownWindows(s)).toEqual([])
+    expect(Object.values(s.win).flatMap((w) => w.calls)).toEqual([])
+    // The person opens the app: "Mode at launch" decides the window (S10.13).
+    expect(await open(s)).toBe('veta')
+    expect(s.coordinator.ladder()).toEqual({ state: 'veta', lastId: 'S10.13' })
+  })
+
+  it('[S10.09, S10.13] after the first open a restore from hidden keeps lastMode, and after Quit the next open follows Mode at launch again', async () => {
+    const s = setup({ start: 'hidden', lastMode: 'panel', modeAtLaunch: 'veta' })
+    expect(await open(s)).toBe('veta')
+    // The person moves to the Panel, then hides it: lastMode is the Panel.
+    const moved = s.coordinator.moveToMode({ mode: 'panel' })
+    bothDone(s, 'veta', 'panel')
+    await moved
+    const hidden = s.coordinator.hide()
+    bothDone(s, 'panel', null)
+    await hidden
+    expect(s.store.load('lastMode')).toBe('panel')
+    // S10.09: back from hidden to lastMode, whatever "Mode at launch" pins.
+    expect(await open(s)).toBe('panel')
+    // Quit to tray-only (S10.15): the next open is S10.13 again, so "Mode at launch" decides.
+    s.coordinator.closed('quit')
+    expect(s.coordinator.ladder().state).toBe('tray-only')
+    expect(await open(s)).toBe('veta')
   })
 })

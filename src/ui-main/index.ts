@@ -363,21 +363,26 @@ export function composeUiLocal({
 }): RouteTarget | undefined {
   const parts: RouteTargetPart[] = []
   if (uiPreferences !== undefined) {
+    const stored = createUiPreferences({
+      store: uiPreferences.store,
+      modeWindows: () => uiPreferences.windows().filter((w) => modeWindows.has(w.webContentsId))
+    })
     parts.push({
       channels: UI_PREFERENCE_ROWS,
-      target: createUiPreferenceRows(
-        createUiPreferences({
-          store: uiPreferences.store,
-          modeWindows: () => uiPreferences.windows().filter((w) => modeWindows.has(w.webContentsId))
-        })
-      )
+      target: createUiPreferenceRows(stored)
     })
     parts.push({
       channels: UI_PREFERENCE_MAP_ROWS,
       target: createUiPreferenceMapRows(
         createUiPreferenceMap({
           ...(startWithSystem === undefined ? {} : { startWithSystem }),
-          ...(vetaDock === undefined ? {} : { vetaDock })
+          ...(vetaDock === undefined ? {} : { vetaDock }),
+          // Settings › General "Mode at launch" (US-SET-002.AC09; ISSUE-294), read by the ModeCoordinator at the
+          // first open (S10.01, S10.13).
+          modeAtLaunch: {
+            get: () => stored.get('modeAtLaunch'),
+            set: (value) => stored.set('modeAtLaunch', value)
+          }
         })
       )
     })

@@ -90,7 +90,10 @@ export interface ModeWindowPlacement {
 export interface ModeCoordinatorDeps {
   windows: ModeWindowPlacement
   timing: ModeTiming
-  /** The UI preferences; the coordinator reads and writes `lastMode` only, and is its one writer (14 §3.9). */
+  /**
+   * The UI preferences; the coordinator writes `lastMode` only, and is its one writer (14 §3.9). It reads `lastMode` and
+   * "Mode at launch" (`modeAtLaunch`, written by Settings through A-N21) for the first open (S10.01, S10.13).
+   */
   lastMode: Pick<StoredUiPreferences, 'get' | 'set'>
   /** The modes this build ships (ISSUE-267's feature list; BR-19, ADR-034 item 2). */
   built: readonly AppMode[]
@@ -124,8 +127,16 @@ export interface ModeCoordinator {
   openAtLaunch(mode: AppMode, reason?: { reveal: boolean }): Promise<IpcResult<void>>
   /** S10.08 (app mark, global shortcut, Settings "Hide panel", grip "Hide window"); S27.08 mid-run. */
   hide(): Promise<IpcResult<void>>
-  /** S10.09: back from `hidden` to `lastMode`. */
+  /**
+   * S10.09: back from `hidden` to `lastMode`. The first open after a launch or a tray-only start opens in "Mode at
+   * launch" instead (S10.01, S10.13; `launchMode`).
+   */
   restore(): Promise<IpcResult<void>>
+  /**
+   * "Mode at launch" resolved (S10.01, S10.12, S10.13; ADR-034 item 2): the pinned mode, or `lastMode` with "Last
+   * used"; a stored mode this build does not ship is the Panel.
+   */
+  launchMode(): AppMode
   /** The global shortcut: restore when hidden or hiding, else hide. */
   toggle(): Promise<IpcResult<void>>
   /** A click or a key on a mode window that is not a mode request (S27.09: ignored during a run). */
@@ -192,6 +203,11 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
   let playingTold = false
   /** Machine 9: the chat the last run carried (07 S9.01–S9.09), or `null` when it carried none. */
   let handoff: ChatHandoffNode | null = null
+  /**
+   * Whether no mode was shown since UI main started on no window (S10.01 a launch builds the Panel hidden; S10.03 a
+   * login start is tray-only): the next open is the launch's, so "Mode at launch" decides it, not `lastMode`.
+   */
+  let firstOpen = deps.start === 'hidden' || deps.start === 'tray-only'
 
   /** Steps the carried chat's machine 9; an event 07 does not list for it leaves it where it is. */
   function stepHandoff(event: ChatHandoffEvent): void {
@@ -284,6 +300,7 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
     safely(from, to, () => windowOf(from)?.hide())
     safely(from, to, () => windowOf(to)?.focus())
     if (to !== 'hidden') safely(from, to, () => deps.lastMode.set('lastMode', to))
+    if (to !== 'hidden') firstOpen = false
     if (node.state === 'completing') step({ type: 'landed' })
     if (request !== undefined) {
       climbTo(request)
@@ -465,6 +482,13 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
     return built.includes(stored) ? stored : 'panel'
   }
 
+  /** "Mode at launch" (US-SET-002.AC09): the pinned mode if built, else the Panel; "Last used" is `lastShown`. */
+  function launchMode(): AppMode {
+    const pinned = deps.lastMode.get('modeAtLaunch')
+    if (pinned === 'last-used') return lastShown()
+    return built.includes(pinned) ? pinned : 'panel'
+  }
+
   function hide(): Promise<IpcResult<void>> {
     if (node.state === 'playing') {
       // S27.08: the run resolves at once, hidden; `lastMode` is the target, so restoring shows it.
@@ -503,9 +527,12 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
       windows.bringForward(now)
       return Promise.resolve(OK)
     }
-    // From tray-only the window opens as a launch does (S10.13); the Panel alone resolves "Mode at launch" to itself.
-    const open = ladder.state === 'tray-only' ? { open: { reveal: false } } : {}
-    return request({ mode: lastShown(), answers: [], ...open })
+    // From tray-only the window opens as a launch does (S10.13). The first open after a launch or a tray-only start is
+    // in "Mode at launch" (S10.01, S10.13); after that, back from hidden is `lastMode` (S10.09).
+    const fromTray = ladder.state === 'tray-only'
+    const open = fromTray ? { open: { reveal: false } } : {}
+    const mode = firstOpen || fromTray ? launchMode() : lastShown()
+    return request({ mode, answers: [], ...open })
   }
 
   return {
@@ -538,6 +565,7 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
     },
     hide,
     restore,
+    launchMode,
     toggle() {
       // During a run the press asks for the opposite of where the run is going (S27.08 when it is going to a mode).
       if (node.state === 'preparing' || node.state === 'playing' || node.state === 'completing') {
@@ -598,6 +626,8 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
       held = null
       tellPlaying(false)
       step({ type: 'crashed' })
+      // S10.01: the first window after a crash opens as a launch does.
+      firstOpen = true
       // S9.09: drafts and view state are lost with the UI process, and nothing else.
       stepHandoff({ type: 'crashed' })
       node = { state: 'settled', mode: 'hidden' }

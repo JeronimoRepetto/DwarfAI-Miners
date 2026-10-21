@@ -44,6 +44,8 @@ export const UI_PREFERENCE_FILES: Readonly<Record<UiPreferenceStoreKey, string>>
   resetEpochApplied: 'reset-epoch-applied-v1.json',
   // NEW with the ModeCoordinator (ISSUE-284): no store of today's holds it.
   lastMode: 'last-mode-v1.json',
+  // NEW with Settings › General "Mode at launch" (ISSUE-294): no store of today's holds it.
+  modeAtLaunch: 'mode-at-launch-v1.json',
   // NEW with the Veta dock (ISSUE-286): no store of today's holds it.
   vetaDock: 'veta-dock-v1.json'
 }
@@ -106,6 +108,7 @@ const FORMATS: { readonly [K in UiPreferenceStoreKey]: FileFormat<K> } = {
   startWithSystem: inField('on', z.boolean()),
   resetEpochApplied: inField('epoch', z.number().int().nonnegative()),
   lastMode: inField('mode', z.enum(['panel', 'veta', 'valle'])),
+  modeAtLaunch: inField('mode', z.enum(['last-used', 'panel', 'veta', 'valle'])),
   vetaDock: asItself(vetaDocksSchema)
 }
 
