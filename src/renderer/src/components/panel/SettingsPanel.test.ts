@@ -1035,7 +1035,7 @@ describe('SettingsPanel — Mode at launch (ISSUE-294)', () => {
 // APPENDED for ISSUE-304 (owner decision 2026-10-22): the Settings page hosted in Valle leaves out the rows that act on
 // the Panel window; the Panel keeps them.
 describe('SettingsPanel — the Panel-window rows (ISSUE-304)', () => {
-  it('[S28.19, US-SET-002, US-SET-011] without the Panel-window rows, Position, Always on top and Hide panel are absent; the Panel shows them', () => {
+  it('[S28.19, US-SET-002.AC05, US-SET-002.AC08, US-SET-011.AC02] without the Panel-window rows, Position, Always on top and Hide panel are absent; the Panel shows them', () => {
     const panel = render()
     expect(panel.find('.position-right').exists()).toBe(true)
     expect(panel.find('.pin').exists()).toBe(true)
