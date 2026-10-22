@@ -12,10 +12,12 @@
 import { builtModesOf, type DwarfId } from '@dwarfai/contracts'
 import type { UiLog } from '../../diagnostics/uiLogger'
 import type { ModeTiming } from '../ports/modeTiming'
+import type { ValleEntry } from '../domain/valleWindow'
 import type { ModeWindow } from '../ports/windowFactory'
 import { createModeCoordinator, type AppMode, type ModeCoordinator } from './ModeCoordinator'
 import type { PanelWindowUseCases } from './panelWindow'
 import type { DwarfChatRevealer, RevealWindows } from './revealDwarfChat'
+import type { ValleWindowController } from './ValleWindowController'
 import type { VetaWindowController } from './VetaWindowController'
 import type { StoredUiPreferences } from './uiPreferences'
 
@@ -25,7 +27,7 @@ declare const __DWARFAI_BUILD_PROFILE__: string | undefined
 /**
  * The modes this build contains: the one built-modes list (`builtModesOf`, 17 §1.9), which the renderer's controls
  * read too (`SHIPPED_MODES`). A release build has the Panel and Veta (ADR-034 item 2; ISSUE-294); the E2E build profile
- * adds Valle. Valle is data only: with no window built, a move to it is refused (EPIC-20).
+ * adds Valle, whose window is built from ISSUE-299 on and moved only where the list has it (BR-19).
  */
 export const BUILT_MODES: readonly AppMode[] = builtModesOf(
   typeof __DWARFAI_BUILD_PROFILE__ === 'string' ? __DWARFAI_BUILD_PROFILE__ : undefined
@@ -53,6 +55,8 @@ export interface ModeShellDeps {
   built?: readonly AppMode[]
   /** The Veta window (`VetaWindowController`), moved only where `built` lists Veta. */
   veta?: Pick<VetaWindowController, 'window' | 'bounds'>
+  /** The Valle window (`ValleWindowController`, ISSUE-299), moved only where `built` lists Valle. */
+  valle?: Pick<ValleWindowController, 'window' | 'bounds'>
 }
 
 export interface ModeShell {
@@ -96,23 +100,66 @@ export function composeModeShell(deps: ModeShellDeps): ModeShell {
       }
     }
   }
+  // The Valle window (ISSUE-299): moved only where this build ships Valle (BR-19), else not built.
+  const valle = built.includes('valle') ? deps.valle : undefined
+  let valleShown = false
+  const valleWindow = (): ModeWindow => {
+    if (valle === undefined) throw new Error('the valle window is not built')
+    const window = valle.window()
+    return {
+      placeAt: (bounds) => window.placeAt(bounds),
+      focus: () => window.focus(),
+      send: (push, payload) => window.send(push, payload),
+      showInactive: () => {
+        window.showInactive()
+        valleShown = true
+      },
+      hide: () => {
+        window.hide()
+        valleShown = false
+      }
+    }
+  }
+  /**
+   * Where Valle is entered from (07 S39.01, S39.02; OQ-20): the mode window shown as the run starts, the Panel at its
+   * place or Veta at its bounds; with none shown (a restore from hidden, a launch), the Panel's stored place (§24 I-35).
+   */
+  const valleEntry = (): ValleEntry => {
+    const from = coordinator.mode()
+    if (from === 'veta' && veta !== undefined) return { from: 'window', bounds: veta.bounds() }
+    const place = panel.panelStart().bounds
+    return from === 'panel'
+      ? { from: 'window', bounds: place }
+      : { from: 'launch', panelPlace: place }
+  }
   let revealer: DwarfChatRevealer = { revealDwarfChat: () => Promise.resolve('mine-only') }
   const coordinator = createModeCoordinator({
     windows: {
       window: (mode) => {
         if (mode === 'veta') return vetaWindow()
+        if (mode === 'valle') return valleWindow()
         if (mode !== 'panel') throw new Error(`the ${mode} window is not built`)
         return panelWindow
       },
       bounds: (mode) => {
+        if (mode === 'valle') {
+          if (valle === undefined) throw new Error('the valle window is not built')
+          return valle.bounds(valleEntry())
+        }
         if (mode !== 'veta') return panel.panelStart().bounds
         if (veta === undefined) throw new Error('the veta window is not built')
         return veta.bounds()
       },
       // The Panel's own show re-fits it, shows it inactive and raises it, which also un-minimizes it (#165).
-      bringForward: (mode) => (mode === 'veta' ? vetaWindow().focus() : panel.show()),
+      bringForward: (mode) =>
+        mode === 'veta'
+          ? vetaWindow().focus()
+          : mode === 'valle'
+            ? valleWindow().focus()
+            : panel.show(),
       // The coordinator is the one that shows and hides Veta, so its own runs say whether it is on screen.
-      isShown: (mode) => (mode === 'veta' ? vetaShown : panel.isShown())
+      isShown: (mode) =>
+        mode === 'veta' ? vetaShown : mode === 'valle' ? valleShown : panel.isShown()
     },
     timing: deps.timing,
     lastMode: deps.lastMode,

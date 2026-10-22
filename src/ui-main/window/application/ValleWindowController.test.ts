@@ -30,7 +30,7 @@ const RIGHT: DisplayInfo = {
 }
 const PANEL_ON_RIGHT = { x: 4060, y: 0, width: 420, height: 1400 }
 
-function world(entry: { current: ValleEntry }) {
+function world() {
   const registry = createModeWindowRegistry()
   const windows = new ElectronWindows({
     BrowserWindow: FakeBrowserWindow,
@@ -45,8 +45,7 @@ function world(entry: { current: ValleEntry }) {
   const screen = new FakeScreenAreaProvider([LEFT, RIGHT])
   const controller = createValleWindowController({
     factory: windows,
-    screen,
-    entry: () => entry.current
+    screen
   })
   return { controller, registry, screen, windows }
 }
@@ -62,7 +61,7 @@ beforeEach(() => FakeBrowserWindow.reset())
 describe('the Valle window (ADR-025 items 1, 7; ISSUE-299)', () => {
   it('[ADR-025, NFR-PLAT-13] the Valle window is created once by the secure factory, frameless, not always on top, out of the taskbar, and throttled while hidden', () => {
     const entry = { current: { from: 'window', bounds: PANEL_ON_RIGHT } as ValleEntry }
-    const { controller, registry, windows } = world(entry)
+    const { controller, registry, windows } = world()
     expect(FakeBrowserWindow.built, 'nothing is built before the first use').toEqual([])
     expect(controller.built()).toBe(false)
     const first = controller.window()
@@ -89,7 +88,7 @@ describe('the Valle window (ADR-025 items 1, 7; ISSUE-299)', () => {
     expect(registry.has(window.webContents.id)).toBe(true)
     expect(windows.valleWebContentsId()).toBe(window.webContents.id)
     // Placed on the work area of the display matching the window it is entered from, then hidden, never destroyed.
-    first.placeAt(controller.bounds())
+    first.placeAt(controller.bounds(entry.current))
     expect(window.getBounds()).toEqual(RIGHT.workArea)
     first.showInactive()
     first.hide()
@@ -101,22 +100,22 @@ describe('the Valle window (ADR-025 items 1, 7; ISSUE-299)', () => {
 
   it('[US-VALLE-001.AC10, S39.02] entered again from another display, Valle opens there, with no placement of its own', () => {
     const entry = { current: { from: 'window', bounds: PANEL_ON_RIGHT } as ValleEntry }
-    const { controller } = world(entry)
+    const { controller } = world()
     const window = controller.window()
-    window.placeAt(controller.bounds())
+    window.placeAt(controller.bounds(entry.current))
     expect(valle().getBounds()).toEqual(RIGHT.workArea)
     window.showInactive()
     window.hide()
     entry.current = { from: 'window', bounds: { x: 700, y: 968, width: 480, height: 72 } }
-    controller.window().placeAt(controller.bounds())
+    controller.window().placeAt(controller.bounds(entry.current))
     expect(valle().getBounds()).toEqual(LEFT.workArea)
   })
 
   it('[S39.08, S39.09] a display event re-places a shown Valle window, and a hidden one waits for its next entry', () => {
     const entry = { current: { from: 'window', bounds: PANEL_ON_RIGHT } as ValleEntry }
-    const { controller, screen } = world(entry)
+    const { controller, screen } = world()
     const window = controller.window()
-    window.placeAt(controller.bounds())
+    window.placeAt(controller.bounds(entry.current))
     window.showInactive()
     // S39.09: its display's work area shrank (a taskbar grew).
     const shorter: DisplayInfo = { ...RIGHT, workArea: { ...RIGHT.workArea, height: 1360 } }

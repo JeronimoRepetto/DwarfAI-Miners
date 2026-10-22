@@ -130,6 +130,10 @@ import { createVetaRows, SET_VETA_CLICK_THROUGH, VETA_ROWS } from './ipc/veta'
 import { createVetaLayoutRows, LAYOUT_VETA, VETA_LAYOUT_ROWS } from './ipc/vetaLayout'
 import { createVetaDockService, type VetaDockService } from './window/application/VetaDockService'
 import {
+  createValleWindowController,
+  type ValleWindowController
+} from './window/application/ValleWindowController'
+import {
   createVetaWindowController,
   VETA_ISLAND_PLACEHOLDER,
   type VetaWindowController
@@ -311,6 +315,13 @@ export interface WindowContents extends ModeWindowSender {
  * `undefined` when no part is present. The cut-0 switch (ISSUE-056) routes these rows here, but for the UI session and
  * UI preference map rows, which the cut-1 switch (ISSUE-123) routes.
  */
+/** The Valle window as the root composes it (ISSUE-299). */
+export interface ValleWindowParts {
+  controller: ValleWindowController
+  /** Whether a `webContents` id is the Valle window's. */
+  isValle(webContentsId: number): boolean
+}
+
 /** The Veta window as the root composes it (ISSUE-285). */
 export interface VetaWindowParts {
   controller: VetaWindowController
@@ -1055,6 +1066,12 @@ export interface UiMainDeps {
    */
   vetaWindow?: () => VetaWindowParts
   /**
+   * The Valle window (ISSUE-299; ADR-025 items 1, 7; 07 machine 39), composed once the Panel is: its controller, and
+   * whether a `webContents` id is the Valle window's. The `ModeCoordinator` moves it only where the build's built-modes
+   * list contains Valle (`BUILT_MODES`: the E2E build profile until ISSUE-311); composing it builds no window.
+   */
+  valleWindow?: () => ValleWindowParts
+  /**
    * The Host attach (ISSUE-051; ADR-002 D4; ADR-003 items 7, 12): HostClient over the host launcher. The root reads
    * the remembered launch view, then starts the attach without awaiting it, before Electron is ready and the window
    * is composed, so the first paint never waits for the Host (US-RES-003.AC07); the board it keeps changes only when a
@@ -1145,6 +1162,7 @@ export async function startUiMain({
   uiLog,
   panelWindow,
   vetaWindow,
+  valleWindow,
   host,
   notifications,
   launch = { kind: 'normal', tray: true, window: true },
@@ -1189,6 +1207,11 @@ export async function startUiMain({
   const routed = (channel: ChannelKey): boolean => routes.some((r) => r.channel === channel)
   const veta = vetaWindow?.()
   const isVeta = (webContentsId: number): boolean => veta?.isVeta(webContentsId) ?? false
+  const valle = valleWindow?.()
+  const isValle = (webContentsId: number): boolean => valle?.isValle(webContentsId) ?? false
+  /** A Panel window: a mode window that is neither Veta's nor Valle's, which have their own pushes. */
+  const isPanelWindow = (webContentsId: number): boolean =>
+    !isVeta(webContentsId) && !isValle(webContentsId)
   // The ModeCoordinator (ISSUE-284; ADR-025 item 3), once the table routes A-N13: every hide and show of the Panel (the
   // global shortcut, Settings "Hide panel", the tray, a second launch, Stop everything's confirmation, a notification
   // click) is one of its runs (S10.08, S10.09), and it alone writes `lastMode`. The click's per-mode reveal is bound
@@ -1200,12 +1223,13 @@ export async function startUiMain({
       ? composeModeShell({
           panel,
           pushToPanel: (push, payload) => {
-            // The Veta window has its own pushes (`ModeWindow.send`): a Panel push never reaches it.
+            // The Veta and Valle windows have their own pushes (`ModeWindow.send`): a Panel push never reaches them.
             for (const window of modeWindowList()) {
-              if (!isVeta(window.webContentsId)) window.send(push, payload)
+              if (isPanelWindow(window.webContentsId)) window.send(push, payload)
             }
           },
           ...(veta === undefined ? {} : { veta: veta.controller }),
+          ...(valle === undefined ? {} : { valle: valle.controller }),
           lastMode: createUiPreferences({ store: uiPreferences.store, modeWindows: () => [] }),
           timing: new SystemModeTiming(),
           log: uiLog ?? { record: () => {} },
@@ -1474,7 +1498,7 @@ export async function startUiMain({
                       // windows, Veta's the Veta window, whose renderer rises that dwarf's chat (07 S24.15, ISSUE-290).
                       reveals: {
                         panel: createPanelReveal(() =>
-                          modeWindowList().filter((w) => !isVeta(w.webContentsId))
+                          modeWindowList().filter((w) => isPanelWindow(w.webContentsId))
                         ),
                         veta: createPanelReveal(() =>
                           modeWindowList().filter((w) => isVeta(w.webContentsId))
@@ -1511,7 +1535,13 @@ export async function startUiMain({
           mode: {
             channels: [MODE_MOVE, MODE_TRANSITION_DONE],
             target: createModeRows(shell.coordinator, (id) =>
-              isVeta(id) ? 'veta' : modeWindows.has(id) ? 'panel' : undefined
+              isVeta(id)
+                ? 'veta'
+                : isValle(id)
+                  ? 'valle'
+                  : modeWindows.has(id)
+                    ? 'panel'
+                    : undefined
             )
           } satisfies RouteTargetPart
         }),
@@ -1749,6 +1779,9 @@ function electronPanelWindow(
   veta: () => VetaWindowParts
   /** Whether a `webContents` id is the Veta window's (none before it is built). */
   isVeta(webContentsId: number): boolean
+  valle: () => ValleWindowParts
+  /** Whether a `webContents` id is the Valle window's (none before it is built). */
+  isValle(webContentsId: number): boolean
   composed(): PanelWindowUseCases | null
 } {
   let panel: PanelWindowUseCases | null = null
@@ -1826,10 +1859,25 @@ function electronPanelWindow(
       isVeta: (webContentsId) => windows.vetaWebContentsId() === webContentsId
     }
   }
+  // The Valle window over the same factory and displays (ISSUE-299): composing it builds nothing; the window is built
+  // on its first move and placed by each entry (07 S39.01, S39.02); a shown one hears the display events once Electron
+  // is ready (S39.08, S39.09).
+  const valle = (): ValleWindowParts => {
+    if (built === null) throw new Error('the Valle window was composed before the Panel')
+    const { windows, screenArea } = built
+    const controller = createValleWindowController({ factory: windows, screen: screenArea })
+    void app.whenReady().then(() => screenArea.onChange(() => controller.displaysChanged()))
+    return {
+      controller,
+      isValle: (webContentsId) => windows.valleWebContentsId() === webContentsId
+    }
+  }
   return {
     factory,
     veta,
     isVeta: (webContentsId) => built?.windows.vetaWebContentsId() === webContentsId,
+    valle,
+    isValle: (webContentsId) => built?.windows.valleWebContentsId() === webContentsId,
     composed: () => panel
   }
 }
@@ -2093,10 +2141,13 @@ function startElectronUi(dataDir: string, uiLog: ReturnType<typeof createUiLogge
       }))
   /** The window a picker is attached to: the rebuilt Panel when it is open. */
   const rebuiltPanel = electronPanelWindow(uiPreferenceStore, uiLog)
-  /** The Panel window, where every picker is attached: never the Veta window (ISSUE-285). */
+  /** The Panel window, where every picker is attached: never the Veta window (ISSUE-285) nor Valle's (ISSUE-299). */
   const panelBrowserWindow = (): BrowserWindow | undefined =>
     BrowserWindow.getAllWindows().find(
-      (window) => !window.isDestroyed() && !rebuiltPanel.isVeta(window.webContents.id)
+      (window) =>
+        !window.isDestroyed() &&
+        !rebuiltPanel.isVeta(window.webContents.id) &&
+        !rebuiltPanel.isValle(window.webContents.id)
     )
   // AMENDED for ISSUE-243, the deletion of today's runtime (was: today's runtime composed here through
   // `LegacyRuntimeRoute`, without its window, tray and shortcut, its pushes and pickers reaching the rebuilt Panel): no
@@ -2115,6 +2166,7 @@ function startElectronUi(dataDir: string, uiLog: ReturnType<typeof createUiLogge
     uiLog,
     panelWindow: rebuiltPanel.factory,
     vetaWindow: rebuiltPanel.veta,
+    valleWindow: rebuiltPanel.valle,
     ...(() => {
       const native = electronNativeRows(panelBrowserWindow)
       return { nativeRows: native.rows, minesNative: native.actions, consoles: native.actions }

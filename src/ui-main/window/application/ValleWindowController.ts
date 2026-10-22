@@ -29,15 +29,16 @@ import type { ModeWindow, Rect, WindowFactory } from '../ports/windowFactory'
 export interface ValleWindowControllerDeps {
   factory: Pick<WindowFactory, 'valle'>
   screen: Pick<ScreenAreaProvider, 'displays'>
-  /** Where Valle is entered from now: the bounds of the mode window shown, or a launch with the Panel's stored place. */
-  entry(): ValleEntry
 }
 
 export interface ValleWindowController {
   /** The Valle window for the `ModeCoordinator`: built on the first call, the same window afterwards. */
   window(): ModeWindow
-  /** Its final bounds for this entry (S39.01, S39.02): placed from where it is entered from, nothing remembered. */
-  bounds(): Rect
+  /**
+   * Its final bounds for an entry from `entry` (S39.01, S39.02): the bounds of the mode window shown, or a launch with the
+   * Panel's stored place (§24 I-35). Placed from that alone, nothing remembered.
+   */
+  bounds(entry: ValleEntry): Rect
   /** Whether the window exists yet. */
   built(): boolean
   /** Machine 39's state as UI main sees it. */
@@ -63,17 +64,20 @@ export function createValleWindowController(
   }
 
   /** S39.01, S39.02: placed from where it is entered from now; an entry while already opening places it all the same. */
-  const enter = (): VallePlace => {
+  const enter = (entry: ValleEntry): VallePlace => {
     const displays = deps.screen.displays()
-    const entered = enterValle(node, deps.entry(), displays)
-    if (!entered.ok) return placeValle(deps.entry(), displays)
+    const entered = enterValle(node, entry, displays)
+    if (!entered.ok) return placeValle(entry, displays)
     node = entered.value.to
     return entered.value.place
   }
 
   const window = (): ModeWindow => {
     if (built !== null) return built
-    const valle = deps.factory.valle(placeValle(deps.entry(), deps.screen.displays()).displayKey)
+    // Built before its first placement (ADR-025 item 3 step 1 places it next): opened on the primary display's key.
+    const valle = deps.factory.valle(
+      placeValle({ from: 'launch', panelPlace: null }, deps.screen.displays()).displayKey
+    )
     built = {
       placeAt: (bounds) => {
         valle.placeAt(bounds)
@@ -95,8 +99,8 @@ export function createValleWindowController(
 
   return {
     window,
-    bounds() {
-      const place = enter()
+    bounds(entry) {
+      const place = enter(entry)
       placed = place
       return place.bounds
     },
