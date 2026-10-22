@@ -10,10 +10,15 @@
  *   departure, so nothing walks and no toast shows for it (S34.12, S29.02). Only a frame newer than the snapshot is an
  *   observed fact (`arrived`, with the Host's `announce`), which the arrival toast hears (S39.11).
  *
+ * - The pins (07 machine 29; ISSUE-302) also hear each dwarf's open asks (the `asks` section, `ask.opened`,
+ *   `ask.closed`), to read "! permission" or "? asking" (S29.15), and each departure with its cause and each mine's
+ *   removal, observed after the snapshot (S29.13, S29.14).
+ *
  * The bridge is injected (the house idiom over `vi.mock`); `main.ts` hands it the page's own `window.api`.
  */
 import {
   HOST_FRAME_SCHEMAS,
+  type AskRecord,
   hostConnectionViewSchema,
   type DwarfId,
   type DwarfWire,
@@ -34,9 +39,19 @@ export interface ValleReadModelBridge {
   onHostConnection(listener: (view: unknown) => void): () => void
 }
 
-/** What the window hears once the facts it changed are published: an observed arrival, or a (re-)snapshot. */
+/**
+ * What the window hears once the facts it changed are published: an observed arrival or departure (`mineRemoved` for
+ * the cause `mine-removed`), a mine's removal, or a (re-)snapshot.
+ */
 export type ValleFact =
   | { readonly kind: 'arrived'; readonly dwarf: DwarfWire; readonly announce: boolean }
+  | {
+      readonly kind: 'departed'
+      readonly dwarfId: DwarfId
+      readonly mineId: MineId
+      readonly mineRemoved: boolean
+    }
+  | { readonly kind: 'mine-removed'; readonly mineId: MineId }
   | { readonly kind: 'snapshot' }
 
 export interface ValleReadModel {
@@ -47,25 +62,49 @@ export interface ValleReadModel {
   /** The Host connection is not `connected`: the facts are held as last known, read-only (S34.12). */
   held: Readonly<Ref<boolean>>
   onFacts(listener: (facts: readonly ValleFact[]) => void): () => void
+  /** The kind of a dwarf's oldest open ask, `null` with none (07 S29.15; ISSUE-302). */
+  askOf(dwarfId: DwarfId): 'question' | 'permission' | null
   /** Follows the Host; answers whether the first snapshot was read. */
   start(): Promise<boolean>
   stop(): void
 }
 
 /** The sections Valle reads (14 §6.4). */
-const SECTIONS: SnapshotSection[] = ['mines', 'dwarfs']
+const SECTIONS: SnapshotSection[] = ['mines', 'dwarfs', 'asks']
+
+/** An open ask, as the pins read it. */
+interface OpenAsk {
+  dwarfId: DwarfId
+  kind: AskRecord['kind']
+  openedAt: number
+}
 
 interface ValleFacts {
   mines: Map<MineId, MineWire>
   dwarfs: Map<DwarfId, DwarfWire>
+  /** Open asks by ask id. */
+  asks: Map<string, OpenAsk>
 }
 
+/** An ask still waiting for the person (ADR-010 item 5). */
+const isOpen = (ask: AskRecord): boolean => ask.state === 'open' || ask.state === 'answering'
+
 function factsOf(chunks: readonly SnapshotChunk[]): ValleFacts {
-  const facts: ValleFacts = { mines: new Map(), dwarfs: new Map() }
+  const facts: ValleFacts = { mines: new Map(), dwarfs: new Map(), asks: new Map() }
   for (const chunk of chunks) {
     if (chunk.section === 'mines') for (const mine of chunk.data) facts.mines.set(mine.id, mine)
     else if (chunk.section === 'dwarfs') {
       for (const dwarf of chunk.data) facts.dwarfs.set(dwarf.id, dwarf as DwarfWire)
+    } else if (chunk.section === 'asks') {
+      for (const ask of chunk.data.asks) {
+        if (isOpen(ask)) {
+          facts.asks.set(ask.id, {
+            dwarfId: ask.dwarfId as DwarfId,
+            kind: ask.kind,
+            openedAt: ask.openedAt
+          })
+        }
+      }
     }
   }
   return facts
@@ -77,9 +116,13 @@ export function createValleReadModel(bridge: ValleReadModelBridge): ValleReadMod
   const held = shallowRef(false)
   const listeners = new Set<(facts: readonly ValleFact[]) => void>()
   let heard: ValleFact[] = []
-  const facts: ValleFacts = { mines: new Map(), dwarfs: new Map() }
+  const facts: ValleFacts = { mines: new Map(), dwarfs: new Map(), asks: new Map() }
+
+  /** Bumped on each publish, so a reader of `askOf` is told when the asks may have changed. */
+  const published = shallowRef(0)
 
   function publish(): void {
+    published.value += 1
     mines.value = [...facts.mines.values()]
     dwarfs.value = [...facts.dwarfs.values()]
     if (heard.length === 0) return
@@ -98,7 +141,9 @@ export function createValleReadModel(bridge: ValleReadModelBridge): ValleReadMod
       }
       case 'mine.removed': {
         const parsed = HOST_FRAME_SCHEMAS['mine.removed'].safeParse(frame.data)
-        if (parsed.success) facts.mines.delete(parsed.data.mineId)
+        if (!parsed.success) return
+        facts.mines.delete(parsed.data.mineId)
+        heard.push({ kind: 'mine-removed', mineId: parsed.data.mineId })
         return
       }
       case 'dwarf.arrived': {
@@ -119,7 +164,34 @@ export function createValleReadModel(bridge: ValleReadModelBridge): ValleReadMod
       }
       case 'dwarf.departed': {
         const parsed = HOST_FRAME_SCHEMAS['dwarf.departed'].safeParse(frame.data)
-        if (parsed.success) facts.dwarfs.delete(parsed.data.dwarfId as DwarfId)
+        if (!parsed.success) return
+        const dwarfId = parsed.data.dwarfId as DwarfId
+        facts.dwarfs.delete(dwarfId)
+        for (const [askId, ask] of facts.asks) if (ask.dwarfId === dwarfId) facts.asks.delete(askId)
+        heard.push({
+          kind: 'departed',
+          dwarfId,
+          mineId: parsed.data.mineId as MineId,
+          mineRemoved: parsed.data.cause === 'mine-removed'
+        })
+        return
+      }
+      case 'ask.opened': {
+        const parsed = HOST_FRAME_SCHEMAS['ask.opened'].safeParse(frame.data)
+        if (!parsed.success) return
+        const ask = parsed.data.ask
+        if (isOpen(ask)) {
+          facts.asks.set(ask.id, {
+            dwarfId: ask.dwarfId as DwarfId,
+            kind: ask.kind,
+            openedAt: ask.openedAt
+          })
+        } else facts.asks.delete(ask.id)
+        return
+      }
+      case 'ask.closed': {
+        const parsed = HOST_FRAME_SCHEMAS['ask.closed'].safeParse(frame.data)
+        if (parsed.success) facts.asks.delete(parsed.data.askId)
         return
       }
       default:
@@ -132,6 +204,7 @@ export function createValleReadModel(bridge: ValleReadModelBridge): ValleReadMod
     replace: (data) => {
       facts.mines = data.mines
       facts.dwarfs = data.dwarfs
+      facts.asks = data.asks
       // A snapshot supersedes whatever frames it holds: nothing walks, nothing is announced (S34.12).
       heard = [{ kind: 'snapshot' }]
     },
@@ -157,6 +230,15 @@ export function createValleReadModel(bridge: ValleReadModelBridge): ValleReadMod
     mines,
     dwarfs,
     held,
+    askOf(dwarfId) {
+      void published.value
+      let oldest: OpenAsk | null = null
+      for (const ask of facts.asks.values()) {
+        if (ask.dwarfId === dwarfId && (oldest === null || ask.openedAt < oldest.openedAt))
+          oldest = ask
+      }
+      return oldest?.kind ?? null
+    },
     onFacts(listener) {
       listeners.add(listener)
       return () => listeners.delete(listener)

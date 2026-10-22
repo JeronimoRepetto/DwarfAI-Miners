@@ -116,3 +116,79 @@ describe('the Valle read models (ADR-033; UC-067; ISSUE-299)', () => {
     scope.stop()
   })
 })
+
+// APPENDED for ISSUE-302: what the pins hear of the Host (07 S29.13, S29.14, S29.15).
+describe('what the Valle pins hear of the Host (ISSUE-302)', () => {
+  const ask = (id: string, dwarfId: string, kind: 'question' | 'permission', openedAt: number) =>
+    ({
+      id,
+      dwarfId,
+      kind,
+      channel: 'driver',
+      providerRequestId: `request-${id}`,
+      payload:
+        kind === 'question'
+          ? { steps: [{ text: 'Which one?', options: ['a', 'b'], allowsFreeText: true }] }
+          : { toolName: 'Bash', requestText: 'run a command' },
+      currentStep: 0,
+      state: 'open',
+      reannounce: false,
+      openedAt
+    }) as const
+  const ASK_1 = '01920000-0000-7000-8000-00000000e001'
+  const ASK_2 = '01920000-0000-7000-8000-00000000e002'
+
+  it('[S29.13, S29.14, S29.15] the window knows each dwarf’s open ask and hears a departure with its cause and a mine’s removal', async () => {
+    const page = snapshotPage(10, {
+      minesEverKnown: true,
+      mines: [mineWire(MORIA), mineWire(EREBOR)],
+      dwarfs: [dwarfWire(BORIN, MORIA), dwarfWire(DAIN, EREBOR), dwarfWire(NALI, MORIA)]
+    })
+    if (!page.ok) throw new Error('fixture')
+    const withAsks = {
+      ...page,
+      value: {
+        ...page.value,
+        chunks: [
+          ...page.value.chunks,
+          {
+            section: 'asks',
+            data: {
+              asks: [ask(ASK_1, BORIN, 'permission', 5)],
+              needsYou: [{ dwarfId: BORIN, mineId: MORIA, askedAt: 5 }]
+            }
+          }
+        ]
+      }
+    }
+    const host = scriptedHost([withAsks])
+    const model = createValleReadModel(host.bridge)
+    const facts: ValleFact[][] = []
+    model.onFacts((batch) => facts.push([...batch]))
+    host.connection({ state: 'connected' })
+    expect(await model.start()).toBe(true)
+    expect(model.askOf(BORIN)).toBe('permission')
+    expect(model.askOf(DAIN)).toBeNull()
+
+    host.push([
+      frame(11, 'ask.opened', { ask: ask(ASK_2, DAIN, 'question', 7) as never }),
+      frame(12, 'ask.closed', { askId: ASK_1 as never, dwarfId: BORIN, reason: 'answered-in-app' })
+    ])
+    expect(model.askOf(DAIN)).toBe('question')
+    expect(model.askOf(BORIN)).toBeNull()
+
+    host.push([
+      frame(13, 'dwarf.departed', { dwarfId: DAIN, mineId: EREBOR, cause: 'stopped' }),
+      frame(14, 'dwarf.departed', { dwarfId: NALI, mineId: MORIA, cause: 'mine-removed' }),
+      frame(15, 'mine.removed', { mineId: MORIA, removedAt: 15 })
+    ])
+    expect(facts.at(-1)).toEqual([
+      { kind: 'departed', dwarfId: DAIN, mineId: EREBOR, mineRemoved: false },
+      { kind: 'departed', dwarfId: NALI, mineId: MORIA, mineRemoved: true },
+      { kind: 'mine-removed', mineId: MORIA }
+    ])
+    // A departed dwarf's ask goes with it.
+    expect(model.askOf(DAIN)).toBeNull()
+    model.stop()
+  })
+})
