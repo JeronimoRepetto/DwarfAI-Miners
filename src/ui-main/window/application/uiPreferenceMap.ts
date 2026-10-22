@@ -23,6 +23,14 @@ export interface UiPreferenceMapDeps {
    * them, through `layoutVeta` (A-N23): a renderer's write is refused as UI main's own (ADR-024 item 9).
    */
   vetaDock?: () => UiPreferencesMap['vetaDock']
+  /**
+   * Settings › General "Mode at launch" (14 §3.9; US-SET-002.AC09; ISSUE-294): the stored launch preference, which the
+   * renderer reads and writes; the `ModeCoordinator` reads it at the first open (S10.01, S10.13).
+   */
+  modeAtLaunch?: {
+    get(): UiPreferencesMap['modeAtLaunch']
+    set(value: UiPreferencesMap['modeAtLaunch']): UiPreferencesMap['modeAtLaunch']
+  }
 }
 
 export interface UiPreferenceMap {
@@ -43,7 +51,7 @@ type ServedKeys = { [K in UiPreferenceKey]?: ServedKey<K> }
 
 export function createUiPreferenceMap(deps: UiPreferenceMapDeps): UiPreferenceMap {
   const served: ServedKeys = {}
-  const { startWithSystem, vetaDock } = deps
+  const { startWithSystem, vetaDock, modeAtLaunch } = deps
   if (startWithSystem !== undefined) {
     served.startWithSystem = {
       get: () => startWithSystem.stored(),
@@ -52,6 +60,7 @@ export function createUiPreferenceMap(deps: UiPreferenceMapDeps): UiPreferenceMa
   }
 
   if (vetaDock !== undefined) served.vetaDock = { get: vetaDock }
+  if (modeAtLaunch !== undefined) served.modeAtLaunch = modeAtLaunch
 
   return {
     get(keys) {

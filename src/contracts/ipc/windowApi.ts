@@ -383,6 +383,17 @@ export type UiPreferenceWrite = {
 // lastMode and resetEpochApplied are written by UI main itself, never by a renderer:
 // setUiPreference({key:'lastMode' | 'resetEpochApplied'}) → INVALID_PARAMS.
 
+/**
+ * 14 §3.9 `modeAtLaunch` (US-SET-002): the whole type, Valle included. Which options Settings draws is the build's
+ * (ADR-034 item 2); a stored mode this build does not ship opens the Panel (ISSUE-294).
+ */
+export const modeAtLaunchSchema = z.enum([
+  'last-used',
+  'panel',
+  'veta',
+  'valle'
+]) satisfies z.ZodType<UiPreferencesMap['modeAtLaunch']>
+
 /** Every key of 14 §3.9 `UiPreferencesMap`: A-N20 may ask for any of them. */
 export const UI_PREFERENCE_KEYS = [
   'lastMode',
@@ -415,7 +426,9 @@ export const uiPreferencesAnswerSchema = z
   .object({
     startWithSystem: z.boolean().optional(),
     // ISSUE-286: Veta's stored places, read by the Veta renderer (14 §3.9 usage rule); written by UI main only.
-    vetaDock: z.lazy(() => vetaDocksSchema).optional()
+    vetaDock: z.lazy(() => vetaDocksSchema).optional(),
+    // ISSUE-294: Settings › General "Mode at launch" (US-SET-002.AC09), read and written by the Panel renderer.
+    modeAtLaunch: modeAtLaunchSchema.optional()
   })
   .strict() satisfies z.ZodType<Partial<UiPreferencesMap>>
 
@@ -446,7 +459,8 @@ export const revealDwarfChatPushSchema = z
  * `resetEpochApplied` are UI main's own (14 §3.9), so a write of either is refused `INVALID_PARAMS` by the seam A gate.
  */
 export const uiPreferenceWriteSchema = z.discriminatedUnion('key', [
-  z.object({ key: z.literal('startWithSystem'), value: z.boolean() }).strict()
+  z.object({ key: z.literal('startWithSystem'), value: z.boolean() }).strict(),
+  z.object({ key: z.literal('modeAtLaunch'), value: modeAtLaunchSchema }).strict()
 ]) satisfies z.ZodType<UiPreferenceWrite>
 
 // A-N13 `moveToMode`, A-N14 `onModeTransition`, A-N15 `modeTransitionDone` (14 §2.2, §3.9; ADR-025 item 3;

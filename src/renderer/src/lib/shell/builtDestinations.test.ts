@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentProviderOption } from '../../types'
 import {
+  MODE_AT_LAUNCH_LABELS,
   SHIPPED_MODES,
   launchMode,
+  leverMove,
   leverModes,
   modeAtLaunchOptions,
   offeredProviders
@@ -23,11 +25,22 @@ const notOffered: AgentProviderOption = {
 }
 const absent: AgentProviderOption = { provider: 'codex', installed: false, launchable: false }
 
+/** A build that ships the Panel alone (ADR-034's first release). */
+const PANEL_ONLY = ['panel'] as const
+
 describe('the modes a Panel build shows (ADR-034 item 2)', () => {
+  // AMENDED for ISSUE-294 (was: this build's own list, the Panel alone): a release build ships Veta now (ADR-034 item 2),
+  // so a Panel-only build is the list written here; this build's list is checked to hold no Valle.
   it('[ADR-034, BR-19] with only the Panel shipped there is no mode lever and no Mode at launch option', () => {
-    expect(SHIPPED_MODES).toEqual(['panel'])
-    expect(leverModes(SHIPPED_MODES)).toEqual([])
-    expect(modeAtLaunchOptions(SHIPPED_MODES)).toEqual([])
+    expect(SHIPPED_MODES).not.toContain('valle')
+    expect(leverModes(PANEL_ONLY)).toEqual([])
+    expect(modeAtLaunchOptions(PANEL_ONLY)).toEqual([])
+  })
+
+  it('[ADR-034, BR-19] a release build ships the Panel and Veta: the lever is ▼ Veta alone and Mode at launch lists Last used, Panel and Veta', () => {
+    expect(SHIPPED_MODES).toEqual(['panel', 'veta'])
+    expect(leverModes(SHIPPED_MODES)).toEqual(['veta'])
+    expect(modeAtLaunchOptions(SHIPPED_MODES)).toEqual(['last-used', 'panel', 'veta'])
   })
 
   it('[ADR-034] between Veta and Valle the lever and Mode at launch show only the modes that exist', () => {
@@ -42,10 +55,12 @@ describe('the modes a Panel build shows (ADR-034 item 2)', () => {
     ])
   })
 
+  // AMENDED for ISSUE-294 (was: over this build's list, the Panel alone): the unshipped modes are those of a Panel-only
+  // list written here, and Valle, which no release build ships yet, over this build's list.
   it('[ADR-034] a stored lastMode or modeAtLaunch naming an unshipped mode resolves to Panel', () => {
-    expect(launchMode({ modeAtLaunch: 'veta' }, SHIPPED_MODES)).toBe('panel')
+    expect(launchMode({ modeAtLaunch: 'veta' }, PANEL_ONLY)).toBe('panel')
     expect(launchMode({ modeAtLaunch: 'valle' }, SHIPPED_MODES)).toBe('panel')
-    expect(launchMode({ modeAtLaunch: 'last-used', lastMode: 'veta' }, SHIPPED_MODES)).toBe('panel')
+    expect(launchMode({ modeAtLaunch: 'last-used', lastMode: 'veta' }, PANEL_ONLY)).toBe('panel')
     expect(launchMode({ lastMode: 'valle' }, SHIPPED_MODES)).toBe('panel')
     expect(launchMode({}, SHIPPED_MODES)).toBe('panel')
     // A shipped mode is kept, so the rule resolves only what is not built.
@@ -54,6 +69,25 @@ describe('the modes a Panel build shows (ADR-034 item 2)', () => {
       'veta'
     )
     expect(launchMode({ modeAtLaunch: 'panel', lastMode: 'veta' }, ['panel', 'veta'])).toBe('panel')
+  })
+})
+
+describe('the mode lever and Mode at launch (ISSUE-294)', () => {
+  it('[US-SHELL-001.AC02, S10.04, S9.01] a side of the lever moves to its mode, carrying the chat open in the Panel', () => {
+    expect(leverMove('veta', { mineId: 'mine-1', dwarfId: 'dwarf-1' })).toEqual({
+      mode: 'veta',
+      mineId: 'mine-1',
+      dwarfId: 'dwarf-1'
+    })
+    // No chat open (the Add panel, or nothing): the move carries none.
+    expect(leverMove('veta', { mineId: 'mine-1', dwarfId: null })).toEqual({ mode: 'veta' })
+    expect(leverMove('veta', { mineId: '', dwarfId: null })).toEqual({ mode: 'veta' })
+  })
+
+  it('[US-SET-002.AC09] each Mode at launch option reads as the design writes it', () => {
+    expect(
+      modeAtLaunchOptions(['panel', 'veta', 'valle']).map((o) => MODE_AT_LAUNCH_LABELS[o])
+    ).toEqual(['Last used', 'Panel', 'Veta', 'Valle'])
   })
 })
 

@@ -68,7 +68,8 @@ import { dockReplaceMotion, dockWindowMotion } from './lib/shell/dockMotion'
 import { mineOnScreen } from './lib/shell/mineOnScreen'
 import { unavailableAreaOf } from './lib/shell/shellNav'
 import { needsYouCount, reachableArea } from './lib/shell/panelNav'
-import { SHIPPED_MODES, leverModes } from './lib/shell/builtDestinations'
+import { SHIPPED_MODES, leverModes, leverMove, type LeverMode } from './lib/shell/builtDestinations'
+import { modeAtLaunchPart } from './composables/useModeAtLaunch'
 import { versionLabel, versionTitle } from './lib/appBuild'
 import type { AppBuild, Dwarf, FeatureFlags, Mine, MineHistoryResult, ShellArea } from './types'
 
@@ -216,6 +217,17 @@ async function revealDwarfChat(target: { mineId: string; dwarfId: string | null 
 // US-MSG-010.AC01): the reveal's own gesture, so a dwarf no longer on the board opens its mine alone (S9.08).
 let stopHandoffArrival: (() => void) | undefined
 /* --- end of the ISSUE-293 block --------------------------------------------- */
+
+/* --- The mode lever and Mode at launch (ISSUE-294) — one block, appended ---- */
+// Settings › General "Mode at launch" (US-SET-002.AC09): the options this build ships, and what UI main stored.
+const {
+  options: modeAtLaunchOptions,
+  value: modeAtLaunchValue,
+  read: readModeAtLaunch,
+  pick: pickModeAtLaunch,
+  dispose: disposeModeAtLaunch
+} = modeAtLaunchPart()
+/* --- end of the ISSUE-294 block --------------------------------------------- */
 
 /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
 /**
@@ -793,6 +805,16 @@ function hidePanel(): void {
 }
 
 /**
+ * A side of the nav's mode lever (07 S10.04; US-SHELL-001.AC02; ISSUE-294): UI main's `ModeCoordinator` moves the app
+ * into that mode, carrying the chat open here so it rises there once landed (machine 9), and writes it as the mode
+ * last used. A refused move leaves the Panel where it is.
+ */
+function moveByLever(mode: LeverMode): void {
+  const params = leverMove(mode, { mineId: dock.surface.value.mineId, dwarfId: openDwarfId.value })
+  void window.api.moveToMode(params).catch(() => {})
+}
+
+/**
  * Bring the window to the front on any press anywhere on the shell (#165).
  *
  * The third acceptance run found the panel sitting BEHIND whatever program had
@@ -1268,6 +1290,9 @@ onMounted(() => {
   /* --- Recovery message (ISSUE-330) — one block, appended --------------------- */
   void followRecoveryReport()
   /* --- end of the ISSUE-330 block --------------------------------------------- */
+  /* --- Mode at launch (ISSUE-294) — one block, appended ----------------------- */
+  void readModeAtLaunch()
+  /* --- end of the ISSUE-294 block --------------------------------------------- */
 })
 onBeforeUnmount(() => {
   unlistenAudio?.()
@@ -1278,6 +1303,7 @@ onBeforeUnmount(() => {
   /* --- Notification reveal (ISSUE-114) — one block, appended ---------------- */
   unlistenRevealDwarfChat?.()
   stopHandoffArrival?.()
+  disposeModeAtLaunch()
   /* --- end of the ISSUE-114 block ------------------------------------------- */
   /* --- Typography preferences (#370) — one block, appended ----------------- */
   unlistenTypography?.()
@@ -1528,6 +1554,7 @@ const recoveryNames = computed(() => {
           :music="musicPlaying"
           :warn="shortcutBroken"
           :modes="leverModes(SHIPPED_MODES)"
+          @mode="moveByLever"
           @nav="selectArea"
           @mark="hidePanel"
           @music="toggleMusicAndSay"
@@ -1617,6 +1644,9 @@ const recoveryNames = computed(() => {
               :jev-catalogs="jevCatalogs"
               :open-code-settings="openCodeSettings"
               :open-code-applying="openCodeApplying"
+              :mode-at-launch="modeAtLaunchValue"
+              :mode-at-launch-options="modeAtLaunchOptions"
+              @mode-at-launch-change="pickModeAtLaunch"
               @start-recording="startShortcutRecording"
               @stop-recording="stopShortcutRecording"
               @record="recordShortcut"
