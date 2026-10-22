@@ -479,8 +479,11 @@ export function useVetaChoreography(deps: VetaChoreographyDeps): VetaChoreograph
 
   function hear(facts: readonly VetaFact[]): void {
     if (facts.some((f) => f.kind === 'snapshot')) {
-      // A re-snapshot never walks anyone (S26.15): what is missing is gone, what is new stands at its station.
+      // A re-snapshot never walks anyone (S26.15): what is missing is gone, what is new stands at its station. A dwarf
+      // missing from it is forgotten as walked in too, so one that stands again later never starts as if it walked in.
       reset()
+      const present = new Set(deps.facts().flatMap((c) => c.dwarfs.map((d) => d.id)))
+      arrived.value = new Set([...arrived.value].filter((id) => present.has(id)))
       drawnBefore = chambers.value
       return
     }

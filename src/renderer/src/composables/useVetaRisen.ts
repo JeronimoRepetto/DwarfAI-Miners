@@ -27,6 +27,10 @@
  *   flushes the chat (S9.02) and the window hiding folds it (S24.14). A run into Veta carrying a chat rises it once
  *   landed (S24.18), as a click does.
  *
+ * - A re-snapshot after the Host connection came back (UC-067; S20.16; ISSUE-296) that lacks the risen chat's dwarf
+ *   closes the chat outright with no walk, the draft dropped (INV-113): no `dwarf.departed` came, so UI main's session
+ *   store drops its own copy on the Host's report.
+ *
  * Each step stamps the effects it starts: a later step (a fold mid-rise, a drag) stops the earlier one's remaining
  * effects, so a motion that ends late never steps a machine that has moved on. The bridge and the host are injected
  * (the house idiom over `vi.mock`).
@@ -129,6 +133,8 @@ export interface VetaRisen {
   dispatch(event: RisenEvent): Promise<void>
   /** The open chat's draft as it is typed, kept in the session store. */
   draft(dwarfId: DwarfId, text: string): void
+  /** A (re-)snapshot was applied: a risen chat whose dwarf is missing from it closes (S20.16; UC-067). */
+  resnapshot(): Promise<void>
   /** The dwarf of `crew` last talked to in the mine, or `null` (S25.11). */
   talkedTo(mineId: MineId, crew: readonly DwarfId[]): Promise<DwarfId | null>
   /** Hears reveals and Veta's display going away. */
@@ -296,6 +302,11 @@ export function useVetaRisen(deps: VetaRisenDeps): VetaRisen {
     dispatch,
     draft(dwarfId, text) {
       bridge.patchUiSession({ kind: 'draft', dwarfId, text })
+    },
+    async resnapshot() {
+      const { content } = machine.value
+      if (content?.kind !== 'chat' || host.present(content.mineId, content.dwarfId)) return
+      await dispatch({ type: 'vanished', dwarfId: content.dwarfId })
     },
     async talkedTo(mineId, crew) {
       const own = talked.get(mineId)

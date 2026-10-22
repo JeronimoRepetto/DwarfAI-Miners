@@ -4,6 +4,7 @@
  * can be held back to see what shows before the window has grown. Never imported by production code (R14).
  */
 import type {
+  HostConnectionView,
   HostFrame,
   ModeTransition,
   MoveToModeParams,
@@ -53,6 +54,8 @@ export interface VetaWorldOptions {
    * (`mode.transition`, role `source`, the chat a move names), as the `ModeCoordinator` tells it before `t0`.
    */
   runs?: boolean
+  /** A-N03's answer (ISSUE-296); the generated fake's default when omitted. */
+  hostConnection?: HostConnectionView
 }
 
 export interface VetaWorld {
@@ -122,6 +125,9 @@ export async function mountVeta(
     })) as unknown as typeof window.matchMedia
   }
   ;(window as unknown as { api: unknown }).api = createFakeWindowApi({
+    ...(options.hostConnection === undefined
+      ? {}
+      : { getHostConnection: () => Promise.resolve(options.hostConnection) as never }),
     getHostSnapshot: () => Promise.resolve(snapshotPage(10, data)) as never,
     onHostEvent: (listener) => {
       hostListeners.add(listener as (frames: HostFrame[]) => void)
