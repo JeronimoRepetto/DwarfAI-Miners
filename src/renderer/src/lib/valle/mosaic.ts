@@ -18,6 +18,7 @@
  */
 import type { MineId, Tier } from '@dwarfai/contracts'
 import { designTierLabel } from '../presentation'
+import { restoreMosaicOrder } from './restore'
 
 /** Machine 32's states. */
 export type MosaicState = 'idle' | 'slot-menu' | 'choosing-folder' | 'declaring'
@@ -154,7 +155,7 @@ export function openMosaic(stored: readonly MineId[] | null, facts: MosaicFacts)
     return taken('S32.01', idle(order), [{ kind: 'write-order', order }])
   }
   const exists = (mineId: MineId): boolean => facts.mines.some((mine) => mine.mineId === mineId)
-  return taken('S32.02', idle(stored.filter(exists)))
+  return taken('S32.02', idle(restoreMosaicOrder([...stored], exists) ?? []))
 }
 
 /** The add slot's menu: every mine not in the mosaic, in data order, a rule, then "A new project…" (S32.04). */

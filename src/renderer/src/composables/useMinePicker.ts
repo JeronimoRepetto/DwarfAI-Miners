@@ -52,9 +52,7 @@ import type { MineDeclareResult, MineWorktreeOf } from '../types'
 import { DECLARE_UNREACHABLE } from './useProjectBrowse'
 
 /** The seam A members the menu and the picker use (14 §2.1 A-30, A-31; §2.2 A-N13, A-N18). */
-export interface MinePickerBridge {
-  declareMine(): Promise<MineDeclareResult>
-  declareMainProject(): Promise<MineDeclareResult>
+export interface MinePickerBridge extends FolderDeclareBridge {
   moveToMode(params: MoveToModeParams): Promise<unknown>
   /** A-N18: names the Panel's current mine before a hand-off to it (S22.13, S22.14). */
   patchUiSession(patch: UiSessionPatch): void
@@ -93,31 +91,68 @@ export interface MinePickerPart {
   answerWorktree(accept: boolean): void
 }
 
-export function useMinePicker(deps: MinePickerDeps): MinePickerPart {
-  const machine = shallowRef<GripMenu>(CLOSED_GRIP_MENU)
-  const notice = shallowRef<string | null>(null)
-  const last = shallowRef<GripMenuStep | null>(null)
+/** The members of seam A the ordinary "Add a mine" folder flow uses (14 §2.1 A-30, A-31). */
+export interface FolderDeclareBridge {
+  declareMine(): Promise<MineDeclareResult>
+  declareMainProject(): Promise<MineDeclareResult>
+}
+
+/** What the folder flow tells its caller, in the order it happens. */
+export interface FolderDeclareSteps {
+  /** A folder counts as picked: its declare is in flight, or a worktree's "Add <mine>" was chosen. */
+  picked(): void
+  /** The OS folder picker was cancelled, or the worktree question answered Cancel: nothing added. */
+  cancelled(): void
+  /** A mine is ready: new, existing or reattached, or the project a worktree was folded into. */
+  declared(mineId: MineId, worktree: boolean): void
+  /** The folder added nothing: the Mines page's own words for why (US-MINES-004), `null` with none to say. */
+  failed(reason: string | null): void
+}
+
+/** The ordinary "Add a mine" folder flow, with its worktree question. */
+export interface FolderDeclare {
+  /** The worktree question asked (US-MINES-004.AC03), or `null`. */
+  worktree: Readonly<Ref<MineWorktreeOf | null>>
+  /** True while "Add <mine>" adopts the main project. */
+  adopting: Readonly<Ref<boolean>>
+  /** A-30: UI main opens the OS folder picker and declares the folder it gives. */
+  declare(): Promise<void>
+  /** The answer to the worktree question: "Add <mine>" (`true`) or Cancel. */
+  answerWorktree(accept: boolean): Promise<void>
+}
+
+/**
+ * The ordinary "Add a mine" folder flow (US-MINES-004; 14 §2.1 A-30, A-31), shared by Veta's picker (07 machine 22) and
+ * Valle's add slot (07 machine 32, ISSUE-304), so the folder is picked, a worktree asked about and a refusal worded the
+ * same way wherever it starts. The renderer names no path: UI main opens the picker over the calling window.
+ */
+export function createFolderDeclare(
+  bridge: FolderDeclareBridge,
+  steps: FolderDeclareSteps
+): FolderDeclare {
   const worktree = shallowRef<MineWorktreeOf | null>(null)
   const adopting = shallowRef(false)
 
-  function move(params: MoveToModeParams): void {
-    void deps.bridge.moveToMode(params).catch(() => {
-      // UI main is out of reach: nothing moved, and Veta stays where the person can try again.
-    })
+  /** A mine ready, or the reason the folder added nothing. */
+  function settle(answer: MineDeclareResult, fromWorktree: boolean): void {
+    if (answer.outcome === 'added' && answer.mineId !== undefined) {
+      steps.declared(answer.mineId as MineId, fromWorktree)
+      return
+    }
+    steps.failed(declareFailureNotice({ ...answer, outcome: 'failed' }))
   }
 
-  /** A mine declared, or the reason the folder added nothing (S22.12–S22.15). */
   async function declare(): Promise<void> {
     let answer: MineDeclareResult
     try {
-      answer = await deps.bridge.declareMine()
+      answer = await bridge.declareMine()
     } catch {
-      dispatch({ type: 'folder-picked' })
-      fail(DECLARE_UNREACHABLE)
+      steps.picked()
+      steps.failed(DECLARE_UNREACHABLE)
       return
     }
     if (answer.outcome === 'cancelled') {
-      dispatch({ type: 'folder-cancelled' })
+      steps.cancelled()
       return
     }
     if (answer.outcome === 'worktree-of' && answer.worktreeOf !== undefined) {
@@ -125,42 +160,55 @@ export function useMinePicker(deps: MinePickerDeps): MinePickerPart {
       worktree.value = answer.worktreeOf
       return
     }
-    dispatch({ type: 'folder-picked' })
+    steps.picked()
     settle(answer, false)
   }
 
-  /** A mine ready hands off to the Panel on it (S22.13, S22.14); anything else is a refusal (S22.15). */
-  function settle(answer: MineDeclareResult, fromWorktree: boolean): void {
-    if (answer.outcome === 'added' && answer.mineId !== undefined) {
-      dispatch({ type: 'declared', mineId: answer.mineId as MineId, worktree: fromWorktree })
-      return
-    }
-    fail(declareFailureNotice({ ...answer, outcome: 'failed' }))
-  }
-
-  /** The worktree question answered: Cancel adds nothing (S22.11); "Add <mine>" adopts the main project (AC06). */
+  /** The worktree question answered: Cancel adds nothing; "Add <mine>" adopts the main project (AC06). */
   async function answerWorktree(accept: boolean): Promise<void> {
     if (worktree.value === null || adopting.value) return
     if (!accept) {
       worktree.value = null
-      dispatch({ type: 'folder-cancelled' })
+      steps.cancelled()
       return
     }
     adopting.value = true
-    dispatch({ type: 'folder-picked' })
+    steps.picked()
     let answer: MineDeclareResult
     try {
-      answer = await deps.bridge.declareMainProject()
+      answer = await bridge.declareMainProject()
     } catch {
       worktree.value = null
       adopting.value = false
-      fail(DECLARE_UNREACHABLE)
+      steps.failed(DECLARE_UNREACHABLE)
       return
     }
     worktree.value = null
     adopting.value = false
     settle(answer, true)
   }
+
+  return { worktree, adopting, declare, answerWorktree }
+}
+
+export function useMinePicker(deps: MinePickerDeps): MinePickerPart {
+  const machine = shallowRef<GripMenu>(CLOSED_GRIP_MENU)
+  const notice = shallowRef<string | null>(null)
+  const last = shallowRef<GripMenuStep | null>(null)
+
+  function move(params: MoveToModeParams): void {
+    void deps.bridge.moveToMode(params).catch(() => {
+      // UI main is out of reach: nothing moved, and Veta stays where the person can try again.
+    })
+  }
+
+  /** A mine declared hands off to the Panel on it (S22.13, S22.14); a refusal goes back to the picker (S22.15). */
+  const folder = createFolderDeclare(deps.bridge, {
+    picked: () => dispatch({ type: 'folder-picked' }),
+    cancelled: () => dispatch({ type: 'folder-cancelled' }),
+    declared: (mineId, worktree) => dispatch({ type: 'declared', mineId, worktree }),
+    failed: (reason) => fail(reason)
+  })
 
   function fail(reason: string | null): void {
     notice.value = reason
@@ -189,7 +237,7 @@ export function useMinePicker(deps: MinePickerDeps): MinePickerPart {
         return
       case 'pick-folder':
         notice.value = null
-        void declare()
+        void folder.declare()
         return
     }
   }
@@ -221,9 +269,9 @@ export function useMinePicker(deps: MinePickerDeps): MinePickerPart {
     notice,
     last,
     dispatch,
-    worktree,
-    adopting,
-    answerWorktree: (accept) => void answerWorktree(accept)
+    worktree: folder.worktree,
+    adopting: folder.adopting,
+    answerWorktree: (accept) => void folder.answerWorktree(accept)
   }
 }
 
