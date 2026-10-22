@@ -267,3 +267,21 @@ describe('the mode shell with a Veta window (ISSUE-285; ADR-025 items 1, 3)', ()
     expect(h.transitions()).toMatchObject([{ from: 'hidden', to: 'panel' }])
   })
 })
+
+describe('the mode shell and Mode at launch (ISSUE-294; 07 S10.12)', () => {
+  it('[S10.12, US-SET-002.AC09] a notification click with no window open opens the app in Mode at launch', async () => {
+    const veta = new FakeModeWindow()
+    const s = setup('tray-only', false, {
+      built: ['panel', 'veta'],
+      veta: { window: () => veta, bounds: () => ({ x: 0, y: 1000, width: 480, height: 72 }) }
+    })
+    s.store.save('modeAtLaunch', 'veta')
+    const opened = s.windows()!.openAtLaunch()
+    const run = veta.pushes.map((p) => p.payload as ModeTransition).at(-1)!
+    expect(run).toMatchObject({ from: 'hidden', to: 'veta', role: 'target' })
+    s.shell.coordinator.transitionDone('veta', { transitionId: run.transitionId })
+    expect(await opened).toBe('veta')
+    expect(s.shell.coordinator.mode()).toBe('veta')
+    expect(s.calls).not.toContain('show')
+  })
+})

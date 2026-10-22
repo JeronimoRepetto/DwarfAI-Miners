@@ -136,9 +136,11 @@ export function composeModeShell(deps: ModeShellDeps): ModeShell {
       return rung === 'veta' ? 'veta' : 'panel'
     },
     restore: () => void coordinator.restore(),
+    // S10.12: a click with no window open opens the app in "Mode at launch" (ISSUE-294), a built mode.
     openAtLaunch: async () => {
-      await coordinator.openAtLaunch('panel', { reveal: true })
-      return 'panel'
+      const mode = coordinator.launchMode()
+      await coordinator.openAtLaunch(mode, { reveal: true })
+      return mode
     },
     raise: () => {
       panel.raise()
