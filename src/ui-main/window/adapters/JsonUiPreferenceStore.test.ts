@@ -112,7 +112,14 @@ describe('JsonUiPreferenceStore', () => {
       // NEW with ISSUE-294, no store of today's: the document this store writes.
       modeAtLaunch: { mode: 'veta' },
       // NEW with ISSUE-286, no store of today's: the document this store writes (the map itself).
-      vetaDock: NON_DEFAULT_VALUES.vetaDock
+      vetaDock: NON_DEFAULT_VALUES.vetaDock,
+      // APPENDED for ISSUE-299, no store of today's: the documents the Valle stores write.
+      valleLayout: NON_DEFAULT_VALUES.valleLayout,
+      vallePreset: { preset: NON_DEFAULT_VALUES.vallePreset },
+      valleLastFrontMineId: { mineId: NON_DEFAULT_VALUES.valleLastFrontMineId },
+      valleMosaicOrder: { order: NON_DEFAULT_VALUES.valleMosaicOrder },
+      pins: { pins: NON_DEFAULT_VALUES.pins },
+      mutedMineIds: { mineIds: NON_DEFAULT_VALUES.mutedMineIds }
     }
     for (const key of STORE_KEYS) {
       writeFileSync(join(dir, UI_PREFERENCE_FILES[key]), `${JSON.stringify(legacy[key])}\n`)
@@ -143,7 +150,22 @@ describe('JsonUiPreferenceStore', () => {
       // `hidden` is not a mode the app opens in (14 §3.9 `modeAtLaunch`).
       modeAtLaunch: { mode: 'hidden' },
       // An edge a display does not have (14 §3.9 `VetaDock.edge`).
-      vetaDock: { 'Q27G2WG4|2560x1440|@1|0,0': { edge: 'middle', end: 'start', offset: 0 } }
+      vetaDock: { 'Q27G2WG4|2560x1440|@1|0,0': { edge: 'middle', end: 'start', offset: 0 } },
+      // APPENDED for ISSUE-299 (S39.13, FM-053): each Valle store off its 14 §3.9 shape.
+      // A zone content outside `ZoneContent`.
+      valleLayout: {
+        ...(NON_DEFAULT_VALUES.valleLayout as object),
+        front: { chatWidth: 420, split: false, foldedList: true, zone: { content: 'lab' } }
+      },
+      // A preset Valle does not have.
+      vallePreset: { preset: 'mosaic' },
+      // Not a mine id.
+      valleLastFrontMineId: { mineId: 7 },
+      valleMosaicOrder: { order: ['not-a-mine-id'] },
+      // A pin kind 14 §3.9 does not list (chat pins only, R5B-27).
+      pins: { pins: [{ ...NON_DEFAULT_VALUES.pins![0]!, kind: 'chat' }] },
+      // The muted list is never null.
+      mutedMineIds: { mineIds: null }
     }
     for (const key of STORE_KEYS) {
       writeFileSync(join(dir, UI_PREFERENCE_FILES[key]), JSON.stringify(nonConforming[key]))

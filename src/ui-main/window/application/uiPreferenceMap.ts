@@ -10,6 +10,7 @@ import type {
   UiPreferencesMap,
   UiPreferenceWrite
 } from '@dwarfai/contracts'
+import type { UiPreferenceStore } from '../ports/uiPreferenceStore'
 import type { StartWithSystem } from './startWithSystem'
 
 /** Why a write is refused: a key UI main alone writes, or a key not built in this build. */
@@ -31,6 +32,12 @@ export interface UiPreferenceMapDeps {
     get(): UiPreferencesMap['modeAtLaunch']
     set(value: UiPreferencesMap['modeAtLaunch']): UiPreferencesMap['modeAtLaunch']
   }
+  /**
+   * The Valle stores (14 §3.9; 07 S39.03, S39.13; ISSUE-299), answered for the Valle window's first paint. A store the
+   * window cannot use loads its defaults and logs `uiprefs.corrupt` (FM-053), and an unwritten layout is not answered.
+   * None is renderer-writable yet: each becomes writable in the issue that first writes it (ISSUE-300…ISSUE-310).
+   */
+  valle?: Pick<UiPreferenceStore, 'load'>
 }
 
 export interface UiPreferenceMap {
@@ -41,17 +48,31 @@ export interface UiPreferenceMap {
 /** The keys only UI main writes (14 §3.9). */
 const UI_MAIN_ONLY: readonly UiPreferenceKey[] = ['lastMode', 'resetEpochApplied']
 
-/** How a built key is read and, unless UI main alone writes it, written. */
+/** The Valle keys A-N20 answers (ISSUE-299). */
+const VALLE_KEYS = [
+  'valleLayout',
+  'vallePreset',
+  'valleLastFrontMineId',
+  'valleMosaicOrder',
+  'pins',
+  'mutedMineIds'
+] as const satisfies readonly UiPreferenceKey[]
+
+/**
+ * How a built key is read (`undefined`: nothing to answer) and, unless UI main alone writes it, written. A key read here
+ * but written by a renderer only from a later issue refuses its write as `not-built`.
+ */
 interface ServedKey<K extends UiPreferenceKey> {
-  get(): UiPreferencesMap[K]
+  get(): UiPreferencesMap[K] | undefined
   set?(value: UiPreferencesMap[K]): UiPreferencesMap[K]
+  readOnly?: UiPreferenceWriteRefusal
 }
 
 type ServedKeys = { [K in UiPreferenceKey]?: ServedKey<K> }
 
 export function createUiPreferenceMap(deps: UiPreferenceMapDeps): UiPreferenceMap {
   const served: ServedKeys = {}
-  const { startWithSystem, vetaDock, modeAtLaunch } = deps
+  const { startWithSystem, vetaDock, modeAtLaunch, valle } = deps
   if (startWithSystem !== undefined) {
     served.startWithSystem = {
       get: () => startWithSystem.stored(),
@@ -61,13 +82,31 @@ export function createUiPreferenceMap(deps: UiPreferenceMapDeps): UiPreferenceMa
 
   if (vetaDock !== undefined) served.vetaDock = { get: vetaDock }
   if (modeAtLaunch !== undefined) served.modeAtLaunch = modeAtLaunch
+  if (valle !== undefined) {
+    const answer = served as Record<
+      (typeof VALLE_KEYS)[number],
+      ServedKey<(typeof VALLE_KEYS)[number]>
+    >
+    for (const key of VALLE_KEYS) {
+      // A never-written layout (`null`) is not answered: the renderer applies each preset's own defaults.
+      // Every other `null` is that key's 14 §3.9 "never written" value, and is answered.
+      answer[key] = {
+        get: () => {
+          const value = valle.load(key)
+          return key === 'valleLayout' && value === null ? undefined : value
+        },
+        readOnly: 'not-built'
+      }
+    }
+  }
 
   return {
     get(keys) {
       const answer: Partial<Record<UiPreferenceKey, unknown>> = {}
       for (const key of keys) {
         const entry = served[key]
-        if (entry !== undefined) answer[key] = entry.get()
+        const value = entry?.get()
+        if (value !== undefined) answer[key] = value
       }
       return answer as Partial<UiPreferencesMap>
     },
@@ -75,7 +114,7 @@ export function createUiPreferenceMap(deps: UiPreferenceMapDeps): UiPreferenceMa
       if (UI_MAIN_ONLY.includes(write.key)) return { ok: false, error: 'ui-main-only' }
       const entry = served[write.key] as ServedKey<typeof write.key> | undefined
       if (entry === undefined) return { ok: false, error: 'not-built' }
-      if (entry.set === undefined) return { ok: false, error: 'ui-main-only' }
+      if (entry.set === undefined) return { ok: false, error: entry.readOnly ?? 'ui-main-only' }
       return {
         ok: true,
         value: { key: write.key, value: entry.set(write.value) } as UiPreferenceWrite

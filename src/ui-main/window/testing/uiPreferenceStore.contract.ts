@@ -1,7 +1,8 @@
 // The UiPreferenceStore conformance suite (16 §4.14, 17 §1.3): run against InMemoryUiPreferenceStore and against
 // JsonUiPreferenceStore over a per-test temporary folder, for each of the six stores (TC-048-01) and the UiPreferencesMap
 // keys built so far (`startWithSystem`, ISSUE-060; `resetEpochApplied`, ISSUE-061; `lastMode`, ISSUE-284; `vetaDock`, ISSUE-286;
-// `modeAtLaunch`, ISSUE-294).
+// `modeAtLaunch`, ISSUE-294; the six Valle stores, ISSUE-299).
+import type { DwarfId, MineId } from '@dwarfai/contracts'
 import { describe, expect, it } from 'vitest'
 import { defaultsOf } from '../domain/uiPreferenceValues'
 import type {
@@ -21,6 +22,11 @@ export interface UiPreferenceStoreSubject {
   /** Every log record the subject's stores wrote, in order. */
   logged(): readonly UiPreferenceLogRecord[]
 }
+
+/** A mine and a dwarf for the Valle stores' values (ISSUE-299). */
+const VALLE_MINE = '018f3a2e-7c4b-7d1e-9a5b-2f6c8d0e1a02' as MineId
+const VALLE_DWARF = '018f3a2e-7c4b-7d1e-9a5b-2f6c8d0e1a01' as DwarfId
+const VALLE_OTHER_MINE = '018f3a2e-7c4b-7d1e-9a5b-2f6c8d0e1a03' as MineId
 
 /** A value other than the defaults for every store, each in its stored form. */
 export const NON_DEFAULT_VALUES: UiPreferenceStoreMap = {
@@ -46,7 +52,21 @@ export const NON_DEFAULT_VALUES: UiPreferenceStoreMap = {
   vetaDock: {
     'Q27G2WG4|2560x1440|@1|0,0': { edge: 'left', end: 'start', offset: 40 },
     '|1920x1080|@1.25|2560,0': { edge: 'top', end: 'end', offset: 0 }
-  }
+  },
+  valleLayout: {
+    control: {
+      chatWidth: 380,
+      split: true,
+      foldedList: false,
+      zones: { [VALLE_MINE]: { content: 'map' } }
+    },
+    front: { chatWidth: 420, split: false, foldedList: true, zone: { content: 'mine' } }
+  },
+  vallePreset: 'front',
+  valleLastFrontMineId: VALLE_MINE,
+  valleMosaicOrder: [VALLE_MINE],
+  pins: [{ dwarfId: VALLE_DWARF, mineId: VALLE_MINE, order: 0 }],
+  mutedMineIds: [VALLE_MINE]
 }
 
 /** A second stored value per store, different from both the defaults and `NON_DEFAULT_VALUES`. */
@@ -64,7 +84,22 @@ const OTHER_VALUES: UiPreferenceStoreMap = {
   resetEpochApplied: 3,
   lastMode: 'valle',
   modeAtLaunch: 'panel',
-  vetaDock: { 'Q27G2WG4|2560x1440|@1|0,0': { edge: 'bottom', end: 'end', offset: 16 } }
+  vetaDock: { 'Q27G2WG4|2560x1440|@1|0,0': { edge: 'bottom', end: 'end', offset: 16 } },
+  valleLayout: {
+    control: { chatWidth: 400, split: false, foldedList: false, zones: {} },
+    front: {
+      chatWidth: 360,
+      split: true,
+      foldedList: false,
+      zone: { content: 'history', mineId: VALLE_MINE }
+    }
+  },
+  // A preset has two values: the other one is the default.
+  vallePreset: 'control',
+  valleLastFrontMineId: VALLE_OTHER_MINE,
+  valleMosaicOrder: [],
+  pins: [],
+  mutedMineIds: [VALLE_OTHER_MINE, VALLE_MINE]
 }
 
 export const STORE_KEYS = Object.keys(NON_DEFAULT_VALUES) as UiPreferenceStoreKey[]

@@ -57,7 +57,15 @@ export const UI_PREFERENCE_DEFAULTS: Readonly<UiPreferenceStoreMap> = {
   // "Last used" until the person pins a mode (the design's Settings › General select shows it selected).
   modeAtLaunch: 'last-used',
   // No stored place: Veta takes the default place on the primary display (07 S21.02; ISSUE-286).
-  vetaDock: {}
+  vetaDock: {},
+  // The Valle stores (14 §3.9; ISSUE-299): no layout stored (each preset's own defaults apply, machines 28, 33), the
+  // Control room preset (ADR-024 item 8), and every other key never written.
+  valleLayout: null,
+  vallePreset: 'control',
+  valleLastFrontMineId: null,
+  valleMosaicOrder: null,
+  pins: null,
+  mutedMineIds: []
 }
 
 /** A fresh copy of a store's defaults, so a caller that edits it cannot edit the defaults. */
@@ -114,7 +122,14 @@ const STORED_FORMS: StoredForms = {
         key,
         { edge: dock.edge, end: dock.end, offset: dock.offset }
       ])
-    )
+    ),
+  // The Valle stores are stored as 14 §3.9 types them (ISSUE-299).
+  valleLayout: (v) => v,
+  vallePreset: (v) => v,
+  valleLastFrontMineId: (v) => v,
+  valleMosaicOrder: (v) => v,
+  pins: (v) => v,
+  mutedMineIds: (v) => v
 }
 
 /** The one stored form of `value` for `key`: what a setter stores and answers (ADR-024 item 9). */

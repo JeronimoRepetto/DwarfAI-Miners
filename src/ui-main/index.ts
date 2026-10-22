@@ -393,7 +393,9 @@ export function composeUiLocal({
           modeAtLaunch: {
             get: () => stored.get('modeAtLaunch'),
             set: (value) => stored.set('modeAtLaunch', value)
-          }
+          },
+          // The Valle stores (ISSUE-299; 07 S39.03, S39.13), read by the Valle window before its first paint.
+          valle: uiPreferences.store
         })
       )
     })

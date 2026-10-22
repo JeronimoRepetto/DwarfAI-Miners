@@ -1,5 +1,7 @@
 // layer: L2
+import type { DwarfId, MineId, UiPreferenceKey, UiPreferencesMap } from '@dwarfai/contracts'
 import { describe, expect, it } from 'vitest'
+import { InMemoryUiPreferenceStore } from '../ports/fakes/InMemoryUiPreferenceStore'
 import { createUiPreferenceMap } from './uiPreferenceMap'
 
 describe('the UI preference map (14 §3.9; ADR-024 items 1, 9)', () => {
@@ -62,5 +64,97 @@ describe('the UI preference map (14 §3.9; ADR-024 items 1, 9)', () => {
       ok: false,
       error: 'not-built'
     })
+  })
+})
+
+// APPENDED for ISSUE-299: the six Valle keys of 14 §3.9, read by the Valle window before its first paint (07 S39.03).
+describe('the Valle keys of the UI preference map (ISSUE-299; 07 S39.03, S39.13)', () => {
+  const MINE = '018f3a2e-7c4b-7d1e-9a5b-2f6c8d0e1a02' as MineId
+  const DWARF = '018f3a2e-7c4b-7d1e-9a5b-2f6c8d0e1a01' as DwarfId
+  const LAYOUT: UiPreferencesMap['valleLayout'] = {
+    control: {
+      chatWidth: 380,
+      split: false,
+      foldedList: false,
+      zones: { [MINE]: { content: 'mine' } }
+    },
+    front: {
+      chatWidth: 420,
+      split: true,
+      foldedList: true,
+      zone: { content: 'mine', mineId: MINE }
+    }
+  }
+  const VALLE_KEYS = [
+    'vallePreset',
+    'valleLayout',
+    'valleMosaicOrder',
+    'pins',
+    'valleLastFrontMineId',
+    'mutedMineIds'
+  ] as const satisfies readonly UiPreferenceKey[]
+  const stored = (): InMemoryUiPreferenceStore => {
+    const store = new InMemoryUiPreferenceStore()
+    store.save('vallePreset', 'front')
+    store.save('valleLayout', LAYOUT)
+    store.save('valleMosaicOrder', [MINE])
+    store.save('pins', [{ dwarfId: DWARF, mineId: MINE, order: 0 }])
+    store.save('valleLastFrontMineId', MINE)
+    store.save('mutedMineIds', [MINE])
+    return store
+  }
+
+  it('[S39.03, ADR-024] A-N20 answers the stored Valle keys; an unwritten layout is not answered, and none is renderer-writable yet', () => {
+    const map = createUiPreferenceMap({ valle: stored() })
+    expect(map.get(VALLE_KEYS)).toEqual({
+      vallePreset: 'front',
+      valleLayout: LAYOUT,
+      valleMosaicOrder: [MINE],
+      pins: [{ dwarfId: DWARF, mineId: MINE, order: 0 }],
+      valleLastFrontMineId: MINE,
+      mutedMineIds: [MINE]
+    })
+    // Never written: each key's 14 §3.9 default, and no layout at all (machine 33's default applies in the renderer).
+    expect(
+      createUiPreferenceMap({ valle: new InMemoryUiPreferenceStore() }).get(VALLE_KEYS)
+    ).toEqual({
+      vallePreset: 'control',
+      valleMosaicOrder: null,
+      pins: null,
+      valleLastFrontMineId: null,
+      mutedMineIds: []
+    })
+    // Each becomes writable in the issue that first writes it (ISSUE-300…ISSUE-310).
+    expect(map.set({ key: 'vallePreset', value: 'control' })).toEqual({
+      ok: false,
+      error: 'not-built'
+    })
+    expect(map.set({ key: 'pins', value: null })).toEqual({ ok: false, error: 'not-built' })
+    expect(map.set({ key: 'valleLayout', value: LAYOUT })).toEqual({
+      ok: false,
+      error: 'not-built'
+    })
+  })
+
+  it('[S39.13, FM-053] an unreadable store falls back to its defaults and logs uiprefs.corrupt', () => {
+    const store = stored()
+    for (const key of ['vallePreset', 'valleLayout', 'pins'] as const)
+      store.storage.corrupt.add(key)
+    const map = createUiPreferenceMap({ valle: store })
+    expect(map.get(VALLE_KEYS)).toEqual({
+      vallePreset: 'control',
+      valleMosaicOrder: [MINE],
+      pins: null,
+      valleLastFrontMineId: MINE,
+      mutedMineIds: [MINE]
+    })
+    expect(store.storage.logged).toEqual(
+      ['vallePreset', 'valleLayout', 'pins'].map((msg) => ({
+        level: 'warn',
+        event: 'uiprefs.corrupt',
+        subsystem: 'window',
+        msg
+      }))
+    )
   })
 })
