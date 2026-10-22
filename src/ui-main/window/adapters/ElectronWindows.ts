@@ -30,8 +30,8 @@ import {
  * - is watched by the renderer crash and hang policy (ADR-019 item 11; 13 FM-043, FM-044).
  *
  * The Veta window (ISSUE-285) loads the same entry with `?mode=veta`; it is built only when the composition asks for it,
- * which a build does only where Veta is in its built-modes list. Valle is not built yet (EPIC-20): asking for it is
- * refused, never improvised (hidden until built, 21 §1 item 8).
+ * which a build does only where Veta is in its built-modes list. The Valle window (ISSUE-299) loads it with
+ * `?mode=valle`, likewise built only where Valle is in the build's built-modes list.
  */
 
 /** Two crashes of one window closer than this are a repeat: no automatic reload (ADR-019 item 11). */
@@ -190,8 +190,41 @@ export function buildVetaWindowOptions(
   return secureWindowOptions(vetaWindowRequest(input))
 }
 
+/** What the Valle window's options are built from. */
+export interface ValleWindowOptionsInput {
+  preloadPath: string
+  iconPath: string
+}
+
+/**
+ * What the Valle window asks of the secure factory: the Valle row of ADR-025 item 1. Built hidden and placed by its
+ * controller before it is first shown (the work area of the display matching the window it is entered from, 07 S39.01).
+ * Not always on top, out of the taskbar (the Panel keeps the app's taskbar presence), and throttled while hidden
+ * (ADR-025 item 7).
+ */
+export function valleWindowRequest(input: ValleWindowOptionsInput): SecureWindowRequest {
+  return {
+    preload: input.preloadPath,
+    backgroundThrottling: true,
+    window: {
+      show: false,
+      frame: false,
+      alwaysOnTop: false,
+      skipTaskbar: true,
+      icon: input.iconPath
+    }
+  }
+}
+
+/** The Valle window's constructor options, exactly as the secure factory builds them. */
+export function buildValleWindowOptions(
+  input: ValleWindowOptionsInput
+): BrowserWindowConstructorOptions {
+  return secureWindowOptions(valleWindowRequest(input))
+}
+
 /** The app entry a mode window loads: the same bundle, with its mode in the query (ADR-025 item 1). */
-export function modeEntry(appEntry: string, mode: 'veta'): string {
+export function modeEntry(appEntry: string, mode: 'veta' | 'valle'): string {
   const url = new URL(appEntry)
   url.searchParams.set('mode', mode)
   return url.toString()
@@ -220,6 +253,7 @@ export class ElectronWindows implements WindowFactory {
   private panelZoom: number | null = null
   private readonly panelMinimizeHandlers: Array<() => void> = []
   private vetaWindow: { window: ManagedBrowserWindow; mode: VetaWindow } | null = null
+  private valleWindow: { window: ManagedBrowserWindow; mode: ValleWindow } | null = null
 
   constructor(private readonly deps: ElectronWindowsDeps) {}
 
@@ -322,8 +356,29 @@ export class ElectronWindows implements WindowFactory {
     }
   }
 
+  /**
+   * The one Valle window (ADR-025 item 1; 07 machine 39): the open one, or a new one when there is none. Built on its
+   * first use and then kept; `from` names the display it opens on, which its controller places it on (16 §4.14).
+   */
   valle(_from: DisplayKey): ValleWindow {
-    throw new Error('the Valle window is not built yet (EPIC-20)')
+    if (this.valleWindow !== null && !this.valleWindow.window.isDestroyed()) {
+      return this.valleWindow.mode
+    }
+    const window = createSecureWindow(
+      this.deps.BrowserWindow,
+      valleWindowRequest({ preloadPath: this.deps.preload, iconPath: this.deps.icon })
+    )
+    this.valleWindow = {
+      window,
+      mode: this.manage(window, modeEntry(this.deps.appEntry, 'valle'))
+    }
+    return this.valleWindow.mode
+  }
+
+  /** The `webContents` id of the Valle window, while it is open; `null` before it is built or once it closed. */
+  valleWebContentsId(): number | null {
+    const built = this.valleWindow?.window
+    return built === undefined || built.isDestroyed() ? null : built.webContents.id
   }
 
   /** Registers, watches and loads a new window from `entry`, and answers its `ModeWindow` members. */

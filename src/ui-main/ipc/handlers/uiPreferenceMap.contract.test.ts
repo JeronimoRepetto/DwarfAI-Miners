@@ -51,7 +51,9 @@ function world(loginEntry = true) {
     modeAtLaunch: {
       get: () => prefs.get('modeAtLaunch'),
       set: (value) => prefs.set('modeAtLaunch', value)
-    }
+    },
+    // The Valle stores over the same store, as UI main composes them (ISSUE-299).
+    valle: store
   })
   const legacy: RouteTarget = { serve: () => Promise.reject(new Error('never legacy')) }
   const router = createRouter({
@@ -173,5 +175,39 @@ describe('the UI preference map rows over seam A (14 §2.2 A-N20, A-N21)', () =>
       })
     ).toMatchObject({ ok: false, error: { code: 'INVALID_PARAMS' } })
     expect(store.load('modeAtLaunch')).toBe('last-used')
+  })
+})
+
+// APPENDED for ISSUE-299: the Valle stores read through the gate, as the Valle window reads them (07 S39.03).
+describe('the Valle keys over seam A (ISSUE-299; 14 §2.2 A-N20, A-N21)', () => {
+  it('[S39.03, ADR-024] getUiPreferences answers the Valle stores in the registry shape, and setUiPreference refuses them until they are built', async () => {
+    const { router, store } = world()
+    const mine = '018f3a2e-7c4b-7d1e-9a5b-2f6c8d0e1a02'
+    store.save('vallePreset', 'front')
+    store.save('valleMosaicOrder', [mine as never])
+    const keys = [
+      'vallePreset',
+      'valleLayout',
+      'valleMosaicOrder',
+      'pins',
+      'valleLastFrontMineId',
+      'mutedMineIds'
+    ]
+    const asked = await router.dispatch(UI_PREFERENCES_GET, FROM_PANEL, { keys })
+    expect(asked).toEqual({
+      vallePreset: 'front',
+      valleMosaicOrder: [mine],
+      pins: null,
+      valleLastFrontMineId: null,
+      mutedMineIds: []
+    })
+    expect(CHANNELS[UI_PREFERENCES_GET].response.safeParse(asked).success).toBe(true)
+    expect(
+      await router.dispatch(UI_PREFERENCES_SET, FROM_PANEL, {
+        key: 'vallePreset',
+        value: 'control'
+      })
+    ).toMatchObject({ ok: false, error: { code: 'INVALID_PARAMS' } })
+    expect(store.load('vallePreset')).toBe('front')
   })
 })

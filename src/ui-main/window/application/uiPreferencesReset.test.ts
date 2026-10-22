@@ -1,6 +1,6 @@
 // layer: L2
 import { describe, expect, it } from 'vitest'
-import type { DwarfId, EvtFrame, MessageId, SnapshotPage } from '@dwarfai/contracts'
+import type { DwarfId, EvtFrame, MessageId, MineId, SnapshotPage } from '@dwarfai/contracts'
 import { InMemorySessionStore } from '../adapters/InMemorySessionStore'
 import { defaultsOf } from '../domain/uiPreferenceValues'
 import { FakeAutostartPort } from '../ports/fakes/FakeAutostartPort'
@@ -231,5 +231,50 @@ describe('the Reset metrics UI step (ADR-024 item 8)', () => {
     expect(entry.writes).toBe(1)
     expect(windows).toHaveLength(2)
     expect(acks).toEqual([{ epoch: 3 }, { epoch: 3 }])
+  })
+})
+
+// APPENDED for ISSUE-299: the Valle stores (07 S39.10; ADR-024 item 8; UC-065).
+describe('the Reset metrics UI step and the Valle stores (ISSUE-299)', () => {
+  it('[S39.10, ADR-024] Reset metrics rewrites the Valle stores to their defaults, and the Valle layout to never written', () => {
+    const { store, recording } = world()
+    const mine = '018f3a2e-7c4b-7d1e-9a5b-2f6c8d0e1a02' as MineId
+    store.save('vallePreset', 'front')
+    store.save('valleLayout', {
+      control: {
+        chatWidth: 380,
+        split: true,
+        foldedList: true,
+        zones: { [mine]: { content: 'map' } }
+      },
+      front: {
+        chatWidth: 420,
+        split: true,
+        foldedList: true,
+        zone: { content: 'history', mineId: mine }
+      }
+    })
+    store.save('valleMosaicOrder', [mine])
+    store.save('pins', [{ dwarfId: BORIN, mineId: mine, order: 0 }])
+    store.save('valleLastFrontMineId', mine)
+    store.save('mutedMineIds', [mine])
+
+    recording.deliver(resetFrame(3))
+
+    expect({
+      vallePreset: store.load('vallePreset'),
+      valleLayout: store.load('valleLayout'),
+      valleMosaicOrder: store.load('valleMosaicOrder'),
+      pins: store.load('pins'),
+      valleLastFrontMineId: store.load('valleLastFrontMineId'),
+      mutedMineIds: store.load('mutedMineIds')
+    }).toEqual({
+      vallePreset: 'control',
+      valleLayout: null,
+      valleMosaicOrder: null,
+      pins: null,
+      valleLastFrontMineId: null,
+      mutedMineIds: []
+    })
   })
 })

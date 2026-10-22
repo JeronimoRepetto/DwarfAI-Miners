@@ -54,6 +54,17 @@ export interface UiPreferenceStoreMap {
    * (`VetaDockService`, ISSUE-286), the whole map at once; the entry saved last is the display Veta lives on.
    */
   vetaDock: UiPreferencesMap['vetaDock']
+  /**
+   * The Valle stores (14 §3.9; ADR-024 items 1, 4, 6; ISSUE-299), read by the Valle window before its first paint
+   * (07 S39.03) and rewritten by Reset metrics (S39.10). `valleLayout` is `null` while never written: A-N20 does not
+   * answer it, and each preset's own defaults apply in the renderer (machines 28, 33).
+   */
+  valleLayout: UiPreferencesMap['valleLayout'] | null
+  vallePreset: UiPreferencesMap['vallePreset']
+  valleLastFrontMineId: UiPreferencesMap['valleLastFrontMineId']
+  valleMosaicOrder: UiPreferencesMap['valleMosaicOrder']
+  pins: UiPreferencesMap['pins']
+  mutedMineIds: UiPreferencesMap['mutedMineIds']
 }
 
 export type UiPreferenceStoreKey = keyof UiPreferenceStoreMap

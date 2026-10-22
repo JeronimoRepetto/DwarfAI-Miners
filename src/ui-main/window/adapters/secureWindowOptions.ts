@@ -31,6 +31,11 @@ export interface SecureWindowRequest {
   readonly window?: Omit<BrowserWindowConstructorOptions, 'webPreferences'>
   /** The one page-level switch a window kind may set: the Panel starts its music without a gesture (#174). */
   readonly autoplayPolicy?: WebPreferences['autoplayPolicy']
+  /**
+   * Whether the page's timers and animations are throttled while the window is hidden (ADR-025 item 7: the hidden
+   * Valle renderer is). Stated by the window kind that relies on it, never left to Electron's default.
+   */
+  readonly backgroundThrottling?: WebPreferences['backgroundThrottling']
 }
 
 /**
@@ -45,6 +50,9 @@ export function secureWindowOptions(request: SecureWindowRequest): BrowserWindow
     webPreferences: {
       preload: request.preload,
       ...(request.autoplayPolicy === undefined ? {} : { autoplayPolicy: request.autoplayPolicy }),
+      ...(request.backgroundThrottling === undefined
+        ? {}
+        : { backgroundThrottling: request.backgroundThrottling }),
       ...SECURE_WEB_PREFERENCES
     }
   }

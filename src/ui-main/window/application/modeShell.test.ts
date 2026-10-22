@@ -289,3 +289,59 @@ describe('the mode shell and Mode at launch (ISSUE-294; 07 S10.12)', () => {
     expect(s.calls).not.toContain('show')
   })
 })
+
+describe('the mode shell with a Valle window (ISSUE-299; ADR-025 item 1; 07 machine 39)', () => {
+  it('[US-VALLE-001.AC10, S39.01, BR-19] where Valle is built, a move to Valle places its window from the window it is entered from and shows it through the coordinator; elsewhere no move reaches it', async () => {
+    const valle = new FakeModeWindow()
+    const entries: unknown[] = []
+    const bounds = { x: 1920, y: 0, width: 2560, height: 1400 }
+    const part = {
+      window: () => valle,
+      bounds: (entry: unknown) => {
+        entries.push(entry)
+        return bounds
+      }
+    }
+    // A build without Valle (the release list): refused, nothing built or asked.
+    const release = setup('hidden', false, { built: ['panel', 'veta'], valle: part })
+    expect(await release.shell.coordinator.moveToMode({ mode: 'valle' })).toMatchObject({
+      ok: false
+    })
+    expect(valle.calls).toEqual([])
+    expect(entries).toEqual([])
+    // The E2E list, with Valle: entered from the Panel shown, placed from the Panel's place.
+    const s = setup('hidden', false, { built: ['panel', 'veta', 'valle'], valle: part })
+    s.shell.panel.toggleVisible()
+    s.answer()
+    await Promise.resolve()
+    const moved = s.shell.coordinator.moveToMode({ mode: 'valle' })
+    expect(entries).toEqual([{ from: 'window', bounds: { x: 0, y: 0, width: 420, height: 900 } }])
+    expect(valle.calls.slice(0, 2)).toEqual([
+      { member: 'placeAt', bounds },
+      { member: 'showInactive' }
+    ])
+    const run = s.transitions().at(-1)!
+    expect(run).toMatchObject({ from: 'panel', to: 'valle', role: 'source' })
+    s.answer()
+    s.shell.coordinator.transitionDone('valle', { transitionId: run.transitionId })
+    expect(await moved).toEqual({ ok: true, value: undefined })
+    expect(valle.focused).toBe(true)
+    expect(s.store.load('lastMode')).toBe('valle')
+    // Hidden, then restored to Valle: no window is shown to enter it from, so the Panel's stored place decides (I-35).
+    const valleRun = (): string =>
+      (valle.calls.filter((c) => c.member === 'send').at(-1) as { payload: ModeTransition }).payload
+        .transitionId
+    s.shell.panel.toggleVisible()
+    s.shell.coordinator.transitionDone('valle', { transitionId: valleRun() })
+    await Promise.resolve()
+    expect(valle.visible).toBe(false)
+    const restored = s.shell.coordinator.restore()
+    expect(entries.at(-1)).toEqual({
+      from: 'launch',
+      panelPlace: { x: 0, y: 0, width: 420, height: 900 }
+    })
+    s.shell.coordinator.transitionDone('valle', { transitionId: valleRun() })
+    expect(await restored).toEqual({ ok: true, value: undefined })
+    expect(valle.visible).toBe(true)
+  })
+})

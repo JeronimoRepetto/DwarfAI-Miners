@@ -8,7 +8,17 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
-import { CHANNELS, validateAccelerator, vetaDocksSchema } from '@dwarfai/contracts'
+import {
+  CHANNELS,
+  mutedMineIdsSchema,
+  pinsSchema,
+  validateAccelerator,
+  valleLastFrontMineIdSchema,
+  valleLayoutSchema,
+  valleMosaicOrderSchema,
+  vallePresetSchema,
+  vetaDocksSchema
+} from '@dwarfai/contracts'
 import { defaultsOf, migrateTwoChoiceTypography, storedFormOf } from '../domain/uiPreferenceValues'
 import type {
   UiPreferenceLogRecord,
@@ -47,7 +57,14 @@ export const UI_PREFERENCE_FILES: Readonly<Record<UiPreferenceStoreKey, string>>
   // NEW with Settings › General "Mode at launch" (ISSUE-294): no store of today's holds it.
   modeAtLaunch: 'mode-at-launch-v1.json',
   // NEW with the Veta dock (ISSUE-286): no store of today's holds it.
-  vetaDock: 'veta-dock-v1.json'
+  vetaDock: 'veta-dock-v1.json',
+  // NEW with the Valle window (ISSUE-299): no store of today's holds them.
+  valleLayout: 'valle-layout-v1.json',
+  vallePreset: 'valle-preset-v1.json',
+  valleLastFrontMineId: 'valle-last-front-mine-v1.json',
+  valleMosaicOrder: 'valle-mosaic-order-v1.json',
+  pins: 'valle-pins-v1.json',
+  mutedMineIds: 'muted-mines-v1.json'
 }
 
 /** The older two-choice typography preference (Interface and Messaging faces), read while no typography file exists. */
@@ -109,7 +126,13 @@ const FORMATS: { readonly [K in UiPreferenceStoreKey]: FileFormat<K> } = {
   resetEpochApplied: inField('epoch', z.number().int().nonnegative()),
   lastMode: inField('mode', z.enum(['panel', 'veta', 'valle'])),
   modeAtLaunch: inField('mode', z.enum(['last-used', 'panel', 'veta', 'valle'])),
-  vetaDock: asItself(vetaDocksSchema)
+  vetaDock: asItself(vetaDocksSchema),
+  valleLayout: asItself(valleLayoutSchema.nullable()),
+  vallePreset: inField('preset', vallePresetSchema),
+  valleLastFrontMineId: inField('mineId', valleLastFrontMineIdSchema),
+  valleMosaicOrder: inField('order', valleMosaicOrderSchema),
+  pins: inField('pins', pinsSchema),
+  mutedMineIds: inField('mineIds', mutedMineIdsSchema)
 }
 
 export interface JsonUiPreferenceStoreOptions {
