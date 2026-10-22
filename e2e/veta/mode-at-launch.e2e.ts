@@ -93,9 +93,19 @@ test.describe('Mode at launch (ISSUE-294)', () => {
     ;({ app, window } = await relaunch())
     await openFromTray(app, 'veta')
 
-    // Back to the Panel, and "Mode at launch" pinned to Panel in Settings › General.
-    const veta = app.windows().find((page) => page.url().includes('mode=veta'))!
-    await veta.evaluate("window.api.moveToMode({ mode: 'panel' })")
+    // Back to the Panel, and "Mode at launch" pinned to Panel in Settings › General. Playwright may list the Veta
+    // page a moment after main shows its window, so wait for it as the other Veta cases do (e2e/support/veta.ts).
+    let veta: Page | undefined
+    await expect
+      .poll(
+        () => {
+          veta = app.windows().find((page) => page.url().includes('mode=veta'))
+          return veta !== undefined
+        },
+        { timeout: 15_000, message: 'Playwright lists the Veta page' }
+      )
+      .toBe(true)
+    await veta!.evaluate("window.api.moveToMode({ mode: 'panel' })")
     await expect.poll(() => shownModes(app), { timeout: 30_000 }).toEqual(['panel'])
     await window.locator('nav.dm-nav .dm-slot[data-label="Settings"]').click()
     await window.locator('[role="tab"][data-s="General"]').click()
