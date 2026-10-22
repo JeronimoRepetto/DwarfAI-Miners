@@ -59,8 +59,9 @@ describe('the Valle entry of the renderer (ADR-025 item 1; 05 §2.3; ISSUE-299)'
     // AMENDED for ISSUE-300 (was: no text at all): the top bar and the Work front's mines list are built, each with
     // the design's own copy (`organisms/valle-bar`, `organisms/mine-rows`); the zones' contents are not yet.
     // AMENDED for ISSUE-303: the Work front's deck carries "⫽" (`organisms/chat-deck`), disabled with no pin.
+    // AMENDED for ISSUE-301: the compact list has a row per mine, reading the mine's own name (data, not copy).
     expect(root.text().replace(/\s+/g, ' ').trim()).toBe(
-      'Control roomWork frontMODE ▼ Panel ▼ Veta Mines ⇤ ⫽'
+      'Control roomWork frontMODE ▼ Panel ▼ Veta Mines ⇤ moria⫽'
     )
     root.unmount()
   })

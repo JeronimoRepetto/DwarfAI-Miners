@@ -41,10 +41,18 @@ describe('restoring Valle on open (ISSUE-300)', () => {
     }
     // Leaving Valle changes nothing in the layouts it wrote: the same stores open the same view again.
     const before = restoreValleView({ preset: 'front', layout: LEFT })
+    // AMENDED for ISSUE-301 (was: `{ enterableMine: true }`): machine 28's facts now name the mines, the mosaic, the
+    // last mine worked in, the scroll and the chat in focus (07 S28.03, S28.06).
     const left = stepValle(
       before,
       { kind: 'leave', move: { mode: 'panel' } },
-      { enterableMine: true }
+      {
+        mines: [{ mineId: MORIA, enterable: true }],
+        mosaic: [],
+        lastMine: null,
+        scrollLeft: 0,
+        focus: null
+      }
     )
     expect(left).toMatchObject({ ok: true, id: 'S28.21', view: before })
   })

@@ -7,7 +7,7 @@
  */
 import type { HostFrame, UiPreferenceWrite } from '@dwarfai/contracts'
 import type { VallePinsBridge, VallePinsWrite } from '../../composables/useVallePins'
-import type { VallePresetBridge } from '../../composables/useVallePreset'
+import type { ValleLastMineWrite, VallePresetBridge } from '../../composables/useVallePreset'
 import type { VallePresenceDeps } from '../../composables/useVallePresence'
 import type { ValleStoresBridge } from '../../composables/useValleStores'
 import type { ValleReadModelBridge } from '../../lib/valle/valleReadModel'
@@ -19,7 +19,8 @@ export function isValleRoot(search: string): boolean {
 
 /**
  * The seam A members the Valle root uses: its stores (A-N17, A-N20, A-N12), its read models, its report (A-44), and its
- * preset's writes and moves (A-N21, A-N13; ISSUE-300), and its pins' writes (A-N21 `pins`, A-N18; ISSUE-302).
+ * preset's writes and moves (A-N21, A-N13; ISSUE-300), its pins' writes (A-N21 `pins`, A-N18; ISSUE-302), and the
+ * dive's (A-N21 `valleLastFrontMineId`, A-N18; ISSUE-301).
  */
 export type ValleBridge = ValleStoresBridge &
   ValleReadModelBridge &
@@ -27,9 +28,11 @@ export type ValleBridge = ValleStoresBridge &
   VallePresetBridge &
   VallePinsBridge
 
-/** The Valle keys the Valle window writes (A-N21). */
+/** The Valle keys the Valle window writes (A-N21); the last mine worked in from ISSUE-301 on. */
 type ValleWrite =
-  Extract<UiPreferenceWrite, { key: 'vallePreset' | 'valleLayout' }> | VallePinsWrite
+  | Extract<UiPreferenceWrite, { key: 'vallePreset' | 'valleLayout' }>
+  | VallePinsWrite
+  | ValleLastMineWrite
 
 /** The Valle bridge over a `window.api`. */
 export function valleBridgeOf(api: Window['api']): ValleBridge {

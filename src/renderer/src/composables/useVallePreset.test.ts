@@ -1,7 +1,7 @@
 import type { DwarfId, MineId, MoveToModeParams, UiPreferencesMap } from '@dwarfai/contracts'
 import { describe, expect, it } from 'vitest'
 import { effectScope, nextTick, shallowRef } from 'vue'
-import { defaultValleLayouts, type ValleLayouts } from '../lib/valle/preset'
+import { defaultValleLayouts, type ValleFacts, type ValleLayouts } from '../lib/valle/preset'
 import { useVallePreset, type VallePresetBridge } from './useVallePreset'
 import { VALLE_STORE_DEFAULTS, type ValleStores } from './useValleStores'
 
@@ -28,12 +28,24 @@ function fakeBridge() {
       Object.assign(stored, { [write.key]: write.value })
       return Promise.resolve(write)
     },
+    // AMENDED for ISSUE-301: a dive also patches the session's scroll and dive target (A-N18).
+    patchUiSession: () => {},
     moveToMode: (params) => {
       moves.push(params)
       return Promise.resolve({ ok: true })
     }
   }
   return { bridge, stored, writes, moves }
+}
+
+// AMENDED for ISSUE-301 (was: `{ enterableMine: true }`): machine 28's facts name the mines, the mosaic, the last mine
+// worked in, the mosaic's scroll and the chat in focus, which the dive reads (07 S28.03, S28.06).
+const FACTS: ValleFacts = {
+  mines: [{ mineId: MINE, enterable: true }],
+  mosaic: [MINE],
+  lastMine: MINE,
+  scrollLeft: 0,
+  focus: null
 }
 
 const storesWith = (over: Partial<ValleStores>): ValleStores => ({
@@ -49,11 +61,13 @@ describe('the Valle preset in use (ISSUE-300)', () => {
       useVallePreset({
         bridge: fake.bridge,
         stores: shallowRef(storesWith({ preset: 'control', layout: LEFT })),
-        facts: () => ({ enterableMine: true })
+        facts: () => FACTS
       })
     )!
     expect(preset.send({ kind: 'tab', preset: 'front' })).toBe(true)
-    expect(fake.stored).toEqual({ vallePreset: 'front' })
+    // AMENDED for ISSUE-301 (was: only `vallePreset`): the Work front tab dives into the last mine worked in, written
+    // as such (07 S28.06, N-15); with no motion given the dive settles at once.
+    expect(fake.stored).toEqual({ vallePreset: 'front', valleLastFrontMineId: MINE })
     expect(preset.send({ kind: 'fold' })).toBe(true)
     expect(fake.stored.valleLayout).toEqual({ ...LEFT, front: { ...LEFT.front, foldedList: true } })
     expect(preset.send({ kind: 'unfold' })).toBe(true)
@@ -61,7 +75,12 @@ describe('the Valle preset in use (ISSUE-300)', () => {
     // A page and a resize write nothing; a refused input writes nothing.
     expect(preset.send({ kind: 'nav', page: 'map' })).toBe(true)
     expect(preset.send({ kind: 'fold' })).toBe(false)
-    expect(fake.writes).toEqual(['vallePreset', 'valleLayout', 'valleLayout'])
+    expect(fake.writes).toEqual([
+      'vallePreset',
+      'valleLastFrontMineId',
+      'valleLayout',
+      'valleLayout'
+    ])
 
     expect(
       preset.send({ kind: 'leave', move: { mode: 'panel', mineId: MINE, dwarfId: DWARF } })
@@ -79,7 +98,7 @@ describe('the Valle preset in use (ISSUE-300)', () => {
       useVallePreset({
         bridge: fake.bridge,
         stores: shallowRef(storesWith({ preset: 'front', layout: left })),
-        facts: () => ({ enterableMine: true })
+        facts: () => FACTS
       })
     )!
     preset.wishSplit(true)
@@ -101,7 +120,7 @@ describe('the Valle preset in use (ISSUE-300)', () => {
     const stores = shallowRef(storesWith({ preset: 'front', layout: LEFT }))
     const scope = effectScope()
     const preset = scope.run(() =>
-      useVallePreset({ bridge: fake.bridge, stores, facts: () => ({ enterableMine: true }) })
+      useVallePreset({ bridge: fake.bridge, stores, facts: () => FACTS })
     )!
     expect(preset.view.value).toEqual({ preset: 'front', page: null, layouts: LEFT })
     preset.send({ kind: 'nav', page: 'settings' })

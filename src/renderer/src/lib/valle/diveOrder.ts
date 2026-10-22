@@ -1,10 +1,24 @@
 /*
  * The dive's tab order (07 S29.12; US-VALLE-002.AC02…AC04, AC09; decision "Dive tab order"; ISSUE-301) and the
  * `diveForDwarfId` rule (07 S28.03). Pure: the pin set of ISSUE-302 (`pins.ts`) applies the order through its injected
- * dive-order parameter, bound by `useVallePins`; `pins.ts` never imports this file (review R8B-16).
+ * dive-order parameter, bound by `useVallePins`; `pins.ts` never imports this file (review R8B-16), and this file
+ * reads the pins through its own structural types, so neither depends on the other.
  */
 import type { DwarfId, MineId } from '@dwarfai/contracts'
-import type { DiveOrderInput, PinRef } from './pins'
+
+/** A pin as the order reads and returns it: a dwarf's chat, or a mine's Add panel. */
+export type DivePin =
+  | { readonly kind: 'chat'; readonly dwarfId: DwarfId; readonly mineId: MineId }
+  | { readonly kind: 'add'; readonly mineId: MineId }
+
+/** The pins in their order, the mine dived into, and the dwarf the dive is for. */
+export interface DiveOrderInput {
+  readonly pins: readonly DivePin[]
+  readonly mineId: MineId
+  readonly forDwarfId: DwarfId | null
+}
+
+type PinRef = DivePin
 
 /** What the order reads of the mine dived into, besides the pins. */
 export interface DiveOrderFacts {

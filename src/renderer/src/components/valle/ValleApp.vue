@@ -22,6 +22,12 @@
  *   never three; the room beside the mine is measured by one `ResizeObserver` on the body (never polled), and below
  *   640 px the split steps back to the focused pane and comes back by itself. The wish is written with the Work front
  *   layout (A-N21), the second pane's chat goes to the session (A-N18).
+ * - The dive into a mine and the climb out (07 machine 28; ISSUE-301): `⤢` on a column, a double-click on its art, or
+ *   the Work front tab dives; "Control room" or Esc climbs out; a row of the Work front's list swaps the mine in place.
+ *   The stage (`flip.ts`) plays each run by FLIP over the frozen copies in `.dm-vghosts`, through the bounded runner;
+ *   while a dive or a climb runs, every press and key inside Valle is dropped but a mode control, which machine 28
+ *   holds (the input gate). The dive rebuilds the tab order through the pins (S29.12) and the split (S30.07). A window
+ *   going hidden resolves the run at once (S28.22); the Host removing the mine shown swaps or climbs out (S28.23).
  * - The read models (`createValleReadModel`): the Host's mines and dwarfs, held as last known while the Host is
  *   unreachable (`data-held`, S34.12), a re-snapshot applied without motion.
  * - On screen (`useVallePresence`, S39.04, S39.05): each zone registers itself through `track` (provided as
@@ -33,7 +39,7 @@
  * test hands one.
  */
 import type { DwarfId, MineId } from '@dwarfai/contracts'
-import { computed, onMounted, onUnmounted, provide, shallowRef } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, provide, shallowRef, watch } from 'vue'
 import { useValleArrivalToast } from '../../composables/useValleArrivalToast'
 import { useVallePins } from '../../composables/useVallePins'
 import { useVallePreset } from '../../composables/useVallePreset'
@@ -46,7 +52,14 @@ import {
 import { useValleStores, type ValleStores } from '../../composables/useValleStores'
 import { useToasts } from '../../composables/useToasts'
 import { SYSTEM_SLOTS, WORLD_SLOTS, type PanelNavSlot } from '../../lib/shell/panelNav'
-import { valleChatWidth, type ValleNavPage } from '../../lib/valle/preset'
+import {
+  BROWSER_CLOCK,
+  createInputGate,
+  createValleStage,
+  type ValleClock
+} from '../../lib/valle/flip'
+import { valleChatWidth, type ValleFacts, type ValleNavPage } from '../../lib/valle/preset'
+import { createVetaMotion } from '../../lib/veta/vetaMotion'
 import { restoreMosaicOrder } from '../../lib/valle/restore'
 import { createValleReadModel } from '../../lib/valle/valleReadModel'
 import ToastHost from '../overlay/ToastHost.vue'
@@ -66,23 +79,75 @@ const props = defineProps<{
   observer?: VallePresenceDeps['observer']
   /** The body's width observer; the browser's `ResizeObserver` unless a test hands one. */
   bodyObserver?: ValleBodyObserver
+  /** The clock a dive or a climb runs on; the browser's frames and timers unless a test hands one. */
+  clock?: ValleClock
 }>()
 
 const { stores } = useValleStores(props.bridge, props.stores)
 const model = createValleReadModel(props.bridge)
 
+/** The Valle root: the stage the dive's frozen copies are placed over, and where the input gate listens. */
+const rootEl = shallowRef<HTMLElement | null>(null)
+const room = shallowRef<{ mosaic: HTMLElement | null } | null>(null)
+const reduced = (): boolean =>
+  typeof window.matchMedia === 'function' &&
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches
+// The bounded runner plays each part (`DS/docs/motion.md`, Rules: never `animation.finished` alone).
+const parts = createVetaMotion()
+const stage = createValleStage({
+  root: () => rootEl.value,
+  box: (element) => element.getBoundingClientRect(),
+  animate: (element, frames, timing) => {
+    void parts.run(element, frames, timing)
+  },
+  cancel: () => parts.cancel(),
+  afterRender: (run) => {
+    void nextTick(run)
+  },
+  reduced,
+  scroll: (element, left) => {
+    element.scrollLeft = left
+  }
+})
+
+const enterable = (mineId: MineId): boolean =>
+  model.mines.value.some((mine) => mine.id === mineId && mine.state !== 'unenterable')
+
+/** What machine 28 reads: the mines, the mosaic, the last mine worked in, the scroll, the chat in focus. */
+function presetFacts(): ValleFacts {
+  const mines = model.mines.value
+  // First visit: the most recent mine (S28.06).
+  const recent = [...mines].sort((a, b) => b.lastUsedAt - a.lastUsedAt)[0]?.id ?? null
+  return {
+    mines: mines.map((mine) => ({ mineId: mine.id, enterable: mine.state !== 'unenterable' })),
+    mosaic: columns.value.map((column) => column.mineId),
+    lastMine: stores.value.lastFrontMineId ?? recent,
+    scrollLeft: room.value?.mosaic?.scrollLeft ?? 0,
+    focus: pins.focused.value
+  }
+}
+
 const preset = useVallePreset({
   bridge: props.bridge,
   stores,
-  // S28.06: the Work front needs a mine to dive into.
-  facts: () => ({ enterableMine: model.mines.value.some((mine) => mine.state !== 'unenterable') })
+  facts: presetFacts,
+  // S29.12 through the pins, S30.07 through the split.
+  dived: (mineId, forDwarfId) => {
+    split.sendPin(pins.diveInput(mineId, forDwarfId))
+  },
+  motion: { clock: props.clock ?? BROWSER_CLOCK, reduced, stage }
 })
 const view = preset.view
+/** A dive or a climb is running: input waits (S28.09, S28.14). */
+const gated = (): boolean =>
+  view.value.motion?.kind === 'diving' || view.value.motion?.kind === 'climbing'
 
 /** Whether Valle is the shown mode window: a hidden window's page is hidden (ADR-025 item 7). */
 const shown = shallowRef(document.visibilityState === 'visible')
 const visibilityChanged = (): void => {
   shown.value = document.visibilityState === 'visible'
+  // A hidden window freezes timelines: the run resolves at once (S28.22).
+  if (!shown.value) preset.send({ kind: 'hidden' })
 }
 document.addEventListener('visibilitychange', visibilityChanged)
 
@@ -124,14 +189,21 @@ const columns = computed(() => {
   const order = factsRead.value ? restoreMosaicOrder(stores.value.mosaicOrder, mineExists) : null
   return (order ?? []).map((mineId) => ({
     mineId,
-    name: model.mines.value.find((mine) => mine.id === mineId)?.name ?? ''
+    name: model.mines.value.find((mine) => mine.id === mineId)?.name ?? '',
+    enterable: enterable(mineId)
   }))
 })
 
-/** The Work front's mine: the focused pin's (S35.01), else the last one entered. */
-const frontMine = computed((): MineId | null => {
-  const set = pins.set.value
-  return set.pins.find((p) => p.key === set.focus)?.mineId ?? stores.value.lastFrontMineId
+/** The Work front's mine: the one dived into or swapped in, else the last one worked in (S28.02, N-15). */
+const frontMine = computed((): MineId | null => view.value.mineId ?? stores.value.lastFrontMineId)
+const nameOf = (mineId: MineId): string =>
+  model.mines.value.find((mine) => mine.id === mineId)?.name ?? ''
+const listMines = computed(() =>
+  model.mines.value.map((mine) => ({ mineId: mine.id, name: mine.name }))
+)
+const shownMine = computed(() => {
+  const mineId = frontMine.value
+  return mineId === null ? null : { mineId, name: nameOf(mineId) }
 })
 const body = shallowRef<HTMLElement | null>(null)
 const split = useValleSplit({
@@ -172,7 +244,29 @@ const resized = (): void => {
 window.addEventListener('keydown', onKey)
 window.addEventListener('resize', resized)
 
+// The Host removed the mine the Work front shows: a swap to another, or a climb out at once (S28.23).
+const stopFacts = model.onFacts((facts) => {
+  for (const fact of facts) {
+    if (fact.kind === 'mine-removed') preset.send({ kind: 'mine-removed', mineId: fact.mineId })
+  }
+})
+
+// Within the same run, the Control room opens at the mosaic's saved scroll, once its columns are drawn (S28.02).
+const stopScroll = watch(
+  () => columns.value.length,
+  async (count) => {
+    const saved = view.value.savedScroll
+    if (count === 0 || saved === undefined || view.value.preset !== 'control') return
+    stopScroll()
+    await nextTick()
+    const mosaic = room.value?.mosaic
+    if (mosaic) mosaic.scrollLeft = saved
+  }
+)
+
+let removeGate: (() => void) | null = null
 onMounted(() => {
+  if (rootEl.value !== null) removeGate = createInputGate(rootEl.value, gated)
   void model.start().then((read) => {
     if (read) factsRead.value = true
   })
@@ -181,15 +275,21 @@ onUnmounted(() => {
   document.removeEventListener('visibilitychange', visibilityChanged)
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('resize', resized)
+  removeGate?.()
+  stopFacts()
+  stage.end()
+  parts.dispose()
   model.stop()
 })
 </script>
 
 <template>
   <main
+    ref="rootEl"
     class="valle"
     data-valle-root
     :data-preset="view.preset"
+    :data-motion="view.motion?.kind ?? 'none'"
     :data-page="view.page ?? 'mines'"
     :data-held="held"
   >
@@ -216,10 +316,19 @@ onUnmounted(() => {
       <ValleWorkFront
         v-else-if="view.preset === 'front'"
         :folded-list="view.layouts.front.foldedList"
+        :mines="listMines"
+        :mine="shownMine"
         @fold="preset.send({ kind: 'fold' })"
         @unfold="preset.send({ kind: 'unfold' })"
+        @pick="(mineId) => preset.send({ kind: 'pick', mineId })"
       />
-      <ValleControlRoom v-else :columns="columns" />
+      <ValleControlRoom
+        v-else
+        ref="room"
+        :columns="columns"
+        @dive="(mineId) => preset.send({ kind: 'dive', mineId })"
+        @sprite-double-click="preset.send({ kind: 'sprite-double-click' })"
+      />
       <span class="dm-valle__splitter" aria-hidden="true"></span>
       <aside class="dm-valle__chats" aria-label="Pinned chats">
         <PinnedStack
@@ -245,6 +354,7 @@ onUnmounted(() => {
         />
       </aside>
     </div>
+    <div class="dm-vghosts" aria-hidden="true"></div>
     <ToastHost />
   </main>
 </template>
@@ -270,6 +380,11 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+.dm-vghosts {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }
 .dm-valle__chats {
   display: flex;
