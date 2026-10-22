@@ -262,6 +262,8 @@ export function restoredSplit(
 const NAV = 56
 const SPLITTER = 12
 const BODY_GAPS = 3 * 6
+/** What the body's grid always takes besides its main zone and its chat zone: the nav, the splitter, the three gaps. */
+export const VALLE_BODY_FIXED = NAV + SPLITTER + BODY_GAPS
 /** The gap between the Work front's list and its mine. */
 const LIST_GAP = 6
 
@@ -280,5 +282,5 @@ export function splitRoom(layout: {
   portraits: number
 }): number {
   const list = layout.foldedList ? VALLE_LIST_FOLDED_WIDTH : VALLE_LIST_WIDTH
-  return layout.body - NAV - SPLITTER - BODY_GAPS - list - LIST_GAP - mineMinimum(layout.portraits)
+  return layout.body - VALLE_BODY_FIXED - list - LIST_GAP - mineMinimum(layout.portraits)
 }
