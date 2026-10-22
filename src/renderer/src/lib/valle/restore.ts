@@ -2,7 +2,7 @@
  * What Valle restores when it opens (07 S28.01, S28.02, S29.02, S18.05, S32.02, S30.13; ADR-024 items 1, 4; INV-117;
  * ISSUE-300): the stored preset and both layouts, the pins and the mosaic order, and the split wish. Pure.
  */
-import type { DwarfId, MineId, UiPreferencesMap } from '@dwarfai/contracts'
+import type { DwarfId, MineId, UiPreferencesMap, UiSessionSnapshot } from '@dwarfai/contracts'
 import { defaultValleLayouts, type ValleLayouts, type ValleView, type VallePreset } from './preset'
 
 /** What the Valle window read before its first paint (A-N20). */
@@ -10,14 +10,31 @@ export interface StoredValleView {
   readonly preset: VallePreset
   /** `null`: no layout stored (each preset's defaults apply). */
   readonly layout: ValleLayouts | null
+  /** The last mine worked in (N-15), the Work front's mine when Valle opens on it. */
+  readonly lastFrontMineId?: MineId | null
+  /** The session's Valle fields: cleared by a restart, kept within a run (ADR-024 item 4). */
+  readonly session?: UiSessionSnapshot['valle']
 }
 
 /**
  * S28.01, S28.02: the stored preset (the Control room when none was ever stored, UI main answering its default) with
- * both stored layouts, or each preset's defaults when no layout was ever stored. A nav page is never restored.
+ * both stored layouts, or each preset's defaults when no layout was ever stored. A nav page is never restored. The Work
+ * front shows the last mine worked in (N-15); the mosaic's scroll saved at a dive comes back only from the session, so
+ * within the same run, never after a restart (S28.26; ADR-024 item 4).
  */
 export function restoreValleView(stored: StoredValleView): ValleView {
-  return { preset: stored.preset, page: null, layouts: stored.layout ?? defaultValleLayouts() }
+  const view: ValleView = {
+    preset: stored.preset,
+    page: null,
+    layouts: stored.layout ?? defaultValleLayouts()
+  }
+  const mineId = stored.lastFrontMineId ?? null
+  const savedScroll = stored.session?.mosaicScrollLeft
+  return {
+    ...view,
+    ...(mineId === null ? {} : { mineId }),
+    ...(savedScroll === undefined ? {} : { savedScroll })
+  }
 }
 
 /** A stored pin (14 §3.9 `pins`). */

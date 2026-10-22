@@ -76,7 +76,9 @@ both read the one list, `builtModesOf` in `src/contracts/ipc/builtModes.ts` (ISS
 any other value) is the Panel and Veta (Veta since ISSUE-294); `e2e` adds Valle, whose window is built from ISSUE-299
 on (`e2e/valle/`, the Valle page found by polling `app.windows()` in `e2e/support/valle.ts`; `e2e/valle/presets.e2e.ts`
 relaunches on one profile and, while the app is closed, writes the stores no Valle control writes yet, the pins and the
-mosaic order, in UI main's own file shapes, ISSUE-300). So both builds have the
+mosaic order, in UI main's own file shapes, ISSUE-300; `e2e/valle/dive.e2e.ts` writes the mosaic order the same way,
+scrolls it, dives and climbs out, ISSUE-301; a case presses the next Valle control only once `valleSettled` saw
+`data-motion="none"` on the root, since input is ignored for the whole of a dive or a climb). So both builds have the
 Veta window, the nav's "▼ Veta" and Settings › General "Mode at launch"; only the E2E build has the Valle window and
 draws "▲ Valle". The release guarantee is proven by the unit tests over `builtModesOf('release')`, and
 `e2e/panel/hidden-until-built.e2e.ts` checks a build against the profile it was built with: run it with

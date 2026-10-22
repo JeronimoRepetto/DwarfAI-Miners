@@ -531,7 +531,10 @@ export const uiPreferenceWriteSchema = z.discriminatedUnion('key', [
   z.object({ key: z.literal('valleLayout'), value: valleLayoutSchema }).strict(),
   // ISSUE-302: the Valle window writes the chat pins, whole and in order, on every change (07 S29.03…S29.23; TC-302-01).
   // `null` (never written) is UI main's alone to restore, on Reset metrics (S29.20); an Add pin is never here (R5B-27).
-  z.object({ key: z.literal('pins'), value: z.array(vallePinSchema) }).strict()
+  z.object({ key: z.literal('pins'), value: z.array(vallePinSchema) }).strict(),
+  // ISSUE-301: the dive and a Work front swap write the last mine worked in (07 S28.03, S28.15; N-15). `null` (never
+  // written) is UI main's alone to restore, on Reset metrics (S39.10).
+  z.object({ key: z.literal('valleLastFrontMineId'), value: mineIdSchema }).strict()
 ]) satisfies z.ZodType<UiPreferenceWrite>
 
 // A-N13 `moveToMode`, A-N14 `onModeTransition`, A-N15 `modeTransitionDone` (14 §2.2, §3.9; ADR-025 item 3;

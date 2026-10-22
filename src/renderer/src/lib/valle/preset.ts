@@ -9,10 +9,14 @@
  * - The preset and the layouts are written at once on every change (S28.26), so the next open is S28.02.
  * - Only the transitions 07 machine 28 lists are taken; anything else is refused and changes nothing (ADR-024).
  *
- * The dive and climb motion (`diving`, `climbing`, `front-swapping`, the input gate) is ISSUE-301's: here a switch
- * lands on the target preset at once.
+ * - The dive into a mine and the climb out (S28.03…S28.15, S28.22…S28.24; ISSUE-301): the layout switches at once and a
+ *   run plays over it (`flip.ts`): about 330 ms for a dive or a climb, every input ignored but a mode control, held and
+ *   run when the run settles (S28.09, S28.14); 180 ms for a swap. The mosaic's scroll and the dwarf a dive is for are
+ *   the session's only (ADR-024 item 4); the last mine worked in is written (N-15).
  */
-import type { MoveToModeParams, UiPreferencesMap } from '@dwarfai/contracts'
+import type { DwarfId, MineId, MoveToModeParams, UiPreferencesMap } from '@dwarfai/contracts'
+import { diveForDwarfId, type DiveFocus } from './diveOrder'
+import type { ValleMotionKind } from './flip'
 
 export type VallePreset = UiPreferencesMap['vallePreset']
 /** Both presets' layouts, as A-N20 / A-N21 carry them. */
@@ -25,6 +29,23 @@ export interface ValleView {
   readonly preset: VallePreset
   readonly page: ValleNavPage | null
   readonly layouts: ValleLayouts
+  /** The Work front's mine: the one dived into or swapped in, else the last mine worked in (S28.02, N-15). */
+  readonly mineId?: MineId
+  /** The mosaic's sideways scroll saved at the dive, this run only (S28.03, S28.12; ADR-024 item 4). */
+  readonly savedScroll?: number
+  /** A dive, a climb or a swap running; absent once it settled. */
+  readonly motion?: ValleMotion
+}
+
+/** A run of machine 28 (`diving`, `climbing`, `front-swapping`). */
+export interface ValleMotion {
+  readonly kind: ValleMotionKind
+  /** The mine dived into, climbed out of, or swapped in (`null`: a Work front opened on no known mine). */
+  readonly mineId: MineId | null
+  /** That mine has a column in the mosaic: it grows from it or shrinks into it; else it rises or fades in place. */
+  readonly inMosaic: boolean
+  /** A mode control pressed mid-run, the last one (S28.09, S28.14); it runs as S28.21 when the run settles. */
+  readonly held: MoveToModeParams | null
 }
 
 /** What the person did, or what happened to the window. */
@@ -47,11 +68,33 @@ export type ValleInput =
   | { readonly kind: 'leave'; readonly move: MoveToModeParams }
   /** Reset metrics (`ui.resetPreferences`, S28.25). */
   | { readonly kind: 'reset' }
+  /** `⤢` on a column header, a double-click on the mine's art, or the zone menu "Dive in · Work front" (S28.03). */
+  | { readonly kind: 'dive'; readonly mineId: MineId }
+  /** A double-click on a dwarf's sprite (S28.05). */
+  | { readonly kind: 'sprite-double-click' }
+  /** Another mine picked in the Work front, with the dwarf named when a line names one (S28.15). */
+  | { readonly kind: 'pick'; readonly mineId: MineId; readonly dwarfId?: DwarfId | null }
+  /** The run reached its duration, or its watchdog fired (S28.08, S28.12, S28.13, S28.15). */
+  | { readonly kind: 'settled' }
+  /** The Valle window went hidden (S28.22). */
+  | { readonly kind: 'hidden' }
+  /** `MineRemoved` (S28.23). */
+  | { readonly kind: 'mine-removed'; readonly mineId: MineId }
+  /** `MineBecameUnenterable` (S28.24). */
+  | { readonly kind: 'mine-unenterable'; readonly mineId: MineId }
 
 /** What a guard reads besides the view. */
 export interface ValleFacts {
-  /** At least one mine can be entered (S28.06). */
-  readonly enterableMine: boolean
+  /** Every mine the Host lists, and whether it can be entered (S28.04, S28.06). */
+  readonly mines: readonly { readonly mineId: MineId; readonly enterable: boolean }[]
+  /** The mosaic's columns, in order (S28.06, S28.07, S28.23). */
+  readonly mosaic: readonly MineId[]
+  /** The last mine worked in, else the most recent mine (S28.06; N-15). */
+  readonly lastMine: MineId | null
+  /** The mosaic's sideways scroll now (saved at a dive, S28.03). */
+  readonly scrollLeft: number
+  /** The chat in focus and how it was focused, for the dwarf a dive is for (S28.03). */
+  readonly focus: DiveFocus | null
 }
 
 /** What the caller carries out after a transition. */
@@ -64,6 +107,19 @@ export type ValleEffect =
   | { readonly kind: 'reclamp'; readonly preset: VallePreset }
   /** A-N13 `moveToMode` (machine 27). */
   | { readonly kind: 'move'; readonly move: MoveToModeParams }
+  /** A-N18 `patchUiSession({ kind: 'valle' })`: the session-only scroll and dive target (ADR-024 item 4). */
+  | {
+      readonly kind: 'session'
+      readonly patch: { readonly mosaicScrollLeft: number; readonly diveForDwarfId: DwarfId | null }
+    }
+  /** A-N21 `setUiPreference(valleLastFrontMineId)`: the last mine worked in (N-15). */
+  | { readonly kind: 'write-last-mine'; readonly mineId: MineId }
+  /** The tab order rebuilt (S29.12) and the split adjusted (S30.07). */
+  | { readonly kind: 'dive-pins'; readonly mineId: MineId; readonly forDwarfId: DwarfId | null }
+  /** The stage plays the run; a climb restores `scrollLeft`. */
+  | { readonly kind: 'play'; readonly motion: ValleMotion; readonly scrollLeft: number }
+  /** The mosaic's saved scroll restored at once, with no motion (S28.23). */
+  | { readonly kind: 'restore-scroll'; readonly scrollLeft: number }
 
 export type ValleStep =
   | {
@@ -123,11 +179,6 @@ function taken(id: string, view: ValleView, effects: readonly ValleEffect[] = []
   return { ok: true, id, view, effects }
 }
 
-/** A switch to `preset`: its own layout comes back as it is, the other preset's untouched; written at once. */
-function switchTo(id: string, view: ValleView, preset: VallePreset): ValleStep {
-  return taken(id, { ...view, preset }, [{ kind: 'write-preset', preset }])
-}
-
 /** The Work front's list folded or unfolded: the Work front layout alone changes, written at once. */
 function withList(id: string, view: ValleView, foldedList: boolean): ValleStep {
   const layouts: ValleLayouts = { ...view.layouts, front: { ...view.layouts.front, foldedList } }
@@ -141,13 +192,166 @@ function askedPreset(input: ValleInput): VallePreset | null {
   return null
 }
 
+const enterable = (facts: ValleFacts, mineId: MineId): boolean =>
+  facts.mines.some((mine) => mine.mineId === mineId && mine.enterable)
+
+/** The view with its run settled: the motion gone, every other field as it is. */
+function settledView(view: ValleView): ValleView {
+  const settled: { motion?: ValleMotion } & Omit<ValleView, 'motion'> = { ...view }
+  delete settled.motion
+  return settled
+}
+
+/** A run of `kind` on `mineId`, nothing held. */
+function motionOf(kind: ValleMotionKind, mineId: MineId | null, facts: ValleFacts): ValleMotion {
+  return {
+    kind,
+    mineId,
+    inMosaic: mineId !== null && facts.mosaic.includes(mineId),
+    held: null
+  }
+}
+
+/**
+ * S28.03, S28.06, S28.07: the dive into `mineId`. The layout switches to the Work front at once (FLIP: the stage
+ * measures first, then plays the parts from where they were); the mosaic's scroll and the dwarf the dive is for go to
+ * the session only; the tab order is rebuilt and the split adjusted; the preset and the last mine worked in are written.
+ */
+function diveInto(id: string, view: ValleView, mineId: MineId, facts: ValleFacts): ValleStep {
+  const motion = motionOf('diving', mineId, facts)
+  const forDwarfId = diveForDwarfId(facts.focus, mineId)
+  const scrollLeft = facts.scrollLeft
+  return taken(
+    motion.inMosaic ? id : 'S28.07',
+    { ...view, preset: 'front', mineId, savedScroll: scrollLeft, motion },
+    [
+      { kind: 'session', patch: { mosaicScrollLeft: scrollLeft, diveForDwarfId: forDwarfId } },
+      { kind: 'dive-pins', mineId, forDwarfId },
+      { kind: 'write-preset', preset: 'front' },
+      { kind: 'write-last-mine', mineId },
+      { kind: 'play', motion, scrollLeft }
+    ]
+  )
+}
+
+/** S28.06's mine: the last mine worked in, or, when it cannot be entered, the first mosaic column that can. */
+function tabTarget(facts: ValleFacts): MineId | null {
+  if (facts.lastMine !== null && enterable(facts, facts.lastMine)) return facts.lastMine
+  return facts.mosaic.find((mineId) => enterable(facts, mineId)) ?? null
+}
+
+/** S28.11: the climb out, the layout back to the Control room at once, the saved scroll restored by the stage. */
+function climbOut(view: ValleView, facts: ValleFacts): ValleStep {
+  const motion = motionOf('climbing', view.mineId ?? null, facts)
+  return taken('S28.11', { ...view, preset: 'control', motion }, [
+    { kind: 'write-preset', preset: 'control' },
+    { kind: 'play', motion, scrollLeft: view.savedScroll ?? 0 }
+  ])
+}
+
+/** S28.15, S28.23: another mine swapped in place, the tab order rebuilt with the named dwarf first. */
+function swapTo(
+  id: string,
+  view: ValleView,
+  mineId: MineId,
+  forDwarfId: DwarfId | null,
+  facts: ValleFacts
+): ValleStep {
+  const motion = motionOf('front-swapping', mineId, facts)
+  return taken(id, { ...view, mineId, motion }, [
+    { kind: 'dive-pins', mineId, forDwarfId },
+    { kind: 'write-last-mine', mineId },
+    { kind: 'play', motion, scrollLeft: view.savedScroll ?? 0 }
+  ])
+}
+
+/** The run's end: its settled id, and a mode control held during it runs now (S28.21). */
+function settle(id: string, view: ValleView, motion: ValleMotion): ValleStep {
+  const effects: ValleEffect[] = motion.held === null ? [] : [{ kind: 'move', move: motion.held }]
+  return taken(id, settledView(view), effects)
+}
+
+/** The id a run settles with (S28.08, S28.12, S28.13, S28.15). */
+function settledId(motion: ValleMotion): string {
+  if (motion.kind === 'diving') return 'S28.08'
+  if (motion.kind === 'front-swapping') return 'S28.15'
+  return motion.inMosaic ? 'S28.12' : 'S28.13'
+}
+
+/**
+ * `diving` and `climbing` (S28.09, S28.14): a mode control is held, the last one winning; every other input is ignored,
+ * never queued. A run ends at its duration or its watchdog, or at once when the window hides (S28.22).
+ * `front-swapping` ends the same way; leaving Valle resolves it at once and moves (S28.22, S28.21).
+ */
+function stepMotion(view: ValleView, motion: ValleMotion, input: ValleInput): ValleStep {
+  if (input.kind === 'settled') return settle(settledId(motion), view, motion)
+  if (input.kind === 'hidden') return settle('S28.22', view, motion)
+  if (motion.kind === 'front-swapping') {
+    if (input.kind !== 'leave') return REFUSED
+    return taken('S28.22', settledView(view), [{ kind: 'move', move: input.move }])
+  }
+  const ignored = motion.kind === 'diving' ? 'S28.09' : 'S28.14'
+  if (input.kind === 'leave') {
+    return taken(ignored, { ...view, motion: { ...motion, held: input.move } })
+  }
+  // A Host fact is not input: no transition lists one mid-run.
+  if (input.kind === 'mine-removed' || input.kind === 'mine-unenterable') return REFUSED
+  return taken(ignored, view)
+}
+
+/** `control`, no page, no motion. */
+function stepControl(view: ValleView, input: ValleInput, facts: ValleFacts): ValleStep | null {
+  if (input.kind === 'dive') {
+    if (!enterable(facts, input.mineId)) return taken('S28.04', view)
+    return diveInto('S28.03', view, input.mineId, facts)
+  }
+  if (input.kind === 'sprite-double-click') return taken('S28.05', view)
+  if (askedPreset(input) === 'front') {
+    const target = tabTarget(facts)
+    return target === null ? REFUSED : diveInto('S28.06', view, target, facts)
+  }
+  return null
+}
+
+/** `front`, no page, no motion. */
+function stepFront(view: ValleView, input: ValleInput, facts: ValleFacts): ValleStep | null {
+  if (askedPreset(input) === 'control' || (input.kind === 'escape' && !input.layerOpen)) {
+    return climbOut(view, facts)
+  }
+  if (input.kind === 'fold' && !view.layouts.front.foldedList) return withList('S28.16', view, true)
+  if (input.kind === 'unfold' && view.layouts.front.foldedList) {
+    return withList('S28.17', view, false)
+  }
+  if (input.kind === 'pick') {
+    if (input.mineId === view.mineId) return REFUSED
+    const forDwarfId = input.dwarfId ?? diveForDwarfId(facts.focus, input.mineId)
+    return swapTo('S28.15', view, input.mineId, forDwarfId, facts)
+  }
+  if (input.kind === 'mine-removed') {
+    if (input.mineId !== view.mineId) return REFUSED
+    const next = facts.mosaic.find((id) => id !== input.mineId && enterable(facts, id))
+    if (next !== undefined) return swapTo('S28.23', view, next, null, facts)
+    // No other mine to show: climbed out at once, the saved scroll back.
+    return taken('S28.23', { ...view, preset: 'control' }, [
+      { kind: 'write-preset', preset: 'control' },
+      { kind: 'restore-scroll', scrollLeft: view.savedScroll ?? 0 }
+    ])
+  }
+  if (input.kind === 'mine-unenterable') {
+    // It stays shown: its dwarfs may still work (S28.24).
+    return input.mineId === view.mineId ? taken('S28.24', view) : REFUSED
+  }
+  return null
+}
+
 export function stepValle(view: ValleView, input: ValleInput, facts: ValleFacts): ValleStep {
-  // Any state: leaving Valle (S28.21) and Reset metrics (S28.25).
-  if (input.kind === 'leave') return taken('S28.21', view, [{ kind: 'move', move: input.move }])
+  // Any state: Reset metrics (S28.25). UI main rewrote the stores to their defaults (S39.10): nothing is written back.
   if (input.kind === 'reset') {
-    // UI main rewrote the stores to their defaults (S39.10): nothing is written back.
     return taken('S28.25', { preset: 'control', page: null, layouts: defaultValleLayouts() })
   }
+  if (view.motion !== undefined) return stepMotion(view, view.motion, input)
+  // At rest: leaving Valle (S28.21).
+  if (input.kind === 'leave') return taken('S28.21', view, [{ kind: 'move', move: input.move }])
 
   if (view.page !== null) {
     // `page`: Esc with no other layer open returns to the preset beneath (S28.20).
@@ -155,18 +359,9 @@ export function stepValle(view: ValleView, input: ValleInput, facts: ValleFacts)
     return REFUSED
   }
 
-  const asked = askedPreset(input)
-  if (view.preset === 'control') {
-    if (asked === 'front' && facts.enterableMine) return switchTo('S28.06', view, 'front')
-  } else {
-    if (asked === 'control') return switchTo('S28.11', view, 'control')
-    if (input.kind === 'escape' && !input.layerOpen) return switchTo('S28.11', view, 'control')
-    if (input.kind === 'fold' && !view.layouts.front.foldedList)
-      return withList('S28.16', view, true)
-    if (input.kind === 'unfold' && view.layouts.front.foldedList) {
-      return withList('S28.17', view, false)
-    }
-  }
+  const step =
+    view.preset === 'control' ? stepControl(view, input, facts) : stepFront(view, input, facts)
+  if (step !== null) return step
   if (input.kind === 'nav') return taken('S28.19', { ...view, page: input.page })
   if (input.kind === 'resize')
     return taken('S28.18', view, [{ kind: 'reclamp', preset: view.preset }])
