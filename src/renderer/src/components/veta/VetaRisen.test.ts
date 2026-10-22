@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import type { DwarfId, MineId } from '@dwarfai/contracts'
 import { flushPromises } from '@vue/test-utils'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { useDwarfQuestion } from '../../composables/useDwarfQuestion'
 import {
   BALIN,
   BELEGOST,
@@ -41,6 +42,8 @@ const TWO_MINES: VetaSnapshotData = {
 let world: VetaWorld | undefined
 afterEach(() => {
   world?.unmount()
+  useDwarfQuestion().stopAsks()
+  useDwarfQuestion().clearAll()
   world = undefined
   document.body.innerHTML = ''
 })
@@ -299,6 +302,61 @@ describe('the risen chat hand-off (ISSUE-293)', () => {
       kind: 'rise',
       dwarfId: BORIN
     })
+  })
+})
+
+describe('the Host asks in the window risen above the Veta strip', () => {
+  const ASK = '01920000-0000-7000-a000-00000000a001'
+
+  it('[US-ASK-001.AC02, US-VETA-005.AC07] a Host question for the risen dwarf draws its card in place of the composer, and its answer leaves through the Host broker', async () => {
+    world = await mountVeta(TWO_MINES)
+    const answerDwarfQuestion = vi.fn(() =>
+      Promise.resolve({ ok: true, value: { kind: 'accepted' } })
+    )
+    window.api.answerDwarfQuestion = answerDwarfQuestion as never
+    dwarf(BORIN).click()
+    await flushPromises()
+    const panel = world.root.getComponent(DwarfMessagePanel)
+    expect(panel.find('.dm-composer').exists()).toBe(true)
+
+    await world.push([
+      {
+        type: 'evt',
+        seq: 11,
+        epoch: 'epoch-veta',
+        name: 'ask.opened',
+        data: {
+          ask: {
+            id: ASK,
+            dwarfId: BORIN,
+            kind: 'question',
+            channel: 'driver',
+            providerRequestId: 'req-a001',
+            payload: {
+              steps: [
+                { text: 'Which database?', options: ['Postgres', 'SQLite'], allowsFreeText: true }
+              ]
+            },
+            currentStep: 0,
+            state: 'open',
+            reannounce: true,
+            openedAt: 1_000
+          }
+        }
+      } as never
+    ])
+
+    expect(panel.find('.dm-qcard__q').exists()).toBe(true)
+    expect(panel.get('.dm-qcard__q').text()).toBe('Which database?')
+    expect(panel.find('.dm-composer').exists()).toBe(false)
+
+    await panel.get('.dm-qcard .dm-qopt').trigger('click')
+    await panel.get('.dm-qcard__submit').trigger('click')
+    await flushPromises()
+    expect(answerDwarfQuestion).toHaveBeenCalledTimes(1)
+    expect(answerDwarfQuestion).toHaveBeenCalledWith(
+      expect.objectContaining({ askId: ASK, requestId: expect.any(String) })
+    )
   })
 })
 
