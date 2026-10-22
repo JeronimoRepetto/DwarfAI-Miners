@@ -20,7 +20,7 @@
  * - Only the transitions 07 machine 29 lists are taken; anything else is refused and changes nothing (ADR-024).
  */
 import type { DwarfId, DwarfStatus, MineId, UiSessionSnapshot } from '@dwarfai/contracts'
-import { stepPinnedChat, type PinnedChatState } from './pinnedChat'
+import { isChatReadOnly, stepPinnedChat, type PinnedChatState } from './pinnedChat'
 import type { RestoredPin, StoredPin } from './restore'
 
 /** A pin's key: a chat's is its dwarf's id, an Add pin's its mine's id behind `add:` (one Add panel per mine). */
@@ -385,7 +385,11 @@ export function restoredPins(
 }
 
 /** S29.06: the tab ← or → moves keyboard focus to, wrapping at both ends; the selection is unchanged. */
-export function arrowTarget(set: PinSet, from: PinKey, key: 'ArrowLeft' | 'ArrowRight'): PinKey {
+export function arrowTarget(
+  set: { readonly pins: readonly { readonly key: PinKey }[] },
+  from: PinKey,
+  key: 'ArrowLeft' | 'ArrowRight'
+): PinKey {
   const at = set.pins.findIndex((pin) => pin.key === from)
   if (at < 0 || set.pins.length === 0) return from
   const step = key === 'ArrowRight' ? 1 : -1
@@ -457,4 +461,34 @@ export function pinText(pin: Pin, facts: PinTextFacts): PinText {
   const ask = dwarf.ask ?? (dwarf.status === 'asking' ? 'question' : null)
   if (ask === null) return words(name, STATUS_WORD[dwarf.status], false, '')
   return words(name, '', true, '?', ask === 'permission' ? '! permission' : '? asking')
+}
+
+/** A pin as the stack and the deck draw it. */
+export interface PinView {
+  readonly key: PinKey
+  readonly kind: Pin['kind']
+  readonly mineId: MineId
+  /** `live` or `gone` for a chat pin (machine 18), `add` for the Add panel. */
+  readonly state: PinnedChatState | 'add'
+  /** A gone pin's chat is read-only (S18.02). */
+  readonly readOnly: boolean
+  readonly text: PinText
+}
+
+/** The set's pins in order, each with its words. */
+export function pinViews(set: PinSet, facts: PinTextFacts): PinView[] {
+  return set.pins.map((pin) => ({
+    key: pin.key,
+    kind: pin.kind,
+    mineId: pin.mineId,
+    state: pin.kind === 'chat' ? pin.state : 'add',
+    readOnly: pin.kind === 'chat' && isChatReadOnly(pin.state),
+    text: pinText(pin, facts)
+  }))
+}
+
+/** A request to move keyboard focus, numbered so the same target asked twice is heard twice. */
+export interface FocusRequest {
+  readonly target: PinKey | 'container'
+  readonly seq: number
 }
