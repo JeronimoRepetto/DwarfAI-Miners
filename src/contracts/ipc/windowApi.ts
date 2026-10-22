@@ -383,6 +383,61 @@ export type UiPreferenceWrite = {
 // lastMode and resetEpochApplied are written by UI main itself, never by a renderer:
 // setUiPreference({key:'lastMode' | 'resetEpochApplied'}) → INVALID_PARAMS.
 
+// Valle window placement constants (07 N-19; ADR-024 D7, ADR-025 D1): architect values, config keys
+export const VALLE_ON_SCREEN_RATIO = 0.5 // a mine zone counts as on screen for reportVisibleMines when it intersects the Valle viewport by ≥ this share (07 S39.05; pending DG-25)
+export const VALLE_BOUNDS = 'work-area' as const // Valle opens on the work area of the display matching the source window (07 S39.01, OQ-20; pending DG)
+
+// The persisted Valle keys of 14 §3.9 (ISSUE-299; ADR-024 items 1, 4, 6): each as 14 §3.9 types it, strict.
+const zoneContentSchema = z.enum([
+  'mine',
+  'map',
+  'mineslist',
+  'history'
+]) satisfies z.ZodType<ZoneContent>
+const valleLayoutControlSchema = z
+  .object({
+    chatWidth: z.number().finite().nonnegative(),
+    split: z.boolean(),
+    foldedList: z.boolean(),
+    zones: idRecordSchema(mineIdSchema, z.object({ content: zoneContentSchema }).strict())
+  })
+  .strict() satisfies z.ZodType<ValleLayoutControl>
+const valleLayoutFrontSchema = z
+  .object({
+    chatWidth: z.number().finite().nonnegative(),
+    split: z.boolean(),
+    foldedList: z.boolean(),
+    zone: z.object({ content: zoneContentSchema, mineId: mineIdSchema.optional() }).strict()
+  })
+  .strict() satisfies z.ZodType<ValleLayoutFront>
+/** `UiPreferencesMap.valleLayout`: each preset's own layout (07 machines 28, 30–33). */
+export const valleLayoutSchema = z
+  .object({ control: valleLayoutControlSchema, front: valleLayoutFrontSchema })
+  .strict() satisfies z.ZodType<UiPreferencesMap['valleLayout']>
+/** `UiPreferencesMap.vallePreset`: the preset in use. */
+export const vallePresetSchema = z.enum(['control', 'front']) satisfies z.ZodType<
+  UiPreferencesMap['vallePreset']
+>
+/** `UiPreferencesMap.valleLastFrontMineId` (07 N-15). */
+export const valleLastFrontMineIdSchema = mineIdSchema.nullable() satisfies z.ZodType<
+  UiPreferencesMap['valleLastFrontMineId']
+>
+/** `UiPreferencesMap.valleMosaicOrder` (07 N-22): `null` = never written; `[]` = emptied. */
+export const valleMosaicOrderSchema = z.array(mineIdSchema).nullable() satisfies z.ZodType<
+  UiPreferencesMap['valleMosaicOrder']
+>
+/** `UiPreferencesMap.pins` (PO #85; R5B-27): chat pins only; `null` = never written. */
+const vallePinSchema = z
+  .object({ dwarfId: dwarfIdSchema, mineId: mineIdSchema, order: z.number().int().nonnegative() })
+  .strict()
+export const pinsSchema = z.array(vallePinSchema).nullable() satisfies z.ZodType<
+  UiPreferencesMap['pins']
+>
+/** `UiPreferencesMap.mutedMineIds` (07 N-18; 06 §16 D-13). */
+export const mutedMineIdsSchema = z.array(mineIdSchema) satisfies z.ZodType<
+  UiPreferencesMap['mutedMineIds']
+>
+
 /**
  * 14 §3.9 `modeAtLaunch` (US-SET-002): the whole type, Valle included. Which options Settings draws is the build's
  * (ADR-034 item 2); a stored mode this build does not ship opens the Panel (ISSUE-294).
@@ -428,7 +483,15 @@ export const uiPreferencesAnswerSchema = z
     // ISSUE-286: Veta's stored places, read by the Veta renderer (14 §3.9 usage rule); written by UI main only.
     vetaDock: z.lazy(() => vetaDocksSchema).optional(),
     // ISSUE-294: Settings › General "Mode at launch" (US-SET-002.AC09), read and written by the Panel renderer.
-    modeAtLaunch: modeAtLaunchSchema.optional()
+    modeAtLaunch: modeAtLaunchSchema.optional(),
+    // ISSUE-299: the Valle stores, read by the Valle renderer before its first paint (07 S39.03); each becomes
+    // renderer-writable in the issue that first writes it (ISSUE-300…ISSUE-310). An unwritten layout is not answered.
+    valleLayout: valleLayoutSchema.optional(),
+    vallePreset: vallePresetSchema.optional(),
+    valleLastFrontMineId: valleLastFrontMineIdSchema.optional(),
+    valleMosaicOrder: valleMosaicOrderSchema.optional(),
+    pins: pinsSchema.optional(),
+    mutedMineIds: mutedMineIdsSchema.optional()
   })
   .strict() satisfies z.ZodType<Partial<UiPreferencesMap>>
 

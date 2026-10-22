@@ -11,16 +11,14 @@
 //   it to its display's new work area (S39.09).
 // - The reveal (S39.06, S39.07) is ISSUE-311's; the stores read before the first paint (S39.03, S39.13) and the on-screen
 //   report (S39.05) are the renderer's, named here so the machine is whole.
-import type { Outcome } from '@dwarfai/contracts'
+import { VALLE_BOUNDS, type Outcome } from '@dwarfai/contracts'
 import type { DisplayKey, Rect } from '../ports/windowFactory'
 
 /**
  * ADR-025 item 1 (pending design, DG "Valle over or above the taskbar"): `work-area` stops at the taskbar, Dock or
- * panel, which stays visible; `display` would cover it. 14 §3.9 names this constant; until design rules it is the work
- * area.
+ * panel, which stays visible; `display` would cover it. The constant is 14 §3.9's (`VALLE_BOUNDS`, contracts).
  */
 export type ValleBounds = 'work-area' | 'display'
-export const VALLE_BOUNDS: ValleBounds = 'work-area'
 
 /** 07 `ValleWindowState`. */
 export type ValleWindowState = 'not-created' | 'hidden' | 'opening' | 'shown' | 'revealing'

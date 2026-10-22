@@ -1,6 +1,7 @@
 /*
  * Valle's on-screen report (07 S39.04, S39.05; 14 A-44 `reportVisibleMines`; ADR-024 item 7; INV-119; ISSUE-299): the
- * mines whose zone shows `mine` and lies at least `VALLE_ON_SCREEN_RATIO` inside the Valle viewport, for UI main's
+ * mines whose zone shows `mine` and lies at least `VALLE_ON_SCREEN_RATIO` (14 §3.9, pending DG-25) inside the Valle
+ * viewport, for UI main's
  * `PresenceTracker`, the one place "on screen" is computed. The Work front's one zone is its one mine; a page over the
  * main zone hides every mine (§24 I-36); a hidden Valle reports none (S39.04). A mine scrolled out of view is not on
  * screen, so level 3 may fire for it.
@@ -12,14 +13,9 @@
  *
  * The bridge, the facts and the observer are injected (the house idiom over `vi.mock`); the timer is the window's own.
  */
-import type { MineId, ZoneContent } from '@dwarfai/contracts'
+import { VALLE_ON_SCREEN_RATIO, type MineId, type ZoneContent } from '@dwarfai/contracts'
 import { getCurrentScope, onScopeDispose, shallowRef, watch } from 'vue'
 
-/**
- * 14 §3.9 (pending design, DG-25): a mine zone counts as on screen when it intersects the Valle viewport by at least this
- * share (07 S39.05).
- */
-export const VALLE_ON_SCREEN_RATIO = 0.5
 /** S39.05's debounce, as Veta's (S20.18). */
 export const VALLE_PRESENCE_DEBOUNCE_MS = 100
 

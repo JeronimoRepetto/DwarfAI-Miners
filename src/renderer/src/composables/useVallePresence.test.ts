@@ -1,9 +1,8 @@
 // @vitest-environment jsdom
-import type { MineId, ZoneContent } from '@dwarfai/contracts'
+import { VALLE_ON_SCREEN_RATIO, type MineId, type ZoneContent } from '@dwarfai/contracts'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { effectScope, nextTick, reactive } from 'vue'
 import {
-  VALLE_ON_SCREEN_RATIO,
   VALLE_PRESENCE_DEBOUNCE_MS,
   useVallePresence,
   type ValleObserver

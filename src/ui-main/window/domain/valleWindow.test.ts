@@ -1,7 +1,7 @@
 // layer: L1
 import { describe, expect, it } from 'vitest'
+import { VALLE_BOUNDS } from '@dwarfai/contracts'
 import {
-  VALLE_BOUNDS,
   enterValle,
   nextValleWindow,
   refitValle,
