@@ -16,10 +16,12 @@ import { showValle, valleSettled } from '../support/valle.ts'
 import { declareMine } from '../support/vetaScene.ts'
 
 /**
- * L9 (ISSUE-304; US-VALLE-006.AC01, .AC02, .AC03, US-VALLE-009.AC01, .AC03; 07 machines 31, 32; UC-058): in the E2E
+ * L9 (ISSUE-304; US-VALLE-006.AC01, .AC02, .AC03, US-VALLE-009.AC01, .AC03; 07 machines 31, 32, S28.19; UC-058): in the E2E
  * build profile (Valle in its built-modes list, docs/e2e.md), the Control room's dashed "Add a mine here" slot adds a
  * mine not shown and a new project through the ordinary folder flow, a column's "⋯" swaps what its zone shows, and
- * "Close this column" takes it out with its toast; UI main stores each change at once (TC-304-01). The OS folder picker
+ * "Close this column" takes it out with its toast; UI main stores each change at once (TC-304-01). A zone shows the
+ * Panel's own Map and history, and the nav's Mines and Settings pages are the Panel's own, Settings without the rows
+ * that act on the Panel window. The OS folder picker
  * is answered in the main process, as the other Add a mine cases do, so no dialog ever shows.
  */
 
@@ -109,11 +111,37 @@ test.describe('Valle zones and the mosaic (ISSUE-304)', () => {
       .poll(() => readJson(path.join(prefs, ORDER_FILE)), { timeout: 10_000 })
       .toEqual({ order: [firstMine, thirdMine] })
 
+    // "⋯" › "Show here: the map": the Panel's own Map page is drawn in the zone, in its slot (S31.03).
+    await column.locator('[data-zone-more]').click()
+    await valle.getByRole('menuitem', { name: /^Show here: the map/ }).click()
+    await expect(column).toHaveAttribute('data-content', 'map')
+    await expect(column.locator('[data-zone-content="map"] .dm-mappage')).toBeVisible()
+    await expect(column.locator('[data-zone-suffix]')).toHaveText('· Map')
+
+    // The nav's Mines page over the main zone draws the Panel's Mines list (S28.19); Esc returns to the mosaic.
+    await valle.locator('[data-slot="mines"]').click()
+    await expect(valle.locator('[data-valle-page="mines"] .dm-mines')).toBeVisible()
+    await expect(valle.getByRole('button', { name: /^Open second-mine/ })).toBeVisible()
+    await valle.keyboard.press('Escape')
+    await expect(valle.locator('[data-valle-page]')).toHaveCount(0)
+
+    // The nav's Settings page: the Panel's own, without the rows that act on the Panel window (owner decision
+    // 2026-10-22).
+    await valle.locator('[data-slot="settings"]').click()
+    const settings = valle.locator('[data-valle-page="settings"] .dm-settings')
+    await expect(settings).toBeVisible()
+    await expect(settings).toContainText('Panel shortcut')
+    await expect(settings.locator('.position-right')).toHaveCount(0)
+    await expect(settings.locator('.pin')).toHaveCount(0)
+    await valle.keyboard.press('Escape')
+    await expect(valle.locator('[data-valle-page]')).toHaveCount(0)
+
     // "⋯" › "Show here: history": the zone swaps in its slot, the header notes it, the layout is stored (S31.05).
     await column.locator('[data-zone-more]').click()
     await valle.getByRole('menuitem', { name: /^Show here: history/ }).click()
     await expect(column).toHaveAttribute('data-content', 'history')
     await expect(column.locator('[data-zone-suffix]')).toHaveText('· History')
+    await expect(column.locator('[data-zone-content="history"] .dm-hist')).toBeVisible()
     await expect(valle.locator('[data-valle-column]').first()).toHaveAttribute(
       'data-valle-column',
       firstMine

@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
-import type { MoveToModeParams, UiPreferenceWrite, UiSessionPatch } from '@dwarfai/contracts'
+import type {
+  HostFrame,
+  MoveToModeParams,
+  UiPreferenceWrite,
+  UiSessionPatch
+} from '@dwarfai/contracts'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createFakeWindowApi } from '../../../../contracts/ipc/testing/fakeWindowApi'
@@ -14,9 +19,11 @@ import {
   KHAZAD,
   MORIA,
   dwarfWire,
+  frame,
   mineWire,
   snapshotPage
 } from '../../lib/veta/testing/vetaFixtures'
+import { DEFAULT_AUDIO_PREFERENCES, type ProjectSummary } from '../../types'
 import ValleApp from './ValleApp.vue'
 import { valleBridgeOf } from './valleEntry'
 
@@ -84,13 +91,26 @@ function manualClock() {
 
 function mountValle(
   stores: Partial<ValleStores>,
-  bodyObserver: ValleBodyObserver = () => () => {}
+  bodyObserver: ValleBodyObserver = () => () => {},
+  // AMENDED for ISSUE-304: members a case answers itself (the Settings page's reads and writes).
+  overrides: Partial<Window['api']> = {}
 ) {
   const writes: UiPreferenceWrite[] = []
   const moves: MoveToModeParams[] = []
   const patches: UiSessionPatch[] = []
   const clock = manualClock()
+  // AMENDED for ISSUE-304: the pages a zone or a nav page hosts (the Map, the Mines list, a mine's history) read the
+  // page's own `window.api` through their composables (ADR-033 item 2), as the Panel's do; the Host's frames reach
+  // every listener, and the projects and the history answer.
+  const hostListeners: ((frames: unknown) => void)[] = []
   const api = createFakeWindowApi({
+    onHostEvent: (listener) => {
+      hostListeners.push(listener as (frames: unknown) => void)
+      return () => {}
+    },
+    queryProjects: () => Promise.resolve({ answered: true, projects: PROJECTS }) as never,
+    getMineHistory: (mineId) =>
+      Promise.resolve({ ok: true, value: { mineId, speakers: [] } }) as never,
     getHostSnapshot: () =>
       Promise.resolve(
         snapshotPage(10, {
@@ -109,8 +129,10 @@ function mountValle(
     moveToMode: (params) => {
       moves.push(params as MoveToModeParams)
       return Promise.resolve({ ok: true }) as never
-    }
+    },
+    ...overrides
   })
+  Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
   root = mount(ValleApp, {
     attachTo: document.body,
     props: {
@@ -122,8 +144,20 @@ function mountValle(
       clock
     }
   })
-  return { root, writes, moves, patches, clock }
+  /** A-N02: one batch of Host frames, to every listener. */
+  const push = (frames: HostFrame[]): void => hostListeners.forEach((listener) => listener(frames))
+  return { root, writes, moves, patches, clock, push }
 }
+
+/** The projects the Mines page reads (A-34): both fixture mines, remembered. */
+const PROJECTS: ProjectSummary[] = [MORIA, EREBOR].map((id, at) => ({
+  id,
+  path: mineWire(id).path,
+  name: mineWire(id).name,
+  declared: true,
+  addedAt: at,
+  live: true
+}))
 
 const esc = (): void => {
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
@@ -487,6 +521,7 @@ describe('the Valle zones in the on-screen report (ISSUE-304)', () => {
         reports.push(request.mineIds.map(String))
       }
     })
+    Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
     root = mount(ValleApp, {
       attachTo: document.body,
       props: {
@@ -527,5 +562,164 @@ describe('the Valle zones in the on-screen report (ISSUE-304)', () => {
     await flushPromises()
     vi.advanceTimersByTime(150)
     expect(reports.at(-1)).toEqual([MORIA, EREBOR])
+  })
+})
+
+// APPENDED for ISSUE-304: a zone, or a nav page over the main zone, shows the Panel's own Map, Mines list or a mine's
+// history (US-VALLE-009.AC01; 07 S31.03…S31.06, S28.19), fed from the same composables as the Panel.
+describe('the pages a Valle zone or nav page shows (ISSUE-304)', () => {
+  /** Picks "Show here: …" in a column's zone menu. */
+  async function showHere(root: VueWrapper, mineId: string, item: string): Promise<void> {
+    await root.get(`[data-valle-column="${mineId}"] [data-zone-more]`).trigger('click')
+    const found = root
+      .findAll('[data-zone-menu] [role="menuitem"]')
+      .find((row) => row.text().startsWith(item))
+    if (found === undefined) throw new Error(`no menu row "${item}"`)
+    await found.trigger('click')
+    await flushPromises()
+  }
+
+  it('[US-VALLE-009.AC01, S31.03] a zone shown the map draws the Map page in its slot, the header noting it', async () => {
+    const { root } = mountValle({ preset: 'control', mosaicOrder: [MORIA, EREBOR] })
+    await flushPromises()
+    await showHere(root, EREBOR, 'Show here: the map')
+    const column = root.get(`[data-valle-column="${EREBOR}"]`)
+    expect(column.find('[data-zone-content="map"] .dm-mappage').exists()).toBe(true)
+    expect(column.get('[data-zone-suffix]').text()).toBe('· Map')
+    // The other column still shows its mine.
+    expect(root.get(`[data-valle-column="${MORIA}"]`).find('.dm-mappage').exists()).toBe(false)
+  })
+
+  it('[US-VALLE-009.AC01, S31.04] a zone shown the mines list draws the Mines page in its slot, with the remembered mines', async () => {
+    const { root } = mountValle({ preset: 'control', mosaicOrder: [MORIA, EREBOR] })
+    await flushPromises()
+    await showHere(root, MORIA, 'Show here: the mines list')
+    const list = root.find(
+      `[data-valle-column="${MORIA}"] [data-zone-content="mineslist"] .dm-mines`
+    )
+    expect(list.exists()).toBe(true)
+    expect(list.text()).toContain('erebor')
+  })
+
+  it("[US-VALLE-009.AC01, S31.05, S31.06] a zone shown history draws that mine's history, and its own close shows the mine again", async () => {
+    const { root } = mountValle({ preset: 'control', mosaicOrder: [MORIA, EREBOR] })
+    await flushPromises()
+    await showHere(root, MORIA, 'Show here: history')
+    const column = root.get(`[data-valle-column="${MORIA}"]`)
+    const history = column.find('[data-zone-content="history"] .dm-hist')
+    expect(history.exists()).toBe(true)
+    expect(history.attributes('aria-label')).toBe('Mine history, moria')
+    await history.get('button[title="Close history"]').trigger('click')
+    await flushPromises()
+    expect(column.attributes('data-content')).toBe('mine')
+    expect(column.find('.dm-hist').exists()).toBe(false)
+  })
+
+  it("[S28.19] the nav's Map and Mines pages draw the Panel's Map and Mines list over the main zone", async () => {
+    const { root } = mountValle({ preset: 'control', mosaicOrder: [MORIA] })
+    await flushPromises()
+    await root.get('[data-slot="map"]').trigger('click')
+    await flushPromises()
+    expect(root.find('[data-valle-page="map"] .dm-mappage').exists()).toBe(true)
+    // From a page only Esc is listed (S28.20): back to the preset, then the Mines page.
+    esc()
+    await flushPromises()
+    await root.get('[data-slot="mines"]').trigger('click')
+    await flushPromises()
+    expect(root.find('[data-valle-page="mines"] .dm-mines').exists()).toBe(true)
+  })
+
+  it('[S32.14, S28.20, US-VALLE-006.AC02] opening a mine from the nav Mines page returns to the Control room with its column added', async () => {
+    const { root, writes } = mountValle({ preset: 'control', mosaicOrder: [MORIA] })
+    await flushPromises()
+    await root.get('[data-slot="mines"]').trigger('click')
+    await flushPromises()
+    const card = root
+      .findAll('[data-valle-page="mines"] .dm-mines button[aria-label]')
+      .find((item) => item.attributes('aria-label')?.startsWith('Open erebor'))
+    expect(card).toBeDefined()
+    await card!.trigger('click')
+    await flushPromises()
+    expect(root.find('[data-valle-page]').exists()).toBe(false)
+    expect(
+      root.findAll('[data-valle-column]').map((c) => c.attributes('data-valle-column'))
+    ).toEqual([MORIA, EREBOR])
+    expect(writes.at(-1)).toEqual({ key: 'valleMosaicOrder', value: [MORIA, EREBOR] })
+  })
+
+  it('[US-OBS-002.AC07, S39.11] an announced arrival is said once in Valle, not twice', async () => {
+    const { root, push } = mountValle({ preset: 'control', mosaicOrder: [MORIA] })
+    await flushPromises()
+    push([frame(11, 'dwarf.arrived', { dwarf: dwarfWire(DAIN, EREBOR), announce: true })])
+    await flushPromises()
+    const said = root
+      .findAll('.dm-toasts > *')
+      .filter((toast) => toast.text().includes('started in'))
+    expect(said).toHaveLength(1)
+  })
+})
+
+// APPENDED for ISSUE-304 (owner decision 2026-10-22): Settings over Valle's main zone (S28.19) is the Panel's own page
+// without the rows that act on the Panel window, and its Sound rows only change the stored volumes: no playback and no
+// audio engine in the Valle window until US-VALLE-016.
+describe('the Settings page over Valle (ISSUE-304)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  /** Every sound the app makes goes through an `Audio` element (lib/audio/player.ts): counted, never played. */
+  function countAudio(): { made: number } {
+    const count = { made: 0 }
+    vi.stubGlobal(
+      'Audio',
+      class {
+        constructor() {
+          count.made += 1
+        }
+        play(): Promise<void> {
+          return Promise.resolve()
+        }
+        pause(): void {}
+      }
+    )
+    return count
+  }
+
+  it("[S28.19, US-SET-002.AC05, US-SET-002.AC08, US-SET-011.AC02] Valle's Settings page draws the app-wide rows without Position, Always on top or Hide panel", async () => {
+    const { root } = mountValle({ preset: 'control', mosaicOrder: [MORIA] })
+    await flushPromises()
+    await root.get('[data-slot="settings"]').trigger('click')
+    await flushPromises()
+    const page = root.find('[data-valle-page="settings"] .dm-settings')
+    expect(page.exists()).toBe(true)
+    expect(page.text()).toContain('Panel shortcut')
+    expect(page.find('.position-right').exists()).toBe(false)
+    expect(page.find('.pin').exists()).toBe(false)
+    await page.get('[role="tab"][data-s="About"]').trigger('click')
+    expect(page.find('.hide-panel').exists()).toBe(false)
+  })
+
+  // Owner decision 2026-10-22: no playback and no audio engine in the Valle window until US-VALLE-016.
+  it('[S28.19, US-SET-004.AC03] a volume changed in Valle’s Settings is written as a preference and starts no playback', async () => {
+    const audio = countAudio()
+    const written: unknown[] = []
+    const { root } = mountValle({ preset: 'control', mosaicOrder: [MORIA] }, undefined, {
+      getAudioPreferences: () => Promise.resolve({ ...DEFAULT_AUDIO_PREFERENCES }) as never,
+      setAudioPreferences: (preferences) => {
+        written.push(preferences)
+        return Promise.resolve(preferences) as never
+      }
+    })
+    await flushPromises()
+    await root.get('[data-slot="settings"]').trigger('click')
+    await flushPromises()
+    await root.get('[role="tab"][data-s="Sound"]').trigger('click')
+    const music = root.get('input[aria-label="Music volume"]')
+    await music.setValue('30')
+    await flushPromises()
+    expect(written).toHaveLength(1)
+    expect(written[0]).toMatchObject({ musicVolume: 0.3 })
+    // No engine in the Valle window: not one Audio element was made, so nothing could play.
+    expect(audio.made).toBe(0)
   })
 })

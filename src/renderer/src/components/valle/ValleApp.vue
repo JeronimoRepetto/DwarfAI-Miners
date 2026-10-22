@@ -31,6 +31,13 @@
  *   column"), the dashed slot after the last column adds a mine, or a new project through the ordinary folder flow. Every
  *   change is written at once (A-N21); Esc closes an open menu first (NFR-A11Y-02). A closed column's toast goes through
  *   the window's one toast queue (BR-23); nothing reaches the Host for it.
+ * - The pages a zone or a nav page shows (ISSUE-304; 07 S31.03…S31.05, S28.19): the Panel's own Map, Mines list and a
+ *   mine's history, fed by the composables the Panel's shell uses (`useMines`, `useMapPage`, `useMinesPage`,
+ *   `useMineHistoryPage`) and provided to them as `VALLE_PAGES`. The board's own arrival toast stays off here
+ *   (`announce: false`): Valle says an arrival once, through `useValleArrivalToast`. A mine opened from a hosted Map
+ *   or Mines list leaves a nav page (S28.20), then joins the mosaic and is scrolled to (S32.14) or swaps into the Work
+ *   front (S28.15). Settings is the Panel's own page without the Panel-window rows, its Sound rows changing the stored
+ *   settings alone (`ValleSettingsPage`; owner decision 2026-10-22).
  * - The read models (`createValleReadModel`): the Host's mines and dwarfs, held as last known while the Host is
  *   unreachable (`data-held`, S34.12), a re-snapshot applied without motion.
  * - On screen (`useVallePresence`, S39.04, S39.05): each zone registers itself through `track` (provided as
@@ -45,6 +52,9 @@ import type { DwarfId, MineId } from '@dwarfai/contracts'
 import { computed, nextTick, onMounted, onUnmounted, provide, shallowRef, watch } from 'vue'
 import { useValleArrivalToast } from '../../composables/useValleArrivalToast'
 import { useValleMosaic, type ValleZoneKey } from '../../composables/useValleMosaic'
+import { useMapPage } from '../../composables/useMapPage'
+import { useMines } from '../../composables/useMines'
+import { useMinesPage } from '../../composables/useMinesPage'
 import { useVallePins } from '../../composables/useVallePins'
 import { useVallePreset } from '../../composables/useVallePreset'
 import { useVallePresence, type VallePresenceDeps } from '../../composables/useVallePresence'
@@ -73,8 +83,11 @@ import ValleControlRoom from './ValleControlRoom.vue'
 import ValleNavPageView from './ValleNavPage.vue'
 import PinnedStack from './PinnedStack.vue'
 import ValleTopBar from './ValleTopBar.vue'
+import ValleHostedPage from './ValleHostedPage.vue'
+import ValleSettingsPage from './ValleSettingsPage.vue'
+import ValleZoneHistory from './ValleZoneHistory.vue'
 import ValleWorkFront from './ValleWorkFront.vue'
-import { VALLE_TRACK_ZONE } from './valleZones'
+import { VALLE_PAGES, VALLE_TRACK_ZONE } from './valleZones'
 import type { ValleBridge } from './valleEntry'
 
 const props = defineProps<{
@@ -89,6 +102,29 @@ const props = defineProps<{
 
 const { stores } = useValleStores(props.bridge, props.stores)
 const model = createValleReadModel(props.bridge)
+
+// The pages a zone or a nav page shows: the window's own board and the Panel's page parts (ISSUE-304).
+const board = useMines()
+const mapPage = useMapPage()
+const minesPage = useMinesPage({
+  open: (mineId) => openMine(mineId as MineId),
+  mines: () => board.state.mines
+})
+provide(VALLE_PAGES, { board: board.state, map: mapPage, mines: minesPage })
+watch(
+  () => board.state.mines,
+  () => mapPage.loaded()
+)
+
+/**
+ * A mine opened from a hosted Map or Mines list (a package gap resolved in development, ISSUE-304): a nav page over the
+ * main zone returns to the preset beneath first (S28.20); then the Control room adds its column and scrolls to it
+ * (S32.14), the Work front swaps it in (S28.15).
+ */
+function openMine(mineId: MineId): void {
+  if (view.value.page !== null) preset.send({ kind: 'escape', layerOpen: false })
+  mosaic.reveal(mineId)
+}
 
 /** The Valle root: the stage the dive's frozen copies are placed over, and where the input gate listens. */
 const rootEl = shallowRef<HTMLElement | null>(null)
@@ -277,6 +313,12 @@ const NAV_SLOTS = [...WORLD_SLOTS, ...SYSTEM_SLOTS].filter(
 )
 const chatWidth = computed(() => `${valleChatWidth(view.value)}px`)
 
+/** A nav slot: its page over the main zone (S28.19); the Mines page reads the remembered projects again, as the Panel's. */
+function nav(page: ValleNavPage): void {
+  if (page === 'mines') void minesPage.load()
+  preset.send({ kind: 'nav', page })
+}
+
 function onKey(event: KeyboardEvent): void {
   if (event.key !== 'Escape') return
   // Esc closes the topmost layer first (NFR-A11Y-02): a menu that already took it, an open zone or slot menu, the
@@ -316,6 +358,9 @@ onMounted(() => {
   void model.start().then((read) => {
     if (read) factsRead.value = true
   })
+  // The hosted pages' board and remembered projects (ISSUE-304).
+  void board.start({ announce: false }).then(() => mapPage.loaded())
+  void minesPage.load()
 })
 onUnmounted(() => {
   document.removeEventListener('visibilitychange', visibilityChanged)
@@ -326,6 +371,7 @@ onUnmounted(() => {
   stage.end()
   parts.dispose()
   model.stop()
+  board.stop()
 })
 </script>
 
@@ -355,10 +401,17 @@ onUnmounted(() => {
           :label="slot.label"
           :data-slot="slot.id"
           :current="slot.area === view.page"
-          @click="preset.send({ kind: 'nav', page: slot.area })"
+          @click="nav(slot.area)"
         />
       </nav>
-      <ValleNavPageView v-if="view.page !== null" :page="view.page" />
+      <ValleNavPageView v-if="view.page !== null" :page="view.page">
+        <ValleHostedPage
+          v-if="view.page === 'map' || view.page === 'mines'"
+          :page="view.page"
+          @open="(mineId) => openMine(mineId as MineId)"
+        />
+        <ValleSettingsPage v-else @close="preset.send({ kind: 'escape', layerOpen: false })" />
+      </ValleNavPageView>
       <ValleWorkFront
         v-else-if="view.preset === 'front'"
         :folded-list="view.layouts.front.foldedList"
@@ -372,7 +425,20 @@ onUnmounted(() => {
         @fold="preset.send({ kind: 'fold' })"
         @unfold="preset.send({ kind: 'unfold' })"
         @pick="(mineId) => preset.send({ kind: 'pick', mineId })"
-      />
+      >
+        <template #content="{ mineId, content }">
+          <ValleZoneHistory
+            v-if="content === 'history'"
+            :mine-id="mineId"
+            @close="mosaic.showMine({ preset: 'front' })"
+          />
+          <ValleHostedPage
+            v-else
+            page="map"
+            @open="(id) => mosaic.mapMarker({ preset: 'front' }, id as MineId)"
+          />
+        </template>
+      </ValleWorkFront>
       <ValleControlRoom
         v-else
         ref="room"
@@ -389,7 +455,21 @@ onUnmounted(() => {
         @slot-new="mosaic.newProject()"
         @dive="(mineId) => preset.send({ kind: 'dive', mineId })"
         @sprite-double-click="preset.send({ kind: 'sprite-double-click' })"
-      />
+      >
+        <template #content="{ mineId, content }">
+          <ValleZoneHistory
+            v-if="content === 'history'"
+            :mine-id="mineId"
+            @close="mosaic.showMine({ preset: 'control', mineId })"
+          />
+          <ValleHostedPage
+            v-else-if="content === 'map'"
+            page="map"
+            @open="(id) => mosaic.mapMarker({ preset: 'control', mineId }, id as MineId)"
+          />
+          <ValleHostedPage v-else page="mines" @open="(id) => openMine(id as MineId)" />
+        </template>
+      </ValleControlRoom>
       <span class="dm-valle__splitter" aria-hidden="true"></span>
       <aside class="dm-valle__chats" aria-label="Pinned chats">
         <PinnedStack

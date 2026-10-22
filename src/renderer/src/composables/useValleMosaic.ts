@@ -144,6 +144,11 @@ export interface ValleMosaicPart {
   historyRequest(mineId: MineId): void
   /** A map marker clicked in a zone showing the map (S31.10). */
   mapMarker(zone: ValleZoneKey, mineId: MineId): void
+  /**
+   * A hosted page's own close (the history's "Close history"): the zone shows its mine again, through its menu (S31.01,
+   * S31.06), as "Show here: the mine" does.
+   */
+  showMine(zone: ValleZoneKey): void
 }
 
 const sameZone = (a: ValleZoneKey | null, b: ValleZoneKey): boolean =>
@@ -416,6 +421,13 @@ export function useValleMosaic(deps: ValleMosaicDeps): ValleMosaicPart {
       else deps.scrollTo?.(mineId)
       if (order.value.includes(mineId)) sendZone(zone, { kind: 'history-request' })
     },
-    mapMarker: (zone, mineId) => void sendZone(zone, { kind: 'map-marker', mineId })
+    mapMarker: (zone, mineId) => void sendZone(zone, { kind: 'map-marker', mineId }),
+    showMine(zone) {
+      if (!sameZone(openZone.value, zone)) {
+        dismiss()
+        sendZone(zone, { kind: 'menu' })
+      }
+      sendZone(zone, { kind: 'show', content: 'mine' })
+    }
   }
 }

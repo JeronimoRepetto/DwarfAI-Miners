@@ -38,6 +38,9 @@ describe('the Valle entry of the renderer (ADR-025 item 1; 05 §2.3; ISSUE-299)'
           })
         ) as never
     })
+    // AMENDED for ISSUE-304: the pages a zone or a nav page hosts read the page's own `window.api` through their
+    // composables (ADR-033 item 2), as the Panel's do; the composition root has it installed by the preload.
+    Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
     const root = mount(ValleApp, {
       props: {
         bridge: valleBridgeOf(api),
