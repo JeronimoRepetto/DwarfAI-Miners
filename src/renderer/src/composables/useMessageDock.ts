@@ -490,14 +490,22 @@ export function useMessageDock(options: MessageDockOptions = {}) {
    * against the mine's folder. The dwarf travels with the click (#348): a relative path is
    * relative to ITS session's cwd.
    */
-  async function openPath(target: string): Promise<void> {
-    if (currentMine.value === undefined) return
+  async function openPath(target: string, dwarfId?: string): Promise<void> {
+    // A chat shown beside the open one names its own dwarf (TVC): its mine and its session's cwd.
+    const beside = dwarfId === undefined || dwarfId === openDwarfId.value ? null : dwarfId
+    const mine =
+      beside === null
+        ? currentMine.value
+        : (mines.mines.find((m) => m.dwarfs.some((dwarf) => dwarf.id === beside)) ??
+          currentMine.value)
+    const dwarf = beside === null ? selectedDwarf.value : lastShown.value[beside]
+    if (mine === undefined) return
     error.value = null
     try {
       const result = await window.api.openMinePath({
-        mineId: currentMine.value.id,
+        mineId: mine.id,
         target,
-        ...(selectedDwarf.value === undefined ? {} : { dwarfId: selectedDwarf.value.id })
+        ...(dwarf === undefined ? {} : { dwarfId: dwarf.id })
       })
       if (!result.opened) error.value = result.reason
     } catch {

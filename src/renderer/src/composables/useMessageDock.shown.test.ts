@@ -101,8 +101,9 @@ function departed(dwarfId: DwarfId): HostFrame {
 }
 
 /** The dock, mounted with `options`, the Host board read. */
-async function mountDock(options: MessageDockOptions): Promise<Dock> {
+async function mountDock(options: MessageDockOptions, overrides: Partial<Api> = {}): Promise<Dock> {
   const api = createFakeWindowApi({
+    ...overrides,
     getHostSnapshot: vi.fn(() => Promise.resolve(snapshot)) as unknown as Api['getHostSnapshot'],
     onHostEvent: vi.fn((follow: (frames: HostFrame[]) => void) => {
       listeners.add(follow)
@@ -211,6 +212,25 @@ describe('the dock with chats shown beside the open one (Valle, TVC)', () => {
     await flushPromises()
 
     expect(dock.sentEchoes[DAIN] ?? []).toEqual([])
+  })
+
+  it("[US-VALLE-008.AC01] a path pressed in the pane beside the open chat opens against that pane's own dwarf", async () => {
+    const openMinePath = vi.fn(() => Promise.resolve({ opened: true }))
+    const dock = await mountDock(
+      { shown: () => [DAIN] },
+      { openMinePath: openMinePath as unknown as Api['openMinePath'] }
+    )
+    dock.openMessage(ALPHA, BORIN)
+    await flushPromises()
+    await dock.openPath('notes.md', DAIN)
+    expect(openMinePath).toHaveBeenCalledWith({ mineId: ALPHA, target: 'notes.md', dwarfId: DAIN })
+    // The open chat's own, as before.
+    await dock.openPath('notes.md')
+    expect(openMinePath).toHaveBeenLastCalledWith({
+      mineId: ALPHA,
+      target: 'notes.md',
+      dwarfId: BORIN
+    })
   })
 
   it('[S18.02, US-VALLE-007.AC07] a shown chat whose dwarf left keeps its last known dwarf, ended', async () => {
