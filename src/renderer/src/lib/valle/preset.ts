@@ -86,6 +86,19 @@ export const VALLE_LIST_FOLDED_WIDTH = 44
  */
 export const VALLE_CHAT_WIDTH_UNSET = 0
 
+/** The Control room's chat width by default (07 machine 33; `DS/docs/screens/valle.md` Layout). */
+export const VALLE_CONTROL_CHAT_WIDTH = 440
+
+/**
+ * The chat zone's width for the preset shown: the width stored for it, or its default when none was set. The Work
+ * front's default is the splitter's width formula (07 machine 33, S33.08), which ISSUE-305 brings with the clamp; until
+ * then an unset Work front width shows the Control room's default.
+ */
+export function valleChatWidth(view: ValleView): number {
+  const stored = view.layouts[view.preset].chatWidth
+  return stored === VALLE_CHAT_WIDTH_UNSET ? VALLE_CONTROL_CHAT_WIDTH : stored
+}
+
 /** Each preset's default layout: no width set, no split, the list unfolded, every zone showing its mine. */
 export function defaultValleLayouts(): ValleLayouts {
   return {

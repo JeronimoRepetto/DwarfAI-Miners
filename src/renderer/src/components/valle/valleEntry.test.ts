@@ -27,7 +27,7 @@ describe('the Valle entry of the renderer (ADR-025 item 1; 05 §2.3; ISSUE-299)'
     expect(isValleRoot('?mode=VALLE')).toBe(false)
   })
 
-  it('[S39.03, ADR-024] the Valle root first paints with the stores it was read with, and draws no copy of its own', async () => {
+  it('[S39.03, ADR-024] the Valle root first paints with the stores it was read with, and draws only the copy of the parts built so far', async () => {
     const api = createFakeWindowApi({
       getHostSnapshot: () =>
         Promise.resolve(
@@ -54,7 +54,11 @@ describe('the Valle entry of the renderer (ADR-025 item 1; 05 §2.3; ISSUE-299)'
     expect(valle.attributes('data-preset')).toBe('front')
     await flushPromises()
     expect(valle.attributes('data-held')).toBe('false')
-    expect(root.text()).toBe('')
+    // AMENDED for ISSUE-300 (was: no text at all): the top bar and the Work front's mines list are built, each with
+    // the design's own copy (`organisms/valle-bar`, `organisms/mine-rows`); the zones' contents are not yet.
+    expect(root.text().replace(/\s+/g, ' ').trim()).toBe(
+      'Control roomWork frontMODE ▼ Panel ▼ Veta Mines ⇤'
+    )
     root.unmount()
   })
 })

@@ -5,7 +5,9 @@ import ValleTopBar from '../../components/valle/ValleTopBar.vue'
 import {
   defaultValleLayouts,
   stepValle,
+  valleChatWidth,
   valleListWidth,
+  VALLE_CONTROL_CHAT_WIDTH,
   VALLE_LIST_FOLDED_WIDTH,
   VALLE_LIST_WIDTH,
   type ValleEffect,
@@ -226,5 +228,16 @@ describe('machine 28 diagram conformance (presets)', () => {
         reason: 'not-listed'
       })
     }
+  })
+})
+
+describe('the chat zone width of each preset (ISSUE-300)', () => {
+  it("[US-VALLE-001.AC03, S28.02] the chat zone shows the preset's own stored width, or the default when none was set", () => {
+    const stored = view({ layouts: CHANGED })
+    expect(valleChatWidth(stored)).toBe(520)
+    expect(valleChatWidth({ ...stored, preset: 'front' })).toBe(610)
+    // Never set: the Control room's 440 px default (07 machine 33).
+    expect(valleChatWidth(view())).toBe(VALLE_CONTROL_CHAT_WIDTH)
+    expect(VALLE_CONTROL_CHAT_WIDTH).toBe(440)
   })
 })

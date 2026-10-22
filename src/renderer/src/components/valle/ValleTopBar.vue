@@ -5,9 +5,8 @@
  * which leave Valle for that mode carrying the chat in focus, as the Panel's lever does (US-SHELL-001). The needs-you
  * counter and the "⋯" preset menu are their issues' (slots). The top bar never moves (07 machine 28, VA3).
  */
-import type { MoveToModeParams } from '@dwarfai/contracts'
+import type { DwarfId, MineId, MoveToModeParams } from '@dwarfai/contracts'
 import { nextTick, ref, watch } from 'vue'
-import { leverMove } from '../../lib/shell/builtDestinations'
 import type { VallePreset } from '../../lib/valle/preset'
 
 const props = defineProps<{
@@ -46,9 +45,18 @@ watch(
   }
 )
 
-/** A side of the lever pressed: that mode, carrying the chat in focus as the Panel's lever does (S28.21). */
+/**
+ * A side of the lever pressed: that mode, carrying the chat in focus as the Panel's lever does (S28.21; S10.04,
+ * `leverMove`): a chat whose mine is not known moves with the mode alone.
+ */
 function leave(mode: 'panel' | 'veta'): void {
-  emit('leave', leverMove(mode, props.chat ?? { mineId: '', dwarfId: null }))
+  const chat = props.chat
+  emit(
+    'leave',
+    chat === null || chat.mineId === ''
+      ? { mode }
+      : { mode, mineId: chat.mineId as MineId, dwarfId: chat.dwarfId as DwarfId }
+  )
 }
 </script>
 
