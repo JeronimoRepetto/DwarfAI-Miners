@@ -5,6 +5,7 @@ import { runWindowFactoryContract } from '../ports/windowFactory.contract'
 import {
   ElectronWindows,
   buildPanelWindowOptions,
+  buildValleWindowOptions,
   buildVetaWindowOptions,
   type CrashMessageDialog,
   type ElectronWindowsDeps,
@@ -220,10 +221,27 @@ describe('ElectronWindows (05 §3.14; ADR-019 items 1, 8)', () => {
 
   // AMENDED for ISSUE-285 (was: Veta and Valle both refused): the Veta window is built now (ADR-025 item 1), so only
   // Valle is refused here; the Veta window's own cases follow, and VetaWindowController.test.ts covers its use.
-  it('[ADR-019] Veta and Valle windows are not built yet and are refused, never improvised', () => {
-    const windows = new ElectronWindows(deps())
-    expect(() => windows.valle('display-a')).toThrow(/not built/)
+  // AMENDED for ISSUE-299 (was: "Veta and Valle windows are not built yet and are refused, never improvised", Valle
+  // refused): the Valle window is built now (ADR-025 item 1; 07 machine 39), only where the build lists Valle, so this
+  // case checks it is one secure-factory window in Valle mode; ValleWindowController.test.ts covers its use.
+  it('[ADR-025, ADR-019] the Valle window is one secure-factory window that loads the app entry in Valle mode', () => {
+    const registry = createModeWindowRegistry()
+    const windows = new ElectronWindows(deps({ registry }))
+    expect(windows.valleWebContentsId(), 'no Valle window, no id').toBeNull()
     expect(FakeBrowserWindow.built).toEqual([])
+    const valle = windows.valle('display-a')
+    expect(windows.valle('display-b')).toBe(valle)
+    const [window] = FakeBrowserWindow.built
+    expect(FakeBrowserWindow.built).toHaveLength(1)
+    expect(window?.options).toEqual(
+      buildValleWindowOptions({
+        preloadPath: '/app/out/preload/index.cjs',
+        iconPath: '/app/resources/app-icon.png'
+      })
+    )
+    expect(registry.has(window!.webContents.id)).toBe(true)
+    expect(windows.valleWebContentsId()).toBe(window!.webContents.id)
+    expect(window?.calls).toEqual([`loadURL ${APP_ENTRY}/?mode=valle`])
   })
 
   it('[ADR-025, ADR-019] the Veta window is one secure-factory window that loads the app entry in Veta mode', () => {

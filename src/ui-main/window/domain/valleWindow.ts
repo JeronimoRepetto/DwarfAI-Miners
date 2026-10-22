@@ -120,9 +120,13 @@ export function enterValle(
 ): Outcome<ValleWindowStep & { place: VallePlace }, 'not-listed'> {
   const id = node.state === 'not-created' ? 'S39.01' : node.state === 'hidden' ? 'S39.02' : null
   if (id === null) return NOT_LISTED
+  return { ok: true, value: { id, to: { state: 'opening' }, place: placeValle(entry, displays) } }
+}
+
+/** Where an entry places Valle: from `entry` and the displays alone, never from a placement of its own (OQ-20). */
+export function placeValle(entry: ValleEntry, displays: readonly ValleDisplay[]): VallePlace {
   const source = entry.from === 'window' ? entry.bounds : entry.panelPlace
-  const display = source === null ? primaryOf(displays) : displayMatching(source, displays)
-  return { ok: true, value: { id, to: { state: 'opening' }, place: placeOn(display) } }
+  return placeOn(source === null ? primaryOf(displays) : displayMatching(source, displays))
 }
 
 /** The step of machine 39 from `from` on `event`, or `not-listed` when 07 lists none. */
