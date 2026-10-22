@@ -21,7 +21,7 @@ import {
 /** The seam A members the row uses (14 §2.2 A-N20, A-N21, A-N12). */
 export interface ModeAtLaunchBridge {
   getUiPreferences(request: { keys: UiPreferenceKey[] }): Promise<Partial<UiPreferencesMap>>
-  setUiPreference(write: UiPreferenceWrite): Promise<unknown>
+  setUiPreference(write: Extract<UiPreferenceWrite, { key: 'modeAtLaunch' }>): Promise<unknown>
   onUiPreferencesReset(h: (e: { epoch: number }) => void): () => void
 }
 
