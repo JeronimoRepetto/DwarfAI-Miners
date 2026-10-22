@@ -9,8 +9,12 @@
  * - The preset (`useVallePreset`, 07 machine 28; ISSUE-300): the top bar's preset tabs and arrow keys, Esc (a nav page
  *   first, then the Work front's climb out), the Work front's folded list, a nav page over the main zone, a resize, and
  *   "▼ Panel" / "▼ Veta" carrying the chat in focus. Every change is written at once (A-N21). The top bar, the nav and
- *   the chat zone never move. The zones' contents, the pins' own chats and the splitter arrive with their
- *   issues (ISSUE-301…ISSUE-310; hidden until built, 21 §1 item 8).
+ *   the chat zone never move. The zones' contents and the pins' own chats arrive with their issues (ISSUE-301…ISSUE-310;
+ *   hidden until built, 21 §1 item 8).
+ * - The splitter (`useValleSplitter`, 07 machine 33; ISSUE-305): the chat zone's width per preset, dragged, keyed or
+ *   reset, each commit written at once with both layouts (A-N21). Its range reads the body's width from the split's one
+ *   observer, the Work front's list, the split shown and the mine's roster, so it re-clamps as they change, never on a
+ *   timer; a reset jumps the width and FLIPs the chat zone and the splitter into place.
  * - The pinned chats (`useVallePins`, 07 machines 18, 29; ISSUE-302): restored once the Host's facts are read (S29.02),
  *   or the start-up pins on a first visit (S29.01); drawn as the Control room's stack (`PinnedStack`) or the Work
  *   front's tabs (`ChatDeck`) in the one chat zone, which never moves. Every change is written at once (A-N21 `pins`,
@@ -63,6 +67,7 @@ import {
   useValleSplit,
   type ValleBodyObserver
 } from '../../composables/useValleSplit'
+import { useValleSplitter } from '../../composables/useValleSplitter'
 import { useValleStores, type ValleStores } from '../../composables/useValleStores'
 import { useToasts } from '../../composables/useToasts'
 import { SYSTEM_SLOTS, WORLD_SLOTS, type PanelNavSlot } from '../../lib/shell/panelNav'
@@ -72,7 +77,7 @@ import {
   createValleStage,
   type ValleClock
 } from '../../lib/valle/flip'
-import { valleChatWidth, type ValleFacts, type ValleNavPage } from '../../lib/valle/preset'
+import type { ValleFacts, ValleNavPage } from '../../lib/valle/preset'
 import { createVetaMotion } from '../../lib/veta/vetaMotion'
 import { createValleReadModel } from '../../lib/valle/valleReadModel'
 import WorktreeDialog from '../browse/WorktreeDialog.vue'
@@ -85,6 +90,7 @@ import PinnedStack from './PinnedStack.vue'
 import ValleTopBar from './ValleTopBar.vue'
 import ValleHostedPage from './ValleHostedPage.vue'
 import ValleSettingsPage from './ValleSettingsPage.vue'
+import ValleSplitter from './ValleSplitter.vue'
 import ValleZoneHistory from './ValleZoneHistory.vue'
 import ValleWorkFront from './ValleWorkFront.vue'
 import { VALLE_PAGES, VALLE_TRACK_ZONE } from './valleZones'
@@ -311,7 +317,35 @@ const NAV_SLOTS = [...WORLD_SLOTS, ...SYSTEM_SLOTS].filter(
   (slot): slot is PanelNavSlot & { area: ValleNavPage } =>
     slot.area === 'map' || slot.area === 'mines' || slot.area === 'settings'
 )
-const chatWidth = computed(() => `${valleChatWidth(view.value)}px`)
+/** The splitter and the chat zone it sizes (07 machine 33; ISSUE-305). */
+const chatsEl = shallowRef<HTMLElement | null>(null)
+const splitterEl = shallowRef<{ $el: Element } | null>(null)
+const splitter = useValleSplitter({
+  view: () => view.value,
+  writeLayouts: (layouts) => preset.writeLayouts(layouts),
+  bodyWidth: split.bodyWidth,
+  foldedList: () => view.value.layouts.front.foldedList,
+  portraits: () => model.dwarfs.value.filter((dwarf) => dwarf.mineId === frontMine.value).length,
+  split: () => split.set.value.state === 'on',
+  stores,
+  motion: {
+    clock: props.clock ?? BROWSER_CLOCK,
+    reduced,
+    // The zones' content the reset moves: the chat zone and the splitter beside it (`DS` `resetChatWidth`).
+    targets: () =>
+      [chatsEl.value, splitterEl.value?.$el ?? null].filter(
+        (element): element is Element => element instanceof Element
+      ),
+    box: (element) => element.getBoundingClientRect(),
+    animate: (element, frames, timing) => {
+      void parts.run(element, frames, timing)
+    },
+    afterRender: (run) => {
+      void nextTick(run)
+    }
+  }
+})
+const chatWidth = computed(() => `${splitter.width.value}px`)
 
 /** A nav slot: its page over the main zone (S28.19); the Mines page reads the remembered projects again, as the Panel's. */
 function nav(page: ValleNavPage): void {
@@ -470,8 +504,20 @@ onUnmounted(() => {
           <ValleHostedPage v-else page="mines" @open="(id) => openMine(id as MineId)" />
         </template>
       </ValleControlRoom>
-      <span class="dm-valle__splitter" aria-hidden="true"></span>
-      <aside class="dm-valle__chats" aria-label="Pinned chats">
+      <ValleSplitter
+        ref="splitterEl"
+        :width="splitter.width.value"
+        :min="splitter.range.value.min"
+        :max="splitter.range.value.max"
+        :dragging="splitter.set.value.state === 'dragging'"
+        @press="(x) => splitter.send({ kind: 'press', x })"
+        @move="(x) => splitter.send({ kind: 'move', x })"
+        @release="splitter.send({ kind: 'release' })"
+        @cancel="splitter.send({ kind: 'cancel' })"
+        @key="(key) => splitter.send({ kind: 'key', key })"
+        @reset="splitter.send({ kind: 'double-click' })"
+      />
+      <aside ref="chatsEl" class="dm-valle__chats" aria-label="Pinned chats">
         <PinnedStack
           v-if="view.preset === 'control'"
           :pins="pins.views.value"
