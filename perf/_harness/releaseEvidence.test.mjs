@@ -180,4 +180,29 @@ describe('perf release evidence (17 §1.11, ADR-034 item 4)', () => {
     expect(err.join('\n')).toContain('macos: veta-no-sessions renderer')
     expect(err.join('\n')).toContain('linux: veta-all-asleep app')
   })
+
+  it('[S-034-1, NFR-PERF-10] a Control-room scaling row is evidence for NFR-PERF-10, its frame-time summary no CPU row', () => {
+    const scene = 'control-room-16-degradation-on-sustained-scroll'
+    const record = {
+      os: 'windows',
+      date: '2026-10-22',
+      commit: COMMIT,
+      case: 'perf/valleScaling.perf.ts',
+      samples: [
+        { scene, process: 'renderer', api: 'app.getAppMetrics().cpu.percentCPUUsage', cpu: 0.8 },
+        { scene, process: 'renderer', metric: 'frame-time', frameMs: { p50: 16.7 } }
+      ]
+    }
+
+    const { rows } = releaseEvidence([record])
+
+    expect(rows).toEqual([
+      expect.objectContaining({
+        scene,
+        process: 'renderer',
+        samples: 1,
+        requirements: ['NFR-PERF-10']
+      })
+    ])
+  })
 })
