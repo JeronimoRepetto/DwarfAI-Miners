@@ -15,6 +15,9 @@
  *   ends, so nothing the Host said is lost to the `reordering` state.
  * - Reset metrics: the stores read again clear the set (S29.20); the next open is S29.01.
  * - A gone pin keeps the name this window last knew for its dwarf.
+ * - A dive or a Work front swap (S29.12; ISSUE-301): `diveInput` binds the real tab order (`diveOrder.ts`) over the
+ *   Host's facts now, the mine's waiting dwarfs and its crew in the Host's order, and the set's talked-to marks.
+ *   `focused` tells how the chat in focus was focused, for the dwarf a dive is for (S28.03).
  *
  * The bridge is injected (the house idiom over `vi.mock`); the Valle root hands it the page's own bridge.
  */
@@ -33,6 +36,7 @@ import {
   restoredPins,
   startUpPins,
   stepPins,
+  type DiveOrder,
   type FocusRequest,
   type PinEffect,
   type PinInput,
@@ -40,6 +44,7 @@ import {
   type PinView
 } from '../lib/valle/pins'
 import { restorePins } from '../lib/valle/restore'
+import { diveOrder, type DiveFocus, type DiveFocusOrigin } from '../lib/valle/diveOrder'
 import type { ValleFact } from '../lib/valle/valleReadModel'
 import type { ValleStores } from './useValleStores'
 
@@ -85,6 +90,20 @@ export interface VallePinsPart {
   focusRequest: Readonly<Ref<FocusRequest | null>>
   /** Steps machine 29; answers whether the input was taken. */
   send(input: PinInput): boolean
+  /** The chat in focus and how it was focused, which the dive reads for the dwarf it is for (07 S28.03). */
+  focused: Readonly<Ref<DiveFocus | null>>
+  /** A dive or a Work front swap into `mineId` (07 S29.12), the real tab order bound. */
+  diveInput(mineId: MineId, forDwarfId: DwarfId | null): PinInput
+}
+
+/**
+ * How the chat in focus came to be focused after `input` (07 S28.03): a needs-you jump or entry (S29.19) from the queue,
+ * a chat carried in from the Panel or Veta (S29.23) handed over; anything else that moves or touches the focus here.
+ */
+function originOf(input: PinInput, moved: boolean, was: DiveFocusOrigin): DiveFocusOrigin {
+  if (input.kind === 'jump') return 'queue'
+  if (input.kind === 'carried') return 'handover'
+  return moved || input.kind === 'select' || input.kind === 'click' ? 'other' : was
 }
 
 /** The Host's facts the set hears; refused during a drag, they wait for its end. */
@@ -98,6 +117,8 @@ export function useVallePins(deps: VallePinsDeps): VallePinsPart {
   let opened = false
   let seq = 0
   let waiting: PinInput[] = []
+  /** How the chat in focus was focused (07 S28.03): the session's carried chat counts as handed over (S29.23). */
+  const origin = shallowRef<DiveFocusOrigin>('other')
 
   // A write UI main refuses or fails leaves the set in memory: the next change writes it whole (S29.21).
   const kept = (): void => {}
@@ -129,6 +150,7 @@ export function useVallePins(deps: VallePinsDeps): VallePinsPart {
       return false
     }
     set.value = step.set
+    origin.value = originOf(input, from.focus !== step.set.focus, origin.value)
     step.effects.forEach(carry)
     if (from.dragging !== null && step.set.dragging === null && waiting.length > 0) {
       const heard = waiting
@@ -154,6 +176,8 @@ export function useVallePins(deps: VallePinsDeps): VallePinsPart {
     })
     if (restored !== null) {
       set.value = restoredPins(restored, stores.session.valle)
+      const carried = stores.session.valle.diveForDwarfId ?? null
+      if (carried !== null && set.value.focus === carried) origin.value = 'handover'
       return
     }
     const last = deps.talkedLast()
@@ -232,5 +256,26 @@ export function useVallePins(deps: VallePinsDeps): VallePinsPart {
     })
   )
 
-  return { set, views, focusRequest, send }
+  const focused = computed((): DiveFocus | null => {
+    const pin = set.value.pins.find((p) => p.key === set.value.focus)
+    if (pin?.kind !== 'chat') return null
+    return { dwarfId: pin.dwarfId, mineId: pin.mineId, from: origin.value }
+  })
+
+  /** S29.12 over the Host's facts now: the mine's waiting dwarfs, its crew in the Host's order, its talked-to mark. */
+  function diveInput(mineId: MineId, forDwarfId: DwarfId | null): PinInput {
+    const order: DiveOrder = (input) => {
+      const crew = model.dwarfs.value.filter((dwarf) => dwarf.mineId === mineId)
+      return diveOrder(input, {
+        needing: crew
+          .filter((dwarf) => dwarf.needsYou)
+          .map((dwarf) => ({ dwarfId: dwarf.id, askedAt: dwarf.askedAt ?? dwarf.arrivedAt })),
+        talkedTo: set.value.talkedTo[mineId] ?? null,
+        crew: crew.map((dwarf) => dwarf.id)
+      })
+    }
+    return { kind: 'dive', mineId, forDwarfId, order }
+  }
+
+  return { set, views, focusRequest, send, focused, diveInput }
 }

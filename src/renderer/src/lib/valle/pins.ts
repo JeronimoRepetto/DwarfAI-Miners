@@ -16,7 +16,7 @@
  *   made good by the next (S29.21); the focus and the Add pins are the session's (A-N18), never persisted (S29.22).
  * - The first open with no stored set pins the waiting dwarfs, oldest question first, then the chat talked to last
  *   (S29.01); a stored set is restored (S29.02, `restore.ts`).
- * - The dive's tab order (S29.12) is injected as a function, never imported (later: ISSUE-301).
+ * - The dive's tab order (S29.12) is injected as a function, never imported: `useVallePins` binds `diveOrder.ts`.
  * - Only the transitions 07 machine 29 lists are taken; anything else is refused and changes nothing (ADR-024).
  */
 import type { DwarfId, DwarfStatus, MineId, UiSessionSnapshot } from '@dwarfai/contracts'
@@ -70,7 +70,7 @@ export interface DiveOrderInput {
   readonly forDwarfId: DwarfId | null
 }
 
-/** S29.12's tab order, injected by the dive (later: ISSUE-301): the whole new order, the mine's dwarfs pinned. */
+/** S29.12's tab order, injected by the dive (`diveOrder.ts`, ISSUE-301): the whole new order, the mine's dwarfs pinned. */
 export type DiveOrder = (input: DiveOrderInput) => readonly PinRef[]
 
 export type PinInput =

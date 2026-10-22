@@ -225,3 +225,46 @@ describe('the Valle pins wired to UI main (ISSUE-302)', () => {
     t.scope.stop()
   })
 })
+
+// APPENDED for ISSUE-301: the dive's real tab order bound to the pin set (07 S29.12; review R8B-16), and how the chat in
+// focus was focused, which the dive reads for the dwarf it is for (07 S28.03).
+describe('the dive tab order bound to the Valle pins (ISSUE-301)', () => {
+  it("[S29.12, US-VALLE-002.AC04, US-VALLE-002.AC09] a dive input carries the real tab order: the Host's waiting dwarfs and crew, and the set's talked-to marks", async () => {
+    const t = setUp(
+      { pins: null },
+      [
+        dwarfWire(BORIN, MORIA),
+        dwarfWire(DAIN, EREBOR, { status: 'asking', needsYou: true, askedAt: 5 }),
+        dwarfWire(NALI, MORIA),
+        dwarfWire(FLOI, MORIA, { status: 'asking', needsYou: true, askedAt: 9 })
+      ],
+      { talkedLast: NALI }
+    )
+    t.factsRead.value = true
+    await nextTick()
+    // S29.01: DAIN and FLOI waiting, then NALI talked to last, who counts as Moria's last talked to.
+    expect(keys(t.pins)).toEqual([DAIN, FLOI, NALI])
+    expect(t.pins.send(t.pins.diveInput(MORIA, null))).toBe(true)
+    // Moria's waiting FLOI, then NALI talked to, then the rest of the crew in the Host's order, then Erebor's pin.
+    expect(keys(t.pins)).toEqual([FLOI, NALI, BORIN, DAIN])
+    expect(t.pins.set.value.focus).toBe(FLOI)
+    // A dive for BORIN puts him first.
+    expect(t.pins.send(t.pins.diveInput(MORIA, BORIN))).toBe(true)
+    expect(keys(t.pins)).toEqual([BORIN, FLOI, NALI, DAIN])
+    t.scope.stop()
+  })
+
+  it('[S28.03, S29.19, S29.23] the chat in focus reports how it was focused, for the dwarf a dive is for', async () => {
+    const t = setUp({ pins: [] }, [dwarfWire(BORIN, MORIA), dwarfWire(DAIN, EREBOR)])
+    t.factsRead.value = true
+    await nextTick()
+    expect(t.pins.focused.value).toBeNull()
+    t.pins.send({ kind: 'jump', dwarfId: DAIN, mineId: EREBOR })
+    expect(t.pins.focused.value).toEqual({ dwarfId: DAIN, mineId: EREBOR, from: 'queue' })
+    t.pins.send({ kind: 'carried', dwarfId: BORIN, mineId: MORIA, present: true })
+    expect(t.pins.focused.value).toEqual({ dwarfId: BORIN, mineId: MORIA, from: 'handover' })
+    t.pins.send({ kind: 'select', key: DAIN })
+    expect(t.pins.focused.value).toEqual({ dwarfId: DAIN, mineId: EREBOR, from: 'other' })
+    t.scope.stop()
+  })
+})
