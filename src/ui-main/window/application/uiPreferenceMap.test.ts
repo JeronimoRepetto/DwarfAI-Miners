@@ -126,7 +126,8 @@ describe('the Valle keys of the UI preference map (ISSUE-299; 07 S39.03, S39.13)
     })
     // Each becomes writable in the issue that first writes it. AMENDED for ISSUE-300 (was: `vallePreset` and
     // `valleLayout` refused `not-built` too): ISSUE-300 writes those two, asserted in its own case below.
-    expect(map.set({ key: 'pins', value: null })).toEqual({ ok: false, error: 'not-built' })
+    // AMENDED for ISSUE-302 (was: `pins` refused here): ISSUE-302 writes the pins; a key still unwritten stands in.
+    expect(map.set({ key: 'mutedMineIds', value: [] })).toEqual({ ok: false, error: 'not-built' })
   })
 
   it('[S39.13, FM-053] an unreadable store falls back to its defaults and logs uiprefs.corrupt', () => {
@@ -160,7 +161,7 @@ describe('the Valle preset and layouts written through A-N21 (ISSUE-300; ADR-024
     front: { chatWidth: 0, split: false, foldedList: true, zone: { content: 'mine' } }
   }
 
-  it('[S28.16, S28.17, S28.26, ADR-024] vallePreset and valleLayout are written into UI main’s store and answered as stored; the other four stay refused', () => {
+  it('[S28.16, S28.17, S28.26, ADR-024] vallePreset and valleLayout are written into UI main’s store and answered as stored; the other Valle keys stay refused', () => {
     const store = new InMemoryUiPreferenceStore()
     const map = createUiPreferenceMap({ valle: store })
     expect(map.set({ key: 'vallePreset', value: 'front' })).toEqual({
@@ -178,8 +179,8 @@ describe('the Valle preset and layouts written through A-N21 (ISSUE-300; ADR-024
       vallePreset: 'front',
       valleLayout: LAYOUT
     })
-    // Each of the other four becomes writable in the issue that first writes it (ISSUE-301…ISSUE-310).
-    expect(map.set({ key: 'pins', value: null })).toEqual({ ok: false, error: 'not-built' })
+    // Each of the others becomes writable in the issue that first writes it (ISSUE-301…ISSUE-310). AMENDED for
+    // ISSUE-302 (was: `pins` refused here too): the pins are written from ISSUE-302 on, asserted in its own case.
     expect(map.set({ key: 'valleMosaicOrder', value: [MINE] })).toEqual({
       ok: false,
       error: 'not-built'
@@ -189,6 +190,35 @@ describe('the Valle preset and layouts written through A-N21 (ISSUE-300; ADR-024
       error: 'not-built'
     })
     expect(map.set({ key: 'mutedMineIds', value: [MINE] })).toEqual({
+      ok: false,
+      error: 'not-built'
+    })
+  })
+})
+
+// APPENDED for ISSUE-302: the Valle window writes the pins on every change (07 machine 29; TC-302-01; S29.21).
+describe('the Valle pins written through A-N21 (ISSUE-302; ADR-024 items 1, 4, 9)', () => {
+  const MINE = '018f3a2e-7c4b-7d1e-9a5b-2f6c8d0e1a02' as MineId
+  const DWARF = '018f3a2e-7c4b-7d1e-9a5b-2f6c8d0e1a01' as DwarfId
+  const PINS: UiPreferencesMap['pins'] = [{ dwarfId: DWARF, mineId: MINE, order: 0 }]
+
+  it('[S29.08, S29.10, S29.21, TC-302-01] pins are written into UI main’s store and answered as stored; a failed write keeps the previous value', () => {
+    const store = new InMemoryUiPreferenceStore()
+    const map = createUiPreferenceMap({ valle: store })
+    expect(map.set({ key: 'pins', value: PINS })).toEqual({
+      ok: true,
+      value: { key: 'pins', value: PINS }
+    })
+    expect(createUiPreferenceMap({ valle: store }).get(['pins'])).toEqual({ pins: PINS })
+    // S29.21: the store fails the write and logs `uiprefs.write-failed` by name; the previous pins stay stored and
+    // the window keeps its set in memory until its next change writes it again.
+    store.storage.interruptNextSave = true
+    expect(() => map.set({ key: 'pins', value: [] })).toThrow()
+    expect(store.load('pins')).toEqual(PINS)
+    expect(store.storage.logged).toEqual([
+      { level: 'warn', event: 'uiprefs.write-failed', subsystem: 'window', msg: 'pins' }
+    ])
+    expect(map.set({ key: 'valleMosaicOrder', value: [MINE] })).toEqual({
       ok: false,
       error: 'not-built'
     })

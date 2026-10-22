@@ -35,8 +35,8 @@ export interface UiPreferenceMapDeps {
   /**
    * The Valle stores (14 §3.9; 07 S39.03, S39.13; ISSUE-299), answered for the Valle window's first paint. A store the
    * window cannot use loads its defaults and logs `uiprefs.corrupt` (FM-053), and an unwritten layout is not answered.
-   * The Valle window writes the preset in use and each preset's layout on every change (07 machine 28; ISSUE-300),
-   * UI main storing them (ADR-024 item 9); each other key becomes writable in the issue that first writes it
+   * The Valle window writes the preset in use and each preset's layout on every change (07 machine 28; ISSUE-300) and
+   * the chat pins (07 machine 29; ISSUE-302), UI main storing them (ADR-024 item 9); each other key becomes writable in the issue that first writes it
    * (ISSUE-301…ISSUE-310).
    */
   valle?: Pick<UiPreferenceStore, 'load' | 'save'>
@@ -60,8 +60,8 @@ const VALLE_KEYS = [
   'mutedMineIds'
 ] as const satisfies readonly UiPreferenceKey[]
 
-/** The Valle keys the Valle window writes (ISSUE-300; 07 S28.06, S28.11, S28.16, S28.17). */
-const VALLE_WRITTEN: readonly UiPreferenceKey[] = ['vallePreset', 'valleLayout']
+/** The Valle keys the Valle window writes (ISSUE-300: 07 S28.06, S28.11, S28.16, S28.17; ISSUE-302: 07 machine 29). */
+const VALLE_WRITTEN: readonly UiPreferenceKey[] = ['vallePreset', 'valleLayout', 'pins']
 
 /**
  * How a built key is read (`undefined`: nothing to answer) and, unless UI main alone writes it, written. A key read here
