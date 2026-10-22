@@ -202,7 +202,8 @@ describe('the Valle pins written through A-N21 (ISSUE-302; ADR-024 items 1, 4, 9
   const DWARF = '018f3a2e-7c4b-7d1e-9a5b-2f6c8d0e1a01' as DwarfId
   const PINS: UiPreferencesMap['pins'] = [{ dwarfId: DWARF, mineId: MINE, order: 0 }]
 
-  it('[S29.08, S29.10, S29.21, TC-302-01] pins are written into UI main’s store and answered as stored; a failed write keeps the previous value', () => {
+  // TC-302-01: `pins` is persisted at once.
+  it('[S29.08, S29.10, S29.21] pins are written into UI main’s store and answered as stored; a failed write keeps the previous value', () => {
     const store = new InMemoryUiPreferenceStore()
     const map = createUiPreferenceMap({ valle: store })
     expect(map.set({ key: 'pins', value: PINS })).toEqual({

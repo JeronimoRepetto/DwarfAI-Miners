@@ -140,7 +140,8 @@ describe('the Valle root and its presets (ISSUE-300)', () => {
 
 // APPENDED for ISSUE-302: the pinned chats in the Valle root (07 machine 29; TC-302-01).
 describe('the pinned chats in the Valle root (ISSUE-302)', () => {
-  it('[TC-302-01, S29.02, S29.10] the restored pins are the Control room’s stack and the Work front’s tabs, and an unpin is written through A-N21 at once', async () => {
+  // TC-302-01: every pin action is persisted at once, chat pins only.
+  it('[S29.02, S29.10] the restored pins are the Control room’s stack and the Work front’s tabs, and an unpin is written through A-N21 at once', async () => {
     const { root, writes } = mountValle({
       preset: 'control',
       pins: [

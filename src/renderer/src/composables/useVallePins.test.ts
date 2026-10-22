@@ -84,7 +84,8 @@ const keys = (pins: ReturnType<typeof setUp>['pins']): string[] =>
   pins.set.value.pins.map((pin) => pin.key)
 
 describe('the Valle pins wired to UI main (ISSUE-302)', () => {
-  it('[S29.01, TC-302-02] a first visit with no stored pins pins the waiting dwarfs, oldest first, then the chat talked to last, the first waiting one focused', async () => {
+  // TC-302-02: a first visit with no stored pins.
+  it('[S29.01] a first visit with no stored pins pins the waiting dwarfs, oldest first, then the chat talked to last, the first waiting one focused', async () => {
     const t = setUp(
       { pins: null },
       [
@@ -133,7 +134,8 @@ describe('the Valle pins wired to UI main (ISSUE-302)', () => {
     t.scope.stop()
   })
 
-  it('[S29.08, S29.10, S29.21, TC-302-01] every change writes the chat pins through A-N21 and the session fields through A-N18; a failed write is kept in memory and written again with the next change', async () => {
+  // TC-302-01: the set moves as machines 18 and 29 say, `pins` persisted at once (chat pins only), focus never dropped.
+  it('[S29.08, S29.10, S29.21] every change writes the chat pins through A-N21 and the session fields through A-N18; a failed write is kept in memory and written again with the next change', async () => {
     const t = setUp({ pins: [] }, [dwarfWire(BORIN, MORIA), dwarfWire(DAIN, EREBOR)], {
       failFirstWrite: true
     })
