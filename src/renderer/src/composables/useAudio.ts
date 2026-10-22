@@ -1,6 +1,6 @@
 import { readonly, ref } from 'vue'
 import type { AudioPreferences, DwarfRole } from '../types'
-import { DEFAULT_AUDIO_PREFERENCES, parseAudioPreferences } from '../types'
+import { useAudioPreferences } from './useAudioPreferences'
 import {
   AMBIENCE_SRC,
   CREW_SFX_SRC,
@@ -55,7 +55,9 @@ export interface UseAudioOptions {
 }
 
 export function useAudio(options: UseAudioOptions = {}) {
-  const settings = ref<AudioPreferences>({ ...DEFAULT_AUDIO_PREFERENCES })
+  // The stored settings, read and written through the engine-free part (ISSUE-304); the engine follows what it adopts.
+  const preferences = useAudioPreferences()
+  const settings = preferences.settings
   /** The shell button's state: whether music should be playing this run. */
   const musicPlaying = ref(false)
   /** The mine interior's own mute, which silences the ambience alone. */
@@ -108,12 +110,8 @@ export function useAudio(options: UseAudioOptions = {}) {
    * print a version it could not read.
    */
   async function sync(): Promise<void> {
-    try {
-      settings.value = parseAudioPreferences(await window.api.getAudioPreferences())
-    } catch {
-      // The last known settings are still the most honest thing to play at,
-      // and the next successful call corrects them.
-    }
+    // The last known settings are still the most honest thing to play at, and the next successful call corrects them.
+    await preferences.read()
     engine.setSettings(settings.value)
     try {
       // Asked rather than assumed, because the page loads while the window is
@@ -189,14 +187,8 @@ export function useAudio(options: UseAudioOptions = {}) {
    * surfaces hold.
    */
   async function setSettings(patch: Partial<AudioPreferences>): Promise<void> {
-    const requested = parseAudioPreferences({ ...settings.value, ...patch })
-    try {
-      settings.value = parseAudioPreferences(await window.api.setAudioPreferences(requested))
-    } catch {
-      // The failed write may or may not have reached main; the last known
-      // settings are what the sliders keep showing until a later call answers.
-      return
-    }
+    // A failed write may or may not have reached main; the last known settings are what the sliders keep showing.
+    if (!(await preferences.write(patch))) return
     engine.setSettings(settings.value)
   }
 

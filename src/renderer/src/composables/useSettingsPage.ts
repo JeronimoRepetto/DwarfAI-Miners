@@ -5,15 +5,20 @@
  * is "a reading and never an authority" (main or the Host owns the value; this only draws what it answered), and
  * `SettingsPanel` stays presentational.
  *
- * What it does not hold, deliberately: the sound (`useAudio`), the Panel's dock edge (`usePanelLayout`) and its pin
- * (`usePinnedWindow`), which the Panel shell shares with other surfaces. A Valle Settings page waits on the owner's
- * ruling on those Panel-window rows (ISSUE-304 hand-off).
+ * What it does not hold in the Panel, deliberately: the sound (`useAudio`), the Panel's dock edge (`usePanelLayout`) and
+ * its pin (`usePinnedWindow`), which the Panel shell shares with other surfaces.
+ *
+ * Window-scoped (owner decision 2026-10-22; ISSUE-304): drawn in Valle (`window: 'valle'`), the page leaves out the
+ * rows that act on the Panel window (`panelWindowRows` false: Position, Always on top, Hide panel), and its Sound rows
+ * read and write the stored settings alone (`audio`, `useAudioPreferences`): no playback and no audio engine in the
+ * Valle window until US-VALLE-016.
  *
  * The caller starts and stops the follows at its own mount (`sync…`, `follow…`, `stopFollowing…`, `dispose…`).
  */
-import { computed, ref, type Ref } from 'vue'
+import { computed, ref, shallowRef, type Ref } from 'vue'
 import { versionLabel, versionTitle } from '../lib/appBuild'
 import type { AppBuild } from '../types'
+import { useAudioPreferences } from './useAudioPreferences'
 import { useJevSettings } from './useJevSettings'
 import { modeAtLaunchPart } from './useModeAtLaunch'
 import { useNotificationSettings } from './useNotificationSettings'
@@ -23,11 +28,15 @@ import { useToggleShortcut } from './useToggleShortcut'
 import { useTypography } from './useTypography'
 
 export interface SettingsPageDeps {
-  /** Whether the Panel stays above other windows, as main answered (`usePinnedWindow`). */
-  pinned: Readonly<Ref<boolean>>
+  /** The window drawing the page: the Panel unless said. */
+  window?: 'panel' | 'valle'
+  /** Whether the Panel stays above other windows, as main answered (`usePinnedWindow`); the Panel's only. */
+  pinned?: Readonly<Ref<boolean>>
 }
 
-export function useSettingsPage(deps: SettingsPageDeps) {
+export function useSettingsPage(deps: SettingsPageDeps = {}) {
+  const valle = deps.window === 'valle'
+  const pinned = deps.pinned ?? shallowRef(false)
   /**
    * Settings' notifications switch (#316): main raises a notification, so it owns the switch and this only draws what
    * it answered with.
@@ -55,7 +64,7 @@ export function useSettingsPage(deps: SettingsPageDeps) {
   // The hover line explains what the CURRENT state does; the accessible name stays stable and aria-pressed carries the
   // state.
   const pinTooltip = computed(() =>
-    deps.pinned.value
+    pinned.value
       ? 'Pinned: the panel stays above other windows'
       : 'Unpinned: other windows can cover the panel'
   )
@@ -82,6 +91,10 @@ export function useSettingsPage(deps: SettingsPageDeps) {
   }
 
   return {
+    /** Whether the rows that act on the Panel window are drawn: in the Panel only. */
+    panelWindowRows: !valle,
+    /** Valle's Sound rows: the stored settings alone, no engine; `null` in the Panel, whose sound is `useAudio`. */
+    audio: valle ? useAudioPreferences() : null,
     notifications,
     modeAtLaunch,
     jev,

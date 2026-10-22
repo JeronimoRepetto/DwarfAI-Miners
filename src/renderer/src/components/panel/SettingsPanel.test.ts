@@ -1031,3 +1031,23 @@ describe('SettingsPanel — Mode at launch (ISSUE-294)', () => {
     expect((select.element as HTMLSelectElement).value).toBe('veta')
   })
 })
+
+// APPENDED for ISSUE-304 (owner decision 2026-10-22): the Settings page hosted in Valle leaves out the rows that act on
+// the Panel window; the Panel keeps them.
+describe('SettingsPanel — the Panel-window rows (ISSUE-304)', () => {
+  it('[S28.19, US-SET-002, US-SET-011] without the Panel-window rows, Position, Always on top and Hide panel are absent; the Panel shows them', () => {
+    const panel = render()
+    expect(panel.find('.position-right').exists()).toBe(true)
+    expect(panel.find('.pin').exists()).toBe(true)
+    expect(render({ section: 'About' }).find('.hide-panel').exists()).toBe(true)
+
+    const valle = render({ panelWindowRows: false })
+    expect(valle.find('.position-right').exists()).toBe(false)
+    expect(valle.find('.pin').exists()).toBe(false)
+    // The other General rows stay: the panel shortcut is app-wide.
+    expect(valle.text()).toContain('Panel shortcut')
+    const about = render({ section: 'About', panelWindowRows: false })
+    expect(about.find('.hide-panel').exists()).toBe(false)
+    expect(about.text()).toContain('1.2.3')
+  })
+})
