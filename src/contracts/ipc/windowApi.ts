@@ -534,7 +534,12 @@ export const uiPreferenceWriteSchema = z.discriminatedUnion('key', [
   z.object({ key: z.literal('pins'), value: z.array(vallePinSchema) }).strict(),
   // ISSUE-301: the dive and a Work front swap write the last mine worked in (07 S28.03, S28.15; N-15). `null` (never
   // written) is UI main's alone to restore, on Reset metrics (S39.10).
-  z.object({ key: z.literal('valleLastFrontMineId'), value: mineIdSchema }).strict()
+  z.object({ key: z.literal('valleLastFrontMineId'), value: mineIdSchema }).strict(),
+  // ISSUE-304: "Close this column" and the add slot write the mosaic order (07 S32.01, S32.03, S32.05, S32.11, S32.13,
+  // S32.14), the zone menu the muted mines (S31.08). `[]` is an emptied mosaic; `null` (never written) is UI main's
+  // alone to restore, on Reset metrics (S32.16). After it every Valle key of 14 §3.9 is renderer-writable.
+  z.object({ key: z.literal('valleMosaicOrder'), value: z.array(mineIdSchema) }).strict(),
+  z.object({ key: z.literal('mutedMineIds'), value: mutedMineIdsSchema }).strict()
 ]) satisfies z.ZodType<UiPreferenceWrite>
 
 // A-N13 `moveToMode`, A-N14 `onModeTransition`, A-N15 `modeTransitionDone` (14 §2.2, §3.9; ADR-025 item 3;

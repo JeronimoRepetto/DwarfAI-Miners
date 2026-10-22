@@ -62,13 +62,16 @@ const VALLE_KEYS = [
 
 /**
  * The Valle keys the Valle window writes (ISSUE-300: 07 S28.06, S28.11, S28.16, S28.17; ISSUE-302: 07 machine 29;
- * ISSUE-301: the last mine worked in, 07 S28.03, S28.15).
+ * ISSUE-301: the last mine worked in, 07 S28.03, S28.15; ISSUE-304: the mosaic order and the muted mines, 07 machines
+ * 31, 32). Every Valle key is written from ISSUE-304 on.
  */
 const VALLE_WRITTEN: readonly UiPreferenceKey[] = [
   'vallePreset',
   'valleLayout',
   'pins',
-  'valleLastFrontMineId'
+  'valleLastFrontMineId',
+  'valleMosaicOrder',
+  'mutedMineIds'
 ]
 
 /**
