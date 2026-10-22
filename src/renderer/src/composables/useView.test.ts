@@ -163,3 +163,75 @@ describe('restoreLaunchView (#635, PANEL-QUESTIONS 25)', () => {
   })
 })
 /* --- end of the #635 launch view block --------------------------------------- */
+
+/* --- The Panel's current mine (ISSUE-295) — one block, appended ------------- */
+/*
+ * A hand-off from Veta names the mine the Panel opens on (07 S22.13, S27.01). A-N14 carries no mine of its own (14
+ * §3.9), so the mine travels as the Panel's current mine in the UI session store (A-N18/A-N17, ADR-024 item 1), which
+ * the Panel's view mirrors both ways (ADR-033 item 4): it opens the named mine as a run lands, and writes its own open
+ * mine back, so a later run naming none never reopens a mine the person closed.
+ */
+describe('the Panel view follows its current mine (ISSUE-295)', () => {
+  const MINE = '01920000-0000-7000-8000-00000000a00a'
+
+  function world(session: { panel?: string | null } = {}) {
+    const patches: unknown[] = []
+    let open: ((mineId: string) => void) | null = null
+    const api = {
+      getLaunchView: () => Promise.resolve({ area: 'map' as const, mineId: 'north-shaft' }),
+      getUiSession: () =>
+        Promise.resolve({
+          drafts: {},
+          chatViews: {},
+          askPicks: {},
+          openChat: {},
+          currentMine: session,
+          valle: {}
+        } as never),
+      patchUiSession: (patch: unknown) => {
+        patches.push(patch)
+      }
+    }
+    const arrivals = {
+      onMineArrival(hear: (mineId: never) => void) {
+        open = hear as (mineId: string) => void
+        return () => {
+          open = null
+        }
+      }
+    }
+    return { api, arrivals, patches, land: (mineId: string) => open?.(mineId) }
+  }
+
+  beforeEach(() => {
+    useView().clear()
+    takeLaunchMine()
+  })
+
+  it('[US-VETA-010.AC03, S22.13, S27.01] a run into the Panel naming a mine opens that mine in the mine column', async () => {
+    const { api, arrivals, land } = world()
+    await restoreLaunchView(api, arrivals)
+    useView().showArea('settings')
+    land(MINE)
+    expect(useView().state).toEqual({ area: 'settings', mineId: MINE })
+  })
+
+  it('[S27.01] the Panel writes its open mine back as its current mine, so a later run naming none never reopens a closed one', async () => {
+    const { api, arrivals, patches } = world()
+    await restoreLaunchView(api, arrivals)
+    useView().openMine(MINE)
+    useView().closeMine()
+    expect(patches).toEqual([
+      { kind: 'current-mine', host: 'panel', mineId: MINE },
+      { kind: 'current-mine', host: 'panel', mineId: null }
+    ])
+  })
+
+  it('[US-VETA-010.AC03, S22.13] a Panel that starts during the hand-off holds the named mine, not the remembered one, until App knows it opens', async () => {
+    const { api, arrivals } = world({ panel: MINE })
+    await restoreLaunchView(api, arrivals)
+    expect(useView().state.mineId).toBeNull()
+    expect(takeLaunchMine()).toBe(MINE)
+  })
+})
+/* --- end of the ISSUE-295 block --------------------------------------------- */

@@ -4,7 +4,9 @@
  * lists, and does what each step names:
  *
  * - The menu's moves and the hand-off after a new mine go through A-N13 `moveToMode` (machine 27): the Panel with no
- *   mine (S22.04), Valle (S22.05), hidden (S22.06), the Panel on the mine just added (S22.13, S22.14).
+ *   mine (S22.04), Valle (S22.05), hidden (S22.06), the Panel on the mine just added (S22.13, S22.14): that mine is
+ *   first named the Panel's current mine in the UI session store (A-N18), which the Panel's view opens as the run lands
+ *   (ISSUE-295; `useView.followPanelMine`). The hand-off never asks for the Add panel.
  * - A picked mine raises the Add panel at it (S22.09; the rise is ISSUE-290's, this only asks for it).
  * - "Add a mine" is A-30 `declareMine` (S22.10): UI main opens the OS folder picker and declares the folder it gives
  *   (`mines.declare`), so the renderer names no path. A cancel goes back to the picker (S22.11). A worktree of a known
@@ -19,7 +21,13 @@
  * The picker lists every live mine (`mines`, the life state's read model), those with no chamber included. The bridge,
  * the mines and the focus and Add panel hooks are injected (the house idiom over `vi.mock`).
  */
-import type { BuiltMode, MineId, ModeTransition, MoveToModeParams } from '@dwarfai/contracts'
+import type {
+  BuiltMode,
+  MineId,
+  ModeTransition,
+  MoveToModeParams,
+  UiSessionPatch
+} from '@dwarfai/contracts'
 import {
   computed,
   getCurrentScope,
@@ -43,11 +51,13 @@ import { pickerRows, type PickerMine, type PickerRow } from '../lib/veta/minePic
 import type { MineDeclareResult, MineWorktreeOf } from '../types'
 import { DECLARE_UNREACHABLE } from './useProjectBrowse'
 
-/** The seam A members the menu and the picker use (14 §2.1 A-30, A-31; §2.2 A-N13). */
+/** The seam A members the menu and the picker use (14 §2.1 A-30, A-31; §2.2 A-N13, A-N18). */
 export interface MinePickerBridge {
   declareMine(): Promise<MineDeclareResult>
   declareMainProject(): Promise<MineDeclareResult>
   moveToMode(params: MoveToModeParams): Promise<unknown>
+  /** A-N18: names the Panel's current mine before a hand-off to it (S22.13, S22.14). */
+  patchUiSession(patch: UiSessionPatch): void
   /** A-N14: a mode change closes an open menu or picker silently (S22.17). */
   onModeTransition(handler: (transition: ModeTransition) => void): () => void
 }
@@ -160,11 +170,16 @@ export function useMinePicker(deps: MinePickerDeps): MinePickerPart {
   function carryOut(effect: GripMenuEffect): void {
     switch (effect.kind) {
       case 'move':
-        move(
-          effect.mineId === undefined
-            ? { mode: effect.mode }
-            : { mode: effect.mode, mineId: effect.mineId }
-        )
+        if (effect.mineId === undefined) {
+          move({ mode: effect.mode })
+          return
+        }
+        // S22.13, S22.14 (ISSUE-295): A-N14 carries no mine of its own (14 §3.9), so the Panel's current mine in the
+        // session store names it first (ADR-024 item 1); the Panel's view opens it as the run lands (`useView`).
+        if (effect.mode === 'panel') {
+          deps.bridge.patchUiSession({ kind: 'current-mine', host: 'panel', mineId: effect.mineId })
+        }
+        move({ mode: effect.mode, mineId: effect.mineId })
         return
       case 'focus':
         deps.focus(effect.target)
@@ -220,6 +235,7 @@ export function useWindowMinePicker(deps: Omit<MinePickerDeps, 'bridge'>): MineP
       declareMine: () => window.api.declareMine(),
       declareMainProject: () => window.api.declareMainProject(),
       moveToMode: (params) => window.api.moveToMode(params),
+      patchUiSession: (patch) => window.api.patchUiSession(patch),
       onModeTransition: (handler) => window.api.onModeTransition(handler)
     }
   })

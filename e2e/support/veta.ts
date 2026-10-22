@@ -57,6 +57,24 @@ export async function declareMine(
   return mineId
 }
 
+/**
+ * Answers the next OS folder pickers in the main process (ISSUE-295): with `folder`, or cancelled when it is `null`, as
+ * a person would; no native dialog ever shows.
+ */
+export async function answerFolderPicker(
+  app: ElectronApplication,
+  folder: string | null
+): Promise<void> {
+  await app.evaluate(({ dialog }, picked) => {
+    ;(dialog as { showOpenDialog: unknown }).showOpenDialog = () =>
+      Promise.resolve(
+        picked === null
+          ? { canceled: true, filePaths: [] }
+          : { canceled: false, filePaths: [picked] }
+      )
+  }, folder)
+}
+
 /** The Veta window's bounds, read in the main process. */
 export async function vetaBounds(
   app: ElectronApplication
