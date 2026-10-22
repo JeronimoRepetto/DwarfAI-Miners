@@ -421,8 +421,8 @@ export interface PinText {
   readonly unpinLabel: string
 }
 
-/** A gone pin whose dwarf this window never saw has no name to show; the design gives none. */
-export const UNKNOWN_PIN_NAME = '⟦COPY NEEDED: name of a gone pin restored after a restart⟧'
+/** A gone pin whose dwarf this window never saw has no name to show; the design gives none: owner-approved copy, 2026-10-22. */
+export const UNKNOWN_PIN_NAME = 'A dwarf'
 
 /** The status words (PO #9: never "done"). */
 const STATUS_WORD = {
