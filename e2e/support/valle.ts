@@ -84,3 +84,13 @@ export function valleFacts(app: ElectronApplication): Promise<ValleWindowFacts> 
     }
   })
 }
+
+/**
+ * Waits until no dive, climb or swap runs in Valle (ISSUE-301; 07 machine 28): input is ignored for the whole of a dive
+ * or a climb (S28.09, S28.14), so a case presses the next control only once the run settled.
+ */
+export async function valleSettled(page: Page): Promise<void> {
+  await expect(page.locator('[data-valle-root]')).toHaveAttribute('data-motion', 'none', {
+    timeout: 10_000
+  })
+}

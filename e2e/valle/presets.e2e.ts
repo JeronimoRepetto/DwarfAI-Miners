@@ -12,7 +12,7 @@ import {
   type LaunchedApp
 } from '../_harness/launchApp.ts'
 import { answerFirstRunStep } from '../_harness/firstRunStep.ts'
-import { showValle } from '../support/valle.ts'
+import { showValle, valleSettled } from '../support/valle.ts'
 import { declareMine } from '../support/vetaScene.ts'
 
 /**
@@ -102,6 +102,8 @@ test.describe('Valle presets across a restart (ISSUE-300)', () => {
     await expect(root).toHaveAttribute('data-preset', 'control')
     await valle.getByRole('tab', { name: 'Work front' }).click()
     await expect(root).toHaveAttribute('data-preset', 'front')
+    // AMENDED for ISSUE-301: the Work front tab dives into a mine, input ignored until the dive settles (S28.09).
+    await valleSettled(valle)
     await valle.getByRole('button', { name: 'Fold the list' }).click()
     await expect(valle.getByRole('button', { name: 'Show the mines list' })).toHaveText('MINES')
     // UI main stored both at once (A-N21): the preset in use and the Work front's folded list.

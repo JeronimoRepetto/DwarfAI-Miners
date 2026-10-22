@@ -83,6 +83,9 @@ defineExpose({ mosaic })
   min-width: 0;
   min-height: 0;
   overflow-x: auto;
+  /* Sideways only: a part growing or shrinking by FLIP never shows a vertical scrollbar, which would narrow the mosaic
+     and clamp the scroll a climb restores. */
+  overflow-y: hidden;
 }
 .dm-vz {
   position: relative;
