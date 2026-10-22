@@ -19,7 +19,9 @@ import {
   type SettingsSection
 } from '../../lib/settings/sections'
 import type { DialogAction } from '../../lib/overlay/dialog'
+import { MODE_AT_LAUNCH_LABELS, type ModeAtLaunch } from '../../lib/shell/builtDestinations'
 import ActionButton from '../controls/ActionButton.vue'
+import SelectField from '../controls/SelectField.vue'
 import ToggleSwitch from '../controls/ToggleSwitch.vue'
 import ModalDialog from '../overlay/ModalDialog.vue'
 import PageHeader from '../shell/PageHeader.vue'
@@ -40,10 +42,10 @@ import TypographySettings from './TypographySettings.vue'
  * sections in place of one long scroll (screens/settings.md, W6) — a vertical tablist on the left,
  * moved with ↑ and ↓, and the chosen section's rows on the right.
  *
- * - General: the shortcut failure's banner when the panel shortcut did not register, then
- *   Position, the Panel shortcut and Always on top. The design's "Mode at launch" row is not
- *   drawn: the app has one mode until Veta and Valle land, and a choice of modes that do not exist
- *   is a control that lies (PR5 question) — the nav's mode lever is hidden for the same reason.
+ * - General: the shortcut failure's banner when the panel shortcut did not register, then Mode at
+ *   launch, Position, the Panel shortcut and Always on top. "Mode at launch" offers the modes the
+ *   build ships (ISSUE-294; ADR-034 item 2): with the Panel alone there is no choice, so no row (a
+ *   choice of modes that do not exist is a control that lies, PR5 question).
  * - Appearance: the Font style list and Custom's rows. Sound: music at startup and the three
  *   volumes. Notifications: the one switch. Integrations: Jev, its privacy notice, then OpenCode.
  *   Data: Reset metrics…, in the danger zone, confirmed by typing "yes" in the dialog. About: the
@@ -101,8 +103,12 @@ const props = withDefaults(
     openCodeApplying: boolean
     /** The section last open, shown when the page opens; General when there is none. */
     section?: SettingsSection
+    /** "Mode at launch" as UI main stored it (A-N20); `null` until it answered. */
+    modeAtLaunch?: ModeAtLaunch | null
+    /** The options this build offers (`modeAtLaunchOptions`); none means no row. */
+    modeAtLaunchOptions?: readonly ModeAtLaunch[]
   }>(),
-  { section: undefined }
+  { section: undefined, modeAtLaunch: null, modeAtLaunchOptions: () => [] }
 )
 
 const emit = defineEmits<{
@@ -135,7 +141,19 @@ const emit = defineEmits<{
   'opencode-password-clear': []
   /** The section now shown, for its owner to hand back as `section` next time (NFR-PERS-11). */
   'section-change': [section: SettingsSection]
+  /** "Mode at launch" should become this pick (US-SET-002.AC09). */
+  'mode-at-launch-change': [mode: ModeAtLaunch]
 }>()
+
+/** The select's options: each value with the label the design writes for it. */
+const launchOptions = computed(() =>
+  props.modeAtLaunchOptions.map((value) => ({ value, label: MODE_AT_LAUNCH_LABELS[value] }))
+)
+
+function pickModeAtLaunch(value: string): void {
+  const picked = props.modeAtLaunchOptions.find((option) => option === value)
+  if (picked !== undefined) emit('mode-at-launch-change', picked)
+}
 
 // The recorder takes the focus when Settings opens on General, not when a keyboard user walks
 // back to General through the tabs: the tab keeps the focus the arrow gave it.
@@ -242,6 +260,19 @@ watch(
             v-if="brokenShortcut !== null"
             :text="brokenShortcut + ' is already in use by another application.'"
           />
+          <SettingsRow
+            v-if="modeAtLaunchOptions.length > 0"
+            label="Mode at launch"
+            help="Which mode the app opens in."
+          >
+            <SelectField
+              label="Mode at launch"
+              held
+              :options="launchOptions"
+              :value="modeAtLaunch ?? undefined"
+              @update:value="pickModeAtLaunch"
+            />
+          </SettingsRow>
           <PositionSettings
             :edge="edge"
             :applying="edgeApplying"

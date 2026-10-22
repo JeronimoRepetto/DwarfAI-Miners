@@ -5,10 +5,10 @@
 // `__DWARFAI_BUILD_PROFILE__`); UI main's mode windows (`BUILT_MODES`) and the renderer's controls (`SHIPPED_MODES`)
 // both read this one list, so they never disagree.
 //
-// - `release`: what a person gets. A mode joins it only from the issue that ships it (ISSUE-294 Veta, ISSUE-311
-//   Valle), in the same change as this file's test.
-// - `e2e`: the E2E build profile, which lists Veta and Valle before they ship so their L9 cases run (17 §1.9). Valle
-//   is data only until EPIC-20 builds its window. No production test backdoor: nothing but the build decides.
+// - `release`: what a person gets. A mode joins it only from the issue that ships it, in the same change as this
+//   file's test: Veta joined with ISSUE-294; Valle joins with ISSUE-311.
+// - `e2e`: the E2E build profile, which lists Valle before it ships so its L9 cases run (17 §1.9). Valle is data only
+//   until EPIC-20 builds its window. No production test backdoor: nothing but the build decides.
 // Any other value, or none, is `release` (fail closed).
 import type { WindowMode } from './windowApi'
 
@@ -17,7 +17,7 @@ export type BuiltMode = Exclude<WindowMode, 'hidden'>
 
 /** The build profiles and the modes each contains. */
 export const BUILD_PROFILES: Readonly<Record<'release' | 'e2e', readonly BuiltMode[]>> = {
-  release: ['panel'],
+  release: ['panel', 'veta'],
   e2e: ['panel', 'veta', 'valle']
 }
 

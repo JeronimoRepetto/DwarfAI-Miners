@@ -987,3 +987,47 @@ describe('SettingsPanel — hidden until built (ISSUE-267)', () => {
     expect(options).toEqual(['None', 'Claude'])
   })
 })
+
+describe('SettingsPanel — Mode at launch (ISSUE-294)', () => {
+  const rowOf = (wrapper: ReturnType<typeof render>, label: string) =>
+    wrapper.findAll('.dm-srow').find((row) => row.get('.dm-srow__label').text() === label)!
+  const labels = (wrapper: ReturnType<typeof render>) =>
+    wrapper.findAll('.dm-srow__label').map((label) => label.text())
+
+  it('[US-SET-002.AC01, ADR-034] with Veta built General draws Mode at launch first, with its help and the options Last used, Panel and Veta', () => {
+    const wrapper = render({
+      modeAtLaunch: 'last-used',
+      modeAtLaunchOptions: ['last-used', 'panel', 'veta']
+    })
+    // The design's General (anatomy.md, Settings › General): Mode at launch, Position, Panel shortcut, Always on top.
+    expect(labels(wrapper)).toEqual([
+      'Mode at launch',
+      'Position',
+      'Panel shortcut',
+      'Always on top'
+    ])
+    const row = rowOf(wrapper, 'Mode at launch')
+    expect(row.text()).toContain('Which mode the app opens in.')
+    const select = row.get('select[aria-label="Mode at launch"]')
+    expect(select.findAll('option').map((o) => [o.attributes('value'), o.text()])).toEqual([
+      ['last-used', 'Last used'],
+      ['panel', 'Panel'],
+      ['veta', 'Veta']
+    ])
+    expect((select.element as HTMLSelectElement).value).toBe('last-used')
+  })
+
+  it('[US-SET-002.AC09] a pick asks for that launch preference, and the select shows what is stored', async () => {
+    const wrapper = render({
+      modeAtLaunch: 'panel',
+      modeAtLaunchOptions: ['last-used', 'panel', 'veta']
+    })
+    const select = wrapper.get('select[aria-label="Mode at launch"]')
+    await select.setValue('veta')
+    expect(wrapper.emitted('mode-at-launch-change')).toEqual([['veta']])
+    // Held: the select stays on the stored value until its owner answers.
+    expect((select.element as HTMLSelectElement).value).toBe('panel')
+    await wrapper.setProps({ modeAtLaunch: 'veta' })
+    expect((select.element as HTMLSelectElement).value).toBe('veta')
+  })
+})

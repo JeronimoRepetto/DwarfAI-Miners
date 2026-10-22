@@ -173,10 +173,14 @@ describe('the mode shell over the Panel (ISSUE-284; ADR-025 item 3; 07 S10.08, S
 })
 
 describe('the mode shell with a Veta window (ISSUE-285; ADR-025 items 1, 3)', () => {
-  it('[ADR-025, BR-19] a release build ships the Panel alone, so no move reaches a Veta window', async () => {
-    expect(BUILT_MODES).toEqual(['panel'])
+  // AMENDED for ISSUE-294 (was: this build's list, the Panel alone): a release build ships Veta now (ADR-034 item 2), so
+  // a build without Veta is the list written here, and the title says so; this build's list is checked to be the Panel
+  // and Veta, no Valle.
+  it('[ADR-025, BR-19] a build that ships the Panel alone lets no move reach a Veta window', async () => {
+    expect(BUILT_MODES).toEqual(['panel', 'veta'])
     const veta = new FakeModeWindow()
     const s = setup('hidden', false, {
+      built: ['panel'],
       veta: { window: () => veta, bounds: () => ({ x: 0, y: 1000, width: 480, height: 72 }) }
     })
     expect(await s.shell.coordinator.moveToMode({ mode: 'veta' })).toMatchObject({ ok: false })

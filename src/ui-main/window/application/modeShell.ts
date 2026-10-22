@@ -24,8 +24,8 @@ declare const __DWARFAI_BUILD_PROFILE__: string | undefined
 
 /**
  * The modes this build contains: the one built-modes list (`builtModesOf`, 17 §1.9), which the renderer's controls
- * read too (`SHIPPED_MODES`). A release build has the Panel alone until the Veta epic ships (ADR-034 item 2); the E2E
- * build profile adds Veta and Valle. Valle is data only: with no window built, a move to it is refused (EPIC-20).
+ * read too (`SHIPPED_MODES`). A release build has the Panel and Veta (ADR-034 item 2; ISSUE-294); the E2E build profile
+ * adds Valle. Valle is data only: with no window built, a move to it is refused (EPIC-20).
  */
 export const BUILT_MODES: readonly AppMode[] = builtModesOf(
   typeof __DWARFAI_BUILD_PROFILE__ === 'string' ? __DWARFAI_BUILD_PROFILE__ : undefined
