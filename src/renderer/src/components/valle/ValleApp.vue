@@ -11,8 +11,13 @@
  *   "▼ Panel" / "▼ Veta" carrying the chat in focus. Every change is written at once (A-N21). The top bar, the nav and
  *   the chat zone never move. The zones' contents, the pins' own chats, the splitter and the split arrive with their
  *   issues (ISSUE-301…ISSUE-310; hidden until built, 21 §1 item 8).
- * - Restored once the Host's facts are first read (S29.02, S32.02): the pins in order, a dwarf ended meanwhile `gone`,
- *   and the mosaic order, a mine that no longer exists dropped. The restore never rewrites the persisted stores.
+ * - Restored once the Host's facts are first read (S32.02): the mosaic order, a mine that no longer exists dropped. The
+ *   restore never rewrites the persisted stores.
+ * - The pinned chats (`useVallePins`, 07 machines 18, 29; ISSUE-302): restored once the Host's facts are read (S29.02),
+ *   or the start-up pins on a first visit (S29.01); drawn as the Control room's stack (`PinnedStack`) or the Work
+ *   front's tabs (`ChatDeck`) in the one chat zone, which never moves. Every change is written at once (A-N21 `pins`,
+ *   A-N18 for the session's fields); the chat in focus is the one "▼ Panel" / "▼ Veta" carry. The chats themselves
+ *   (the MessagePanel and the Add panel inside a pin) are hosted in the stack's and the deck's `chat` slot.
  * - The read models (`createValleReadModel`): the Host's mines and dwarfs, held as last known while the Host is
  *   unreachable (`data-held`, S34.12), a re-snapshot applied without motion.
  * - On screen (`useVallePresence`, S39.04, S39.05): each zone registers itself through `track` (provided as
@@ -26,18 +31,21 @@
 import type { DwarfId, MineId } from '@dwarfai/contracts'
 import { computed, onMounted, onUnmounted, provide, shallowRef } from 'vue'
 import { useValleArrivalToast } from '../../composables/useValleArrivalToast'
+import { useVallePins } from '../../composables/useVallePins'
 import { useVallePreset } from '../../composables/useVallePreset'
 import { useVallePresence, type VallePresenceDeps } from '../../composables/useVallePresence'
 import { useValleStores, type ValleStores } from '../../composables/useValleStores'
 import { useToasts } from '../../composables/useToasts'
 import { SYSTEM_SLOTS, WORLD_SLOTS, type PanelNavSlot } from '../../lib/shell/panelNav'
 import { valleChatWidth, type ValleNavPage } from '../../lib/valle/preset'
-import { restoreMosaicOrder, restorePins } from '../../lib/valle/restore'
+import { restoreMosaicOrder } from '../../lib/valle/restore'
 import { createValleReadModel } from '../../lib/valle/valleReadModel'
 import ToastHost from '../overlay/ToastHost.vue'
+import ChatDeck from './ChatDeck.vue'
 import NavSlot from '../shell/NavSlot.vue'
 import ValleControlRoom from './ValleControlRoom.vue'
 import ValleNavPageView from './ValleNavPage.vue'
+import PinnedStack from './PinnedStack.vue'
 import ValleTopBar from './ValleTopBar.vue'
 import ValleWorkFront from './ValleWorkFront.vue'
 import { VALLE_TRACK_ZONE } from './valleZones'
@@ -94,17 +102,13 @@ const held = computed(() => String(model.held.value))
 /** Whether the Host's facts were read once: the pins and the mosaic order restore against them (S29.02, S32.02). */
 const factsRead = shallowRef(false)
 const mineExists = (mineId: MineId): boolean => model.mines.value.some((mine) => mine.id === mineId)
-const pins = computed(() =>
-  factsRead.value
-    ? restorePins(stores.value.pins, {
-        mineExists,
-        // A dwarf the Host no longer lists ended meanwhile. A dwarf's row is deleted only by Reset metrics, which also
-        // clears the pins (S18.06), so the window never holds a pin whose row is gone.
-        dwarf: (dwarfId) =>
-          model.dwarfs.value.some((dwarf) => dwarf.id === dwarfId) ? 'alive' : 'ended'
-      })
-    : null
-)
+const pins = useVallePins({
+  bridge: props.bridge,
+  stores,
+  model,
+  factsRead,
+  talkedLast: () => stores.value.session.panelOpenChat ?? null
+})
 const columns = computed(() => {
   const order = factsRead.value ? restoreMosaicOrder(stores.value.mosaicOrder, mineExists) : null
   return (order ?? []).map((mineId) => ({
@@ -113,15 +117,11 @@ const columns = computed(() => {
   }))
 })
 
-/** The chat in focus, carried by "▼ Panel" / "▼ Veta" (S28.21, machine 9). */
+/** The chat in focus, carried by "▼ Panel" / "▼ Veta" (S28.21, machine 9): the focused chat pin's. */
 const chat = computed((): { mineId: string; dwarfId: DwarfId } | null => {
-  const dwarfId = stores.value.session.openChat
-  if (dwarfId === null) return null
-  const mineId =
-    model.dwarfs.value.find((dwarf) => dwarf.id === dwarfId)?.mineId ??
-    pins.value?.find((pin) => pin.dwarfId === dwarfId)?.mineId ??
-    ''
-  return { mineId, dwarfId }
+  const set = pins.set.value
+  const pin = set.pins.find((p) => p.key === set.focus)
+  return pin?.kind === 'chat' ? { mineId: pin.mineId, dwarfId: pin.dwarfId } : null
 })
 
 /** Valle's nav column: the slots whose page takes the main zone (S28.19), the Panel's own slots. */
@@ -191,14 +191,25 @@ onUnmounted(() => {
       <ValleControlRoom v-else :columns="columns" />
       <span class="dm-valle__splitter" aria-hidden="true"></span>
       <aside class="dm-valle__chats" aria-label="Pinned chats">
-        <div
-          v-for="pin in pins ?? []"
-          :key="pin.dwarfId"
-          class="dm-valle__pin"
-          :data-pin="pin.dwarfId"
-          :data-pin-mine="pin.mineId"
-          :data-pin-state="pin.state"
-        ></div>
+        <PinnedStack
+          v-if="view.preset === 'control'"
+          :pins="pins.views.value"
+          :focus="pins.set.value.focus"
+          :focus-request="pins.focusRequest.value"
+          @select="(key) => pins.send({ kind: 'select', key })"
+          @unpin="(key) => pins.send({ kind: 'unpin', key })"
+        />
+        <ChatDeck
+          v-else
+          :pins="pins.views.value"
+          :focus="pins.set.value.focus"
+          :focus-request="pins.focusRequest.value"
+          @select="(key) => pins.send({ kind: 'select', key })"
+          @unpin="(key) => pins.send({ kind: 'unpin', key })"
+          @drag="(key) => pins.send({ kind: 'drag', key })"
+          @drop="(order) => pins.send({ kind: 'drop', order })"
+          @drag-cancel="pins.send({ kind: 'drag-cancel' })"
+        />
       </aside>
     </div>
     <ToastHost />

@@ -74,8 +74,9 @@ describe('the Valle preferences of 14 §3.9 (ISSUE-299)', () => {
 
   it('[ADR-024] no Valle key is renderer-writable before the issue that first writes it', () => {
     // AMENDED for ISSUE-300 (was: every Valle key refused): the preset and the layouts are written from ISSUE-300 on
-    // (asserted below); the other four are still refused.
-    const written = ['vallePreset', 'valleLayout']
+    // (asserted below). AMENDED for ISSUE-302 (was: `pins` refused too): the pins are written from ISSUE-302 on
+    // (asserted below); the other three are still refused.
+    const written = ['vallePreset', 'valleLayout', 'pins']
     for (const [key, value] of Object.entries(VALLE_ANSWER).filter(([k]) => !written.includes(k))) {
       expect(uiPreferenceWriteSchema.safeParse({ key, value }).success, key).toBe(false)
     }
@@ -84,7 +85,7 @@ describe('the Valle preferences of 14 §3.9 (ISSUE-299)', () => {
 
 // APPENDED for ISSUE-300: the Valle window writes the preset in use and each preset's layout (07 machine 28).
 describe('the Valle preset and layouts written by the Valle window (ISSUE-300)', () => {
-  it('[S28.16, S28.17, ADR-024] vallePreset and valleLayout are renderer-writable in their 14 §3.9 shapes, strictly; the other four Valle keys are not yet', () => {
+  it('[S28.16, S28.17, ADR-024] vallePreset and valleLayout are renderer-writable in their 14 §3.9 shapes, strictly; the other Valle keys are not yet', () => {
     expect(uiPreferenceWriteSchema.safeParse({ key: 'vallePreset', value: 'front' }).success).toBe(
       true
     )
@@ -106,7 +107,33 @@ describe('the Valle preset and layouts written by the Valle window (ISSUE-300)',
     ]) {
       expect(uiPreferenceWriteSchema.safeParse(wrong).success, JSON.stringify(wrong)).toBe(false)
     }
-    for (const key of ['valleLastFrontMineId', 'valleMosaicOrder', 'pins', 'mutedMineIds']) {
+    // AMENDED for ISSUE-302 (was: `pins` in this list): the pins are renderer-writable from ISSUE-302 on.
+    for (const key of ['valleLastFrontMineId', 'valleMosaicOrder', 'mutedMineIds']) {
+      const value = VALLE_ANSWER[key as keyof typeof VALLE_ANSWER]
+      expect(uiPreferenceWriteSchema.safeParse({ key, value }).success, key).toBe(false)
+    }
+  })
+})
+
+// APPENDED for ISSUE-302: the Valle window writes the pins on every change (07 machine 29, S29.08, S29.10, TC-302-01).
+describe('the Valle pins written by the Valle window (ISSUE-302)', () => {
+  it('[S29.08, S29.10, INV-117, ADR-024] pins is renderer-writable in its 14 §3.9 shape, chat pins only and strictly; the other three Valle keys are not yet', () => {
+    expect(
+      uiPreferenceWriteSchema.safeParse({ key: 'pins', value: VALLE_ANSWER.pins }).success
+    ).toBe(true)
+    expect(uiPreferenceWriteSchema.safeParse({ key: 'pins', value: [] }).success).toBe(true)
+    for (const wrong of [
+      // `null` is "never written": only Reset metrics returns the store to it (S29.20), never a renderer.
+      { key: 'pins', value: null },
+      // An Add pin has no dwarf: it is the session's (`valle.addPins`), never `pins` (R5B-27).
+      { key: 'pins', value: [{ mineId: MINE, order: 0 }] },
+      { key: 'pins', value: [{ dwarfId: DWARF, mineId: MINE, order: 0, focused: true }] },
+      { key: 'pins', value: [{ dwarfId: DWARF, mineId: MINE, order: -1 }] },
+      { key: 'pins', value: VALLE_ANSWER.pins, extra: true }
+    ]) {
+      expect(uiPreferenceWriteSchema.safeParse(wrong).success, JSON.stringify(wrong)).toBe(false)
+    }
+    for (const key of ['valleLastFrontMineId', 'valleMosaicOrder', 'mutedMineIds']) {
       const value = VALLE_ANSWER[key as keyof typeof VALLE_ANSWER]
       expect(uiPreferenceWriteSchema.safeParse({ key, value }).success, key).toBe(false)
     }
