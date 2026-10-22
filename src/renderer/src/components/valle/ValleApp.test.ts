@@ -654,12 +654,15 @@ describe('the pages a Valle zone or nav page shows (ISSUE-304)', () => {
   it('[US-OBS-002.AC07, S39.11] an announced arrival is said once in Valle, not twice', async () => {
     const { root, push } = mountValle({ preset: 'control', mosaicOrder: [MORIA] })
     await flushPromises()
+    // AMENDED for TVC (was: every "started in" toast on screen): the window's toast queue is a module singleton that
+    // outlives a mount, and CI shuffles the cases (ci.yml), so an earlier case's arrival can still be showing. Only
+    // what this arrival adds is counted; it must still be exactly one.
+    const startedIn = (): number =>
+      root.findAll('.dm-toasts > *').filter((toast) => toast.text().includes('started in')).length
+    const before = startedIn()
     push([frame(11, 'dwarf.arrived', { dwarf: dwarfWire(DAIN, EREBOR), announce: true })])
     await flushPromises()
-    const said = root
-      .findAll('.dm-toasts > *')
-      .filter((toast) => toast.text().includes('started in'))
-    expect(said).toHaveLength(1)
+    expect(startedIn() - before).toBe(1)
   })
 })
 
