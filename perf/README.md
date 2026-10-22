@@ -5,10 +5,11 @@ by `pnpm test:perf`, never on a pull request and never as a merge check. `docs/e
 
 ## Cases
 
-| Case                     | What it records                                                                           | Since     |
-| ------------------------ | ----------------------------------------------------------------------------------------- | --------- |
-| `perf/idleScene.perf.ts` | The idle scene's renderer CPU (NFR-PERF-04, NFR-OBS-03)                                   | ISSUE-283 |
-| `perf/vetaIdle.perf.ts`  | Veta's idle CPU, renderer and whole app, in its two idle scenes (NFR-PERF-04, NFR-OBS-03) | ISSUE-297 |
+| Case                        | What it records                                                                                                           | Since     |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `perf/idleScene.perf.ts`    | The idle scene's renderer CPU (NFR-PERF-04, NFR-OBS-03)                                                                   | ISSUE-283 |
+| `perf/vetaIdle.perf.ts`     | Veta's idle CPU, renderer and whole app, in its two idle scenes (NFR-PERF-04, NFR-OBS-03)                                 | ISSUE-297 |
+| `perf/valleScaling.perf.ts` | The Control room's frame time and CPU at 4, 8, 12 and 16 live mine columns, degradation on and off (S-034-1, NFR-PERF-10) | ISSUE-298 |
 
 ### The idle scene (`perf/idleScene.perf.ts`)
 
@@ -46,13 +47,50 @@ by `pnpm test:perf`, never on a pull request and never as a merge check. `docs/e
 - **Run it alone.** `DWARFAI_BUILD_PROFILE=e2e pnpm build`, then `pnpm test:perf --case perf/vetaIdle.perf.ts`. About two
   minutes, one launch.
 
+### Valle scaling (`perf/valleScaling.perf.ts`)
+
+Spike S-034-1 (ADR-034 item 5): how many live mine columns the Control room can carry, measured before any Valle UI is
+built. Its record is the spike's evidence; the lead sets the supported column count and the degradation rule in `17`
+§1.11, and the case stays as the perf-lane regression for Valle scaling.
+
+- **The page.** `perf/fixtures/controlRoom/`, a perf-only renderer entry. The case builds it with Vite into
+  `out/perf/controlRoom/` (`buildPage.ts`; no electron-vite entry names it and no product source imports it, R13,
+  held by `_harness/controlRoomIsolation.test.mjs`) and opens it in a bare Electron window (`electronMain.cjs`:
+  sandboxed, no preload, no Host, no provider), with the E2E harness's `mainErrorGuard.cjs` preloaded so an error
+  never opens a dialog. `?columns=<N>&degradation=on|off` lays out N columns side by side in one sideways scroller, each
+  the Panel's own mine column (`MineColumn.vue`, unchanged) fed a fixture crew of three (working, idle, asleep), each on
+  a sprite frame clock of its own (`createFrameClock` on the window's tick source). The window's content area is sized
+  to four columns across and 720 px high; past four, the mosaic scrolls sideways.
+- **The default degradation.** With `degradation=on`, one `IntersectionObserver` on the scroller pauses the clock of
+  every column with no pixel inside the viewport (`pause()`, ISSUE-282) and resumes it when one scrolls in; a paused
+  column paints the last frame it showed. `degradation=off` lets every clock run. Nothing is virtualized: every column
+  stays in the DOM, so the Valle FLIP dive and climb and the saved scroll keep working.
+- **Scenes.** For N in 4, 8, 12, 16 and the switch on and off: `idle` (the first four columns in view), `scrolled`
+  (scrolled to the last four) and `sustained-scroll` (scrolled sideways 8 CSS px every animation frame, back and
+  forth). Scene names are `control-room-<N>-degradation-<on|off>-<motion>`.
+- **Measure.** One Electron app for the whole case and one page load per N and switch. After a 2 s settle, 5 CPU
+  samples one a second of `app.getAppMetrics()` (the page's renderer and the whole app, `_harness/appMetrics.mjs`), and
+  the frame time: the interval between consecutive animation frames, summarized as nearest-rank p50, p95, p99 and the
+  maximum (`_harness/frameStats.mjs`). `idle` and `scrolled` sample CPU with no frame loop running and then measure
+  frames over 3 s; `sustained-scroll` scrolls on every frame, so its CPU and frames share one window.
+- **Record.** CPU samples are `{ scene, columns, degradation, motion, process, api, cpu }`, read by the release reader
+  as NFR-PERF-10 rows; each scene adds one `{ scene, columns, degradation, motion, process: 'renderer', metric:
+'frame-time', frameMs: { count, p50, p95, p99, max }, window }`, which the release reader skips (it has no CPU).
+- **Checks.** At every N and switch, every column is in the DOM with its crew drawn (no virtualization). With the
+  degradation on and N past four: over 2 s the columns outside the viewport ask their clock for no tick and paint no
+  sprite frame while their strips still show a frame, and the columns in view do paint (so the check can fail); then
+  the last column is scrolled into view and must resume within one animation frame, on the frames it held, and move
+  again. A check that fails after a scene was measured carries the samples (see below).
+- **Run it alone.** `pnpm test:perf --case perf/valleScaling.perf.ts`. About five minutes, one window on screen; it
+  needs no `pnpm build` of the app, only the installed dependencies. Leave the machine otherwise idle.
+
 ## Release evidence
 
 `perf/_harness/releaseEvidence.mjs` is the release-check reader of the perf lane (ADR-034 item 4; ADR-025
 Verification). It reads every results file under a folder at any depth, for example the three `perf-results-<os>`
 artifacts of a release-tag run downloaded side by side, and prints one row per OS, scene and process: samples, mean and
 maximum CPU, date, commit and the requirements it is evidence for (`NFR-PERF-04`, `NFR-OBS-03`, and `NFR-PLAT` for the
-Veta rows).
+Veta rows; `NFR-PERF-10` alone for the Control-room scaling rows).
 
 ```sh
 node perf/_harness/releaseEvidence.mjs --from <folder> [--commit <released sha>]

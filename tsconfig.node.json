@@ -28,6 +28,7 @@
     "src/ui-main/**/*.ts",
     "src/legacy-bridge/**/*.ts",
     "e2e/**/*.ts",
+    "perf/fixtures/controlRoom/buildPage.ts",
     "playwright.config.ts",
     "electron.vite.config.ts",
     "electron.vite.host.config.ts",
