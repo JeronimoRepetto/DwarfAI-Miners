@@ -1089,11 +1089,15 @@ export function useDwarfMessaging() {
    * An echo is the panel holding the person's words until the transcript takes
    * over; a panel that moved to another dwarf is no longer holding anything for
    * the one it left. Stated as "keep this one" rather than "forget that one" so
-   * that a caller cannot forget to say which dwarf it left.
+   * that a caller cannot forget to say which dwarf it left. A host showing more than one
+   * conversation (Valle's panes) names every one on screen.
    */
-  function keepEchoesFor(dwarfId: string | null): void {
+  function keepEchoesFor(dwarfId: string | null | readonly string[]): void {
+    const kept = new Set<string>(
+      typeof dwarfId === 'string' ? [dwarfId] : dwarfId === null ? [] : dwarfId
+    )
     for (const id of Object.keys(echoes)) {
-      if (id === dwarfId) continue
+      if (kept.has(id)) continue
       // Each dwarf's "Answers:" records are kept for the app run, like the drafts, whichever chat
       // is open (MESSAGE-QUESTIONS 22): no transcript row brings them back.
       const records = echoes[id]!.filter((echo) => echo.answers === true)
@@ -1101,7 +1105,7 @@ export function useDwarfMessaging() {
       else echoes[id] = records
     }
     for (const id of Object.keys(echoAttachments)) {
-      if (id !== dwarfId) delete echoAttachments[id]
+      if (!kept.has(id)) delete echoAttachments[id]
     }
   }
 

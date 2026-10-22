@@ -50,7 +50,27 @@ import type {
  * The delivery verdicts are read here too (`delivery`), where the report used to be published
  * across the bridge for the shell to draw.
  */
-export function useMessageDock() {
+/** How a host shows the dock's conversations (a Valle package gap resolved in development, EPIC-20 task TVC). */
+export interface MessageDockOptions {
+  /**
+   * The dwarfs whose conversations are on screen beside the open one (Valle's panes and pinned chat). Their sent
+   * messages keep their bubbles and they keep their dwarf once it left, as the open chat does. Absent: the open chat
+   * alone, as the Panel and Veta show it.
+   */
+  shown?: () => readonly string[]
+}
+
+/** One conversation as a hosted MessagePanel draws it. */
+export interface DockConversation {
+  /** Its dwarf as the board reports it, or as it last reported it once it left; `undefined` when never seen. */
+  dwarf: Dwarf | undefined
+  routeGone: boolean
+  feed: DwarfFeedResult | undefined
+  /** Where paging back stands: the open chat's alone, the one the dock pages. */
+  pagingNote: string | undefined
+}
+
+export function useMessageDock(options: MessageDockOptions = {}) {
   const { state: mines, onWalk } = useMines()
   const { showToast } = useToasts()
   const {
@@ -312,8 +332,18 @@ export function useMessageDock() {
     { immediate: true }
   )
 
-  /** An echo belongs to the conversation on screen, and to no other (#309). */
-  watch(openDwarfId, (dwarfId) => keepEchoesFor(dwarfId), { immediate: true })
+  /**
+   * An echo belongs to the conversation on screen, and to no other (#309): the open one and those its host shows
+   * beside it (TVC). One key, so the same chats on screen keep nothing anew.
+   */
+  const onScreen = computed(() =>
+    [...new Set([openDwarfId.value, ...(options.shown?.() ?? [])])]
+      .filter((id): id is string => id !== null)
+      .join('\n')
+  )
+  watch(onScreen, (ids) => keepEchoesFor(ids === '' ? null : ids.split('\n')), {
+    immediate: true
+  })
 
   /**
    * Every delivery verdict, for the sprites the mine draws its markers on, and the failed sends
@@ -506,6 +536,66 @@ export function useMessageDock() {
     if (surface.value.surface === 'message' && openDwarfId.value === walk.dwarfId) close()
   }
 
+  /** The conversations on screen beside the open one, as their host names them. */
+  const shownIds = computed<readonly string[]>(() => options.shown?.() ?? [])
+
+  /**
+   * The shown dwarfs as the board last reported them (#192, for the chats beside the open one): kept once a dwarf
+   * leaves the board, ended, as `lastSelectedDwarf` keeps the open one; forgotten once its chat leaves the screen.
+   */
+  const lastShown = ref<Record<string, Dwarf>>({})
+  watch(
+    [shownIds, () => mines.mines],
+    ([ids, board]) => {
+      const kept: Record<string, Dwarf> = {}
+      for (const id of ids) {
+        const live = board.flatMap((mine) => mine.dwarfs).find((dwarf) => dwarf.id === id)
+        const last = lastShown.value[id]
+        if (live !== undefined) kept[id] = live
+        else if (last !== undefined) kept[id] = { ...last, status: 'leaving' }
+      }
+      lastShown.value = kept
+    },
+    { immediate: true }
+  )
+
+  /** A chat shown beside the open one drops an echo the moment its transcript accounts for it, as the open one does. */
+  watch(
+    () =>
+      shownIds.value
+        .filter((id) => id !== openDwarfId.value)
+        .map((id) => {
+          const dwarf = lastShown.value[id]
+          return [id, dwarf === undefined ? [] : feedMessagesOf(dwarf, chatFeedOf(id))] as const
+        }),
+    (chats) => {
+      for (const [id, messages] of chats) reconcileEchoes(id, messages)
+    },
+    { immediate: true }
+  )
+
+  /**
+   * One conversation as a hosted MessagePanel draws it: the open chat's own, its older pages joined; a chat shown
+   * beside it, from the same stores, its newest page alone (the dock pages one chat).
+   */
+  function conversationOf(dwarfId: string): DockConversation {
+    if (dwarfId === openDwarfId.value) {
+      return {
+        dwarf: selectedDwarf.value,
+        routeGone: selectedRouteGone.value,
+        feed: drawnFeed.value,
+        pagingNote: pagingNote.value ?? undefined
+      }
+    }
+    const dwarf = lastShown.value[dwarfId]
+    return {
+      dwarf,
+      routeGone: dwarf !== undefined && routeGone(dwarf),
+      feed: chatFeedOf(dwarfId),
+      pagingNote: undefined
+    }
+  }
+
   let unlistenWalks: (() => void) | undefined
   onMounted(() => {
     unlistenWalks = onWalk(followDeparture)
@@ -532,6 +622,7 @@ export function useMessageDock() {
     selectedRouteGone,
     drawnFeed,
     pagingNote,
+    conversationOf,
     launchOpen,
     launch,
     messagingState,
