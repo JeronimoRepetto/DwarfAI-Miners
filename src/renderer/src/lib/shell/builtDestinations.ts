@@ -6,16 +6,22 @@
  * Two inputs, neither written as a provider or a mode the renderer happens to know about:
  *
  * - The build's feature list, `SHIPPED_MODES`: the modes this build ships, build-time data
- *   (`builtModesOf` in contracts, 17 §1.9). A release build has the Panel alone until the Veta
- *   epic ships (ISSUE-294 adds Veta to the release list, ISSUE-311 Valle); the E2E build profile
- *   lists them earlier. Any Veta or Valle code stays unreachable in a release build because nothing
- *   here points at it (21 §7).
+ *   (`builtModesOf` in contracts, 17 §1.9). A release build has the Panel and Veta (ISSUE-294),
+ *   and gains Valle with ISSUE-311; the E2E build profile lists Valle earlier. Valle code stays
+ *   unreachable in a release build because nothing here points at it (21 §7).
  * - The offered catalog main answers (A-36, `AgentProviderOption.launchable`): whether this build
  *   has a launch for a detected provider. A provider whose launch is not offered — Antigravity in
  *   a public build (20 §8 R-03), any provider whose driver is not built — is decided there and only
  *   read here, so no provider id is compared in the renderer (R12).
  */
-import { builtModesOf, type UiPreferencesMap, type WindowMode } from '@dwarfai/contracts'
+import {
+  builtModesOf,
+  type DwarfId,
+  type MineId,
+  type MoveToModeParams,
+  type UiPreferencesMap,
+  type WindowMode
+} from '@dwarfai/contracts'
 import type { AgentProviderOption } from '../../types'
 
 /** A mode the window can show (06 §15), `hidden` aside. */
@@ -30,8 +36,8 @@ declare const __DWARFAI_BUILD_PROFILE__: string | undefined
 
 /**
  * This build's feature list: the modes it ships, the one built-modes list UI main reads too (`builtModesOf`, 17
- * §1.9). A release build ships the Panel only until Veta ships (ADR-034); the E2E build profile lists Veta and Valle
- * so their L9 cases run.
+ * §1.9). A release build ships the Panel and Veta (ADR-034; ISSUE-294); the E2E build profile adds Valle so its L9
+ * cases run.
  */
 export const SHIPPED_MODES: readonly AppMode[] = builtModesOf(
   typeof __DWARFAI_BUILD_PROFILE__ === 'string' ? __DWARFAI_BUILD_PROFILE__ : undefined
@@ -58,6 +64,26 @@ export function modeAtLaunchOptions(shipped: readonly AppMode[]): ModeAtLaunch[]
   const others = LAUNCH_ORDER.filter((mode) => shipped.includes(mode))
   if (others.length === 0) return []
   return ['last-used', 'panel', ...others]
+}
+
+/** What "Mode at launch" draws for each option (DS `copy.md`, Settings › General). */
+export const MODE_AT_LAUNCH_LABELS: Readonly<Record<ModeAtLaunch, string>> = {
+  'last-used': 'Last used',
+  panel: 'Panel',
+  veta: 'Veta',
+  valle: 'Valle'
+}
+
+/**
+ * A side of the lever pressed (07 S10.04; US-SHELL-001.AC02): A-N13 `moveToMode` to that mode, carrying the chat open
+ * in the Panel, if any, so it rises in the target once landed (machine 9, S9.01).
+ */
+export function leverMove(
+  mode: LeverMode,
+  open: { mineId: string; dwarfId: string | null }
+): MoveToModeParams {
+  if (open.dwarfId === null || open.mineId === '') return { mode }
+  return { mode, mineId: open.mineId as MineId, dwarfId: open.dwarfId as DwarfId }
 }
 
 /**

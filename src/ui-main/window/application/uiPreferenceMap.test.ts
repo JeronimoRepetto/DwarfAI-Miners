@@ -39,4 +39,28 @@ describe('the UI preference map (14 §3.9; ADR-024 items 1, 9)', () => {
     // Not composed (a build without the Veta window): not answered.
     expect(createUiPreferenceMap({}).get(['vetaDock'])).toEqual({})
   })
+
+  it('[US-SET-002.AC09] A-N21 stores a Mode at launch pick and A-N20 answers it as stored', () => {
+    let stored: 'last-used' | 'panel' | 'veta' | 'valle' = 'last-used'
+    const map = createUiPreferenceMap({
+      modeAtLaunch: {
+        get: () => stored,
+        set: (value) => (stored = value)
+      }
+    })
+    expect(map.get(['modeAtLaunch'])).toEqual({ modeAtLaunch: 'last-used' })
+    for (const pick of ['veta', 'panel', 'last-used'] as const) {
+      expect(map.set({ key: 'modeAtLaunch', value: pick })).toEqual({
+        ok: true,
+        value: { key: 'modeAtLaunch', value: pick }
+      })
+      expect(map.get(['modeAtLaunch'])).toEqual({ modeAtLaunch: pick })
+    }
+    // Not composed: neither answered nor written (hidden until built).
+    expect(createUiPreferenceMap({}).get(['modeAtLaunch'])).toEqual({})
+    expect(createUiPreferenceMap({}).set({ key: 'modeAtLaunch', value: 'veta' })).toEqual({
+      ok: false,
+      error: 'not-built'
+    })
+  })
 })

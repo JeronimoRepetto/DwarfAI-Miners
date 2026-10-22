@@ -54,6 +54,8 @@ export const UI_PREFERENCE_DEFAULTS: Readonly<UiPreferenceStoreMap> = {
   resetEpochApplied: 0,
   // The Panel until a mode transition ran (S10.01; ADR-034: the Panel ships first).
   lastMode: 'panel',
+  // "Last used" until the person pins a mode (the design's Settings › General select shows it selected).
+  modeAtLaunch: 'last-used',
   // No stored place: Veta takes the default place on the primary display (07 S21.02; ISSUE-286).
   vetaDock: {}
 }
@@ -104,6 +106,7 @@ const STORED_FORMS: StoredForms = {
   startWithSystem: (v) => v,
   resetEpochApplied: (v) => v,
   lastMode: (v) => v,
+  modeAtLaunch: (v) => v,
   // Each place as 14 §3.9 types it, in its saved order (the last one saved is where Veta lives).
   vetaDock: (v) =>
     Object.fromEntries(

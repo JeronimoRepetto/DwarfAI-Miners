@@ -69,14 +69,16 @@ the Host exited (`e2e/_harness/readOnlyHost.ts`). There is no test backdoor in p
 
 ### The E2E build profile
 
-The E2E build profile is build-time data (`17` §1.9): its built-modes list includes Veta and Valle before they ship, so
-their L9 cases can run, while a release build lists a mode only from the issue that ships it. The lane selects it with
+The E2E build profile is build-time data (`17` §1.9): its built-modes list includes Valle before it ships, so its L9
+cases can run, while a release build lists a mode only from the issue that ships it. The lane selects it with
 `DWARFAI_BUILD_PROFILE=e2e` at `pnpm build`. `electron.vite.config.ts` stamps it into UI main and the renderer, which
 both read the one list, `builtModesOf` in `src/contracts/ipc/builtModes.ts` (ISSUE-285): `release` (or no value, or
-any other value) is the Panel alone; `e2e` adds Veta and Valle (Valle as data only until EPIC-20 builds its window).
-So the E2E build has the Veta window and draws the nav's mode lever, which a release build does not; the release
-guarantee is proven by the unit tests over `builtModesOf('release')`. The harness never changes what a build
-contains.
+any other value) is the Panel and Veta (Veta since ISSUE-294); `e2e` adds Valle (as data only until EPIC-20 builds its
+window). So both builds have the Veta window, the nav's "▼ Veta" and Settings › General "Mode at launch"; only the E2E
+build draws "▲ Valle". The release guarantee is proven by the unit tests over `builtModesOf('release')`, and
+`e2e/panel/hidden-until-built.e2e.ts` checks a build against the profile it was built with: run it with
+`DWARFAI_BUILD_PROFILE=release` set after a release build (unset, it expects the E2E profile the lane builds). The
+harness never changes what a build contains.
 
 ### Which entry a case launches
 

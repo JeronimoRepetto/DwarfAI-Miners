@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { CHANNELS, UNROUTED, type ChannelKey } from '@dwarfai/contracts'
 import { createStartWithSystem } from '../../window/application/startWithSystem'
 import { createUiPreferenceMap } from '../../window/application/uiPreferenceMap'
+import { createUiPreferences } from '../../window/application/uiPreferences'
 import { FakeAutostartPort } from '../../window/ports/fakes/FakeAutostartPort'
 import { InMemoryUiPreferenceStore } from '../../window/ports/fakes/InMemoryUiPreferenceStore'
 import type { ChannelRoute } from '../channelRoute'
@@ -43,7 +44,15 @@ function world(loginEntry = true) {
     ? createStartWithSystem({ autostart: entry, store, log: () => {} })
     : undefined
   startWithSystem?.applyAtStart()
-  const map = createUiPreferenceMap(startWithSystem === undefined ? {} : { startWithSystem })
+  // "Mode at launch" over the same store, as UI main composes it (ISSUE-294).
+  const prefs = createUiPreferences({ store, modeWindows: () => [] })
+  const map = createUiPreferenceMap({
+    ...(startWithSystem === undefined ? {} : { startWithSystem }),
+    modeAtLaunch: {
+      get: () => prefs.get('modeAtLaunch'),
+      set: (value) => prefs.set('modeAtLaunch', value)
+    }
+  })
   const legacy: RouteTarget = { serve: () => Promise.reject(new Error('never legacy')) }
   const router = createRouter({
     routes: UI_PREFERENCE_MAP_ROWS.map(routeOf),
@@ -140,5 +149,29 @@ describe('the UI preference map rows over seam A (14 §2.2 A-N20, A-N21)', () =>
     ).toMatchObject({ ok: false, error: { code: 'NOT_SUPPORTED', retryable: false } })
     expect(entry.calls).toEqual([])
     expect(store.storage.stored).toEqual({})
+  })
+
+  it('[US-SET-002.AC09, ADR-024] setUiPreference stores a Mode at launch pick through the gate, and getUiPreferences answers it', async () => {
+    const { router, store } = world()
+    expect(
+      await router.dispatch(UI_PREFERENCES_GET, FROM_PANEL, { keys: ['modeAtLaunch'] })
+    ).toEqual({ modeAtLaunch: 'last-used' })
+    for (const pick of ['veta', 'panel', 'last-used'] as const) {
+      const answer = await router.dispatch(UI_PREFERENCES_SET, FROM_PANEL, {
+        key: 'modeAtLaunch',
+        value: pick
+      })
+      expect(answer).toEqual({ key: 'modeAtLaunch', value: pick })
+      expect(CHANNELS[UI_PREFERENCES_SET].response.safeParse(answer).success).toBe(true)
+      expect(store.load('modeAtLaunch')).toBe(pick)
+    }
+    // `hidden` is no mode the app opens in: refused by the gate, never written.
+    expect(
+      await router.dispatch(UI_PREFERENCES_SET, FROM_PANEL, {
+        key: 'modeAtLaunch',
+        value: 'hidden'
+      })
+    ).toMatchObject({ ok: false, error: { code: 'INVALID_PARAMS' } })
+    expect(store.load('modeAtLaunch')).toBe('last-used')
   })
 })

@@ -45,6 +45,11 @@ export interface UiPreferenceStoreMap {
   /** The mode shown last (14 §3.9; ADR-024 item 1): written by the `ModeCoordinator` only (ISSUE-284). */
   lastMode: UiPreferencesMap['lastMode']
   /**
+   * Settings › General "Mode at launch" (14 §3.9; US-SET-002.AC09; ISSUE-294): the mode the app opens in, or
+   * `last-used`. Written by a renderer through A-N21; read by the `ModeCoordinator` at the first open (S10.01, S10.13).
+   */
+  modeAtLaunch: UiPreferencesMap['modeAtLaunch']
+  /**
    * Veta's place per display (14 §3.9; ADR-024 items 1, 5): written by UI main only, through the dock
    * (`VetaDockService`, ISSUE-286), the whole map at once; the entry saved last is the display Veta lives on.
    */

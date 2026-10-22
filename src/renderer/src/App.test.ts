@@ -4681,8 +4681,9 @@ describe('App and the guild flag (ISSUE-265)', () => {
 /* --- ISSUE-267: hidden until built — one block, appended ----------------------------------------- */
 /*
  * A Panel build shows no control whose destination is not built (ADR-034 item 2; BR-19; 21 §1
- * item 8): the nav's mode lever and Settings › General "Mode at launch" are absent while the build's
- * feature list ships the Panel alone, and a provider whose launch main does not offer has no chip.
+ * item 8): the nav's mode lever and Settings › General "Mode at launch" offer no mode the build's
+ * feature list does not ship (Valle, until ISSUE-311), and a provider whose launch main does not
+ * offer has no chip.
  */
 describe('App, hidden until built (ISSUE-267)', () => {
   const MINE = {
@@ -4721,22 +4722,24 @@ describe('App, hidden until built (ISSUE-267)', () => {
       })
     })
 
-    // The nav: no lever group, no side of it, no MODE label, so the System group ends at Music.
+    // AMENDED for ISSUE-294 (was: no lever and no Mode at launch row, the build shipping the Panel alone): a release
+    // build ships Veta now (ADR-034 item 2), so the unshipped mode is Valle (ISSUE-311). The nav draws no side of the
+    // lever for it and the System group ends at Music and "▼ Veta"; General names no Valle.
     const nav = wrapper.get('.dm-nav')
-    expect(nav.find('.dm-nav__lever').exists()).toBe(false)
-    expect(nav.find('[aria-label="Mode"]').exists()).toBe(false)
-    expect(nav.text()).not.toContain('MODE')
+    expect(nav.find('.dm-slot[data-label="▲ Valle"]').exists()).toBe(false)
+    expect(nav.find('[aria-label="Mode"] [data-label="▲ Valle"]').exists()).toBe(false)
+    expect(nav.text()).not.toContain('Valle')
     expect(
       nav
         .get('.dm-nav__group[aria-label="System"]')
         .findAll('.dm-slot')
         .map((slot) => slot.attributes('data-label'))
-    ).toEqual(['Settings', 'Music'])
+    ).toEqual(['Settings', 'Music', '▼ Veta'])
 
-    // Settings › General: no Mode at launch row.
+    // Settings › General: no Valle anywhere, the Mode at launch row included.
     await wrapper.find(NAV_SETTINGS).trigger('click')
     await openSection(wrapper, 'General')
-    expect(wrapper.get('.dm-settings__panel').text()).not.toContain('Mode at launch')
+    expect(wrapper.get('.dm-settings__panel').text()).not.toContain('Valle')
 
     // The Add panel: Claude and Other, and no chip for the provider main did not offer.
     await wrapper.find(NAV_MAP).trigger('click')

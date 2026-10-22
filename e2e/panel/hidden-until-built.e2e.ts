@@ -22,7 +22,7 @@ import { seedClaudeStubSession } from '../cut-1/claudeStubWorld.ts'
 /**
  * L9 (ISSUE-267; ADR-034 item 2; BR-19; 21 §1 item 8; 20 §8 R-03): a build shows no control whose destination it does
  * not contain. The mode lever is drawn exactly when the build's built-modes list holds a mode beside the Panel, with
- * one side per such mode; Settings › General draws no "Mode at launch" row until ISSUE-294 builds it; and the Add panel draws a chip only for a provider main offers to launch — never
+ * one side per such mode; Settings › General draws "Mode at launch" with exactly the modes the list holds (ISSUE-294); and the Add panel draws a chip only for a provider main offers to launch — never
  * one for Antigravity, whose launch the public build does not offer (R-03).
  *
  * AMENDED for ISSUE-285 (was: a public-style Panel build, no lever and no "Mode at launch" row): the built-modes list
@@ -32,13 +32,21 @@ import { seedClaudeStubSession } from '../cut-1/claudeStubWorld.ts'
  * proven at the unit level, where no build is needed (`builtModes.test.ts` `builtModesOf('release')`,
  * `builtDestinations.test.ts` over the release list).
  *
+ * AMENDED for ISSUE-294 (was: the lane's profile alone, and no "Mode at launch" row in any build): a release build lists
+ * Veta now, so the case reads the profile the build under test was built with (`DWARFAI_BUILD_PROFILE`, the E2E profile
+ * when unset, as the lane builds it; docs/e2e.md) and holds in both: a release build draws "▼ Veta" alone and never a
+ * Valle side or option, the E2E build both sides.
+ *
  * The Antigravity launch gate itself is the Host catalog's (EPIC-09, out of this issue's scope); the stub kit has no
  * Antigravity CLI, so this case proves the Panel's half: the row is exactly what main offers (detected and launchable)
  * and Other, and nothing else.
  */
 
-/** The build profile the E2E lane builds (docs/e2e.md), and whether its list holds a mode beside the Panel. */
-const LANE_PROFILE = 'e2e'
+/**
+ * The build profile of the build under test (docs/e2e.md): the E2E profile the lane builds, or the one named, so a
+ * release build is checked the same way. Whether its list holds a mode beside the Panel.
+ */
+const LANE_PROFILE = process.env.DWARFAI_BUILD_PROFILE ?? 'e2e'
 const OTHER_MODES = builtModesOf(LANE_PROFILE).filter((mode) => mode !== 'panel')
 const OTHER_MODES_SHOWN = OTHER_MODES.length > 0
 
@@ -55,7 +63,7 @@ test.describe('the Panel build hides what is not built (ISSUE-267)', () => {
     profile = undefined
   })
 
-  test('[ADR-034, BR-19] the build shows a mode lever only for the modes it contains, no Mode at launch row and no Antigravity launch chip', async () => {
+  test('[ADR-034, BR-19] the build shows a mode lever and Mode at launch options only for the modes it contains, and no Antigravity launch chip', async () => {
     profile = createIsolatedProfile()
     const owned = profile
     launched = await launchApp({
@@ -93,13 +101,28 @@ test.describe('the Panel build hides what is not built (ISSUE-267)', () => {
       OTHER_MODES.includes('veta') ? 1 : 0
     )
 
-    // Settings › General: no Mode at launch row in any build yet. The row is ISSUE-294's, which draws it from the same
-    // list; until then SettingsPanel draws it nowhere, so its absence is true in the E2E build too.
+    // Settings › General: "Mode at launch" (ISSUE-294) offers "Last used", "Panel" and each mode the list holds beside
+    // the Panel, so no option names a mode the build does not contain.
+    // AMENDED for ISSUE-294 (was: no Mode at launch row in any build): the row is drawn from the same list.
     await nav.locator('.dm-slot[data-label="Settings"]').click()
     await window.locator('[role="tab"][data-s="General"]').click()
     const panel = window.locator('.dm-settings__panel')
     await expect(panel, 'General is shown').toContainText('Position', { timeout: 30_000 })
-    await expect(panel).not.toContainText('Mode at launch')
+    if (OTHER_MODES_SHOWN) await expect(panel).toContainText('Mode at launch')
+    else await expect(panel).not.toContainText('Mode at launch')
+    const named = { veta: 'Veta', valle: 'Valle' } as const
+    await expect(panel.locator('select[aria-label="Mode at launch"] option')).toHaveText(
+      OTHER_MODES_SHOWN
+        ? [
+            'Last used',
+            'Panel',
+            ...(['veta', 'valle'] as const)
+              .filter((m) => OTHER_MODES.includes(m))
+              .map((m) => named[m])
+          ]
+        : []
+    )
+    if (!OTHER_MODES.includes('valle')) await expect(panel).not.toContainText('Valle')
 
     // The Add panel: Claude and Other, no Antigravity chip.
     await nav.locator('.dm-slot[data-label="Map"]').click()
