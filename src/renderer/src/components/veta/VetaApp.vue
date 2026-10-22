@@ -104,6 +104,7 @@ import { useWindowVetaDock } from '../../composables/useVetaDock'
 import { useWindowVetaLife, useWindowVetaOverflow } from '../../composables/useVetaLife'
 import { useWindowVetaOverlay } from '../../composables/useVetaOverlay'
 import { useWindowVetaPresence } from '../../composables/useVetaPresence'
+import { useDwarfQuestion } from '../../composables/useDwarfQuestion'
 import { useWindowVetaRisen } from '../../composables/useVetaRisen'
 import { modeTransitionPart } from '../../composables/useModeTransition'
 import { prefersReducedMotion } from '../../lib/scene/sceneMotion'
@@ -1244,6 +1245,9 @@ function resized(): void {
   overflow.remeasure()
 }
 
+/** The Host's asks, followed in this window as the Panel's are in its own (ADR-033 item 5): the risen chat draws their card. */
+const { startAsks, stopAsks } = useDwarfQuestion()
+
 onMounted(() => {
   document.addEventListener('visibilitychange', visibility)
   document.addEventListener('pointerdown', pressed, true)
@@ -1255,6 +1259,7 @@ onMounted(() => {
   void document.fonts?.ready.then(measureBand)
   void life.start()
   void board.start()
+  void startAsks()
   risen.start()
   // S24.18 (ISSUE-293): a run into Veta carrying a chat rises it once the shell motion landed, as a click does.
   stopLanding = modeTransitionPart().onLanded((carried) => {
@@ -1289,6 +1294,7 @@ onBeforeUnmount(() => {
   choreo.stop()
   motion.dispose()
   board.stop()
+  stopAsks()
   document.removeEventListener('keydown', escape)
   window.removeEventListener('resize', resized)
   overflow.stop()
