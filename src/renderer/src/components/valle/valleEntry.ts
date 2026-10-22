@@ -5,7 +5,8 @@
  * The Valle root reads the seam A members it uses through one plain bridge, built by the composition root (`main.ts`)
  * from the page's own `window.api` (R13), so the root and its parts never read `window.api` themselves.
  */
-import type { HostFrame } from '@dwarfai/contracts'
+import type { HostFrame, UiPreferenceWrite } from '@dwarfai/contracts'
+import type { VallePinsBridge, VallePinsWrite } from '../../composables/useVallePins'
 import type { VallePresetBridge } from '../../composables/useVallePreset'
 import type { VallePresenceDeps } from '../../composables/useVallePresence'
 import type { ValleStoresBridge } from '../../composables/useValleStores'
@@ -18,12 +19,17 @@ export function isValleRoot(search: string): boolean {
 
 /**
  * The seam A members the Valle root uses: its stores (A-N17, A-N20, A-N12), its read models, its report (A-44), and its
- * preset's writes and moves (A-N21, A-N13; ISSUE-300).
+ * preset's writes and moves (A-N21, A-N13; ISSUE-300), and its pins' writes (A-N21 `pins`, A-N18; ISSUE-302).
  */
 export type ValleBridge = ValleStoresBridge &
   ValleReadModelBridge &
   VallePresenceDeps['bridge'] &
-  VallePresetBridge
+  VallePresetBridge &
+  VallePinsBridge
+
+/** The Valle keys the Valle window writes (A-N21). */
+type ValleWrite =
+  Extract<UiPreferenceWrite, { key: 'vallePreset' | 'valleLayout' }> | VallePinsWrite
 
 /** The Valle bridge over a `window.api`. */
 export function valleBridgeOf(api: Window['api']): ValleBridge {
@@ -36,7 +42,8 @@ export function valleBridgeOf(api: Window['api']): ValleBridge {
     getHostSnapshot: (params) => api.getHostSnapshot(params),
     onHostConnection: (listener) => api.onHostConnection(listener),
     reportVisibleMines: (request) => api.reportVisibleMines(request),
-    setUiPreference: (write) => api.setUiPreference(write),
-    moveToMode: (params) => api.moveToMode(params)
+    setUiPreference: (write: ValleWrite) => api.setUiPreference(write),
+    moveToMode: (params) => api.moveToMode(params),
+    patchUiSession: (patch) => api.patchUiSession(patch)
   }
 }

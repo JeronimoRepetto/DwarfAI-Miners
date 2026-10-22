@@ -168,3 +168,17 @@ describe('the Valle stores (07 S39.03, S39.10; ISSUE-299)', () => {
     expect(fake.resets).toHaveLength(0)
   })
 })
+
+// APPENDED for ISSUE-302: the start-up pins read the chat talked to last (07 S29.01, N-16, §24 I-29).
+describe('the chat talked to last, for the start-up pins (ISSUE-302)', () => {
+  it('[S29.01] the Panel’s open chat is read with the session as the chat talked to last', async () => {
+    const fake = fakeBridge()
+    let read: Awaited<ReturnType<typeof readValleStores>> | null = null
+    void readValleStores(fake.bridge).then((stores) => (read = stores))
+    fake.prefs[0]!.resolve({})
+    await flush()
+    fake.sessions[0]!.resolve({ ...SESSION, openChat: { panel: DWARF } })
+    await flush()
+    expect(read!.session.panelOpenChat).toBe(DWARF)
+  })
+})

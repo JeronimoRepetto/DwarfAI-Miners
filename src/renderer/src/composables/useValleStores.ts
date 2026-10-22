@@ -49,6 +49,11 @@ export interface ValleStores {
     readonly valle: UiSessionSnapshot['valle']
     readonly openChat: DwarfId | null
     readonly currentMine: MineId | null
+    /**
+     * The Panel's open chat, when it has one: the chat talked to last before Valle opened, for the start-up pins
+     * (07 S29.01, N-16, §24 I-29; ISSUE-302).
+     */
+    readonly panelOpenChat?: DwarfId
   }
 }
 
@@ -91,7 +96,8 @@ async function session(bridge: ValleStoresBridge): Promise<ValleStores['session'
   return {
     valle: snapshot.valle,
     openChat: snapshot.openChat.valle ?? null,
-    currentMine: snapshot.currentMine.valle ?? null
+    currentMine: snapshot.currentMine.valle ?? null,
+    ...(snapshot.openChat.panel ? { panelOpenChat: snapshot.openChat.panel } : {})
   }
 }
 

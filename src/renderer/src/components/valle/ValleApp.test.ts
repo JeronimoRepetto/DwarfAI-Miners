@@ -137,3 +137,33 @@ describe('the Valle root and its presets (ISSUE-300)', () => {
     ).toEqual([EREBOR, MORIA])
   })
 })
+
+// APPENDED for ISSUE-302: the pinned chats in the Valle root (07 machine 29; TC-302-01).
+describe('the pinned chats in the Valle root (ISSUE-302)', () => {
+  it('[TC-302-01, S29.02, S29.10] the restored pins are the Control room’s stack and the Work front’s tabs, and an unpin is written through A-N21 at once', async () => {
+    const { root, writes } = mountValle({
+      preset: 'control',
+      pins: [
+        { dwarfId: BORIN, mineId: MORIA, order: 0 },
+        { dwarfId: DAIN, mineId: EREBOR, order: 1 }
+      ]
+    })
+    await flushPromises()
+    const chats = root.get('aside[aria-label="Pinned chats"]')
+    expect(chats.find('section.dm-cstack').exists()).toBe(true)
+    expect(chats.get('.dm-cstack__count').text()).toBe('2')
+    expect(chats.get('[data-expanded="true"]').attributes('data-pin')).toBe(BORIN)
+
+    await root.get('[data-preset-tab="front"]').trigger('click')
+    expect(chats.find('section.dm-cstack').exists()).toBe(false)
+    expect(chats.findAll('[role="tab"]').map((tab) => tab.attributes('data-pin'))).toEqual([
+      BORIN,
+      DAIN
+    ])
+    await chats.get(`[role="tab"][data-pin="${DAIN}"] .dm-ctab__x`).trigger('click')
+    expect(chats.findAll('[role="tab"]').map((tab) => tab.attributes('data-pin'))).toEqual([BORIN])
+    expect(writes.filter((write) => write.key === 'pins')).toEqual([
+      { key: 'pins', value: [{ dwarfId: BORIN, mineId: MORIA, order: 0 }] }
+    ])
+  })
+})
