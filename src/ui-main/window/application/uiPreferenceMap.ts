@@ -35,9 +35,11 @@ export interface UiPreferenceMapDeps {
   /**
    * The Valle stores (14 §3.9; 07 S39.03, S39.13; ISSUE-299), answered for the Valle window's first paint. A store the
    * window cannot use loads its defaults and logs `uiprefs.corrupt` (FM-053), and an unwritten layout is not answered.
-   * None is renderer-writable yet: each becomes writable in the issue that first writes it (ISSUE-300…ISSUE-310).
+   * The Valle window writes the preset in use and each preset's layout on every change (07 machine 28; ISSUE-300),
+   * UI main storing them (ADR-024 item 9); each other key becomes writable in the issue that first writes it
+   * (ISSUE-301…ISSUE-310).
    */
-  valle?: Pick<UiPreferenceStore, 'load'>
+  valle?: Pick<UiPreferenceStore, 'load' | 'save'>
 }
 
 export interface UiPreferenceMap {
@@ -57,6 +59,9 @@ const VALLE_KEYS = [
   'pins',
   'mutedMineIds'
 ] as const satisfies readonly UiPreferenceKey[]
+
+/** The Valle keys the Valle window writes (ISSUE-300; 07 S28.06, S28.11, S28.16, S28.17). */
+const VALLE_WRITTEN: readonly UiPreferenceKey[] = ['vallePreset', 'valleLayout']
 
 /**
  * How a built key is read (`undefined`: nothing to answer) and, unless UI main alone writes it, written. A key read here
@@ -95,7 +100,15 @@ export function createUiPreferenceMap(deps: UiPreferenceMapDeps): UiPreferenceMa
           const value = valle.load(key)
           return key === 'valleLayout' && value === null ? undefined : value
         },
-        readOnly: 'not-built'
+        ...(VALLE_WRITTEN.includes(key)
+          ? {
+              set: (value) => {
+                // Throws when the write failed, the previous value kept: the seam A answer is then an error.
+                valle.save(key, value)
+                return value
+              }
+            }
+          : { readOnly: 'not-built' as const })
       }
     }
   }

@@ -104,7 +104,7 @@ describe('the Valle keys of the UI preference map (ISSUE-299; 07 S39.03, S39.13)
     return store
   }
 
-  it('[S39.03, ADR-024] A-N20 answers the stored Valle keys; an unwritten layout is not answered, and none is renderer-writable yet', () => {
+  it('[S39.03, ADR-024] A-N20 answers the stored Valle keys; an unwritten layout is not answered, and a key not written yet is not renderer-writable', () => {
     const map = createUiPreferenceMap({ valle: stored() })
     expect(map.get(VALLE_KEYS)).toEqual({
       vallePreset: 'front',
@@ -124,16 +124,9 @@ describe('the Valle keys of the UI preference map (ISSUE-299; 07 S39.03, S39.13)
       valleLastFrontMineId: null,
       mutedMineIds: []
     })
-    // Each becomes writable in the issue that first writes it (ISSUE-300…ISSUE-310).
-    expect(map.set({ key: 'vallePreset', value: 'control' })).toEqual({
-      ok: false,
-      error: 'not-built'
-    })
+    // Each becomes writable in the issue that first writes it. AMENDED for ISSUE-300 (was: `vallePreset` and
+    // `valleLayout` refused `not-built` too): ISSUE-300 writes those two, asserted in its own case below.
     expect(map.set({ key: 'pins', value: null })).toEqual({ ok: false, error: 'not-built' })
-    expect(map.set({ key: 'valleLayout', value: LAYOUT })).toEqual({
-      ok: false,
-      error: 'not-built'
-    })
   })
 
   it('[S39.13, FM-053] an unreadable store falls back to its defaults and logs uiprefs.corrupt', () => {
@@ -156,5 +149,48 @@ describe('the Valle keys of the UI preference map (ISSUE-299; 07 S39.03, S39.13)
         msg
       }))
     )
+  })
+})
+
+// APPENDED for ISSUE-300: the Valle window writes the preset in use and each preset's layout (07 machine 28).
+describe('the Valle preset and layouts written through A-N21 (ISSUE-300; ADR-024 items 1, 4, 9)', () => {
+  const MINE = '018f3a2e-7c4b-7d1e-9a5b-2f6c8d0e1a02' as MineId
+  const LAYOUT: UiPreferencesMap['valleLayout'] = {
+    control: { chatWidth: 0, split: false, foldedList: false, zones: {} },
+    front: { chatWidth: 0, split: false, foldedList: true, zone: { content: 'mine' } }
+  }
+
+  it('[S28.16, S28.17, S28.26, ADR-024] vallePreset and valleLayout are written into UI main’s store and answered as stored; the other four stay refused', () => {
+    const store = new InMemoryUiPreferenceStore()
+    const map = createUiPreferenceMap({ valle: store })
+    expect(map.set({ key: 'vallePreset', value: 'front' })).toEqual({
+      ok: true,
+      value: { key: 'vallePreset', value: 'front' }
+    })
+    expect(map.set({ key: 'valleLayout', value: LAYOUT })).toEqual({
+      ok: true,
+      value: { key: 'valleLayout', value: LAYOUT }
+    })
+    expect(store.load('vallePreset')).toBe('front')
+    expect(store.load('valleLayout')).toEqual(LAYOUT)
+    // The next open (S28.02) reads back what was written on every change (S28.26).
+    expect(createUiPreferenceMap({ valle: store }).get(['vallePreset', 'valleLayout'])).toEqual({
+      vallePreset: 'front',
+      valleLayout: LAYOUT
+    })
+    // Each of the other four becomes writable in the issue that first writes it (ISSUE-301…ISSUE-310).
+    expect(map.set({ key: 'pins', value: null })).toEqual({ ok: false, error: 'not-built' })
+    expect(map.set({ key: 'valleMosaicOrder', value: [MINE] })).toEqual({
+      ok: false,
+      error: 'not-built'
+    })
+    expect(map.set({ key: 'valleLastFrontMineId', value: MINE })).toEqual({
+      ok: false,
+      error: 'not-built'
+    })
+    expect(map.set({ key: 'mutedMineIds', value: [MINE] })).toEqual({
+      ok: false,
+      error: 'not-built'
+    })
   })
 })

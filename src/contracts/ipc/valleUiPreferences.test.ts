@@ -73,7 +73,41 @@ describe('the Valle preferences of 14 §3.9 (ISSUE-299)', () => {
   })
 
   it('[ADR-024] no Valle key is renderer-writable before the issue that first writes it', () => {
-    for (const [key, value] of Object.entries(VALLE_ANSWER)) {
+    // AMENDED for ISSUE-300 (was: every Valle key refused): the preset and the layouts are written from ISSUE-300 on
+    // (asserted below); the other four are still refused.
+    const written = ['vallePreset', 'valleLayout']
+    for (const [key, value] of Object.entries(VALLE_ANSWER).filter(([k]) => !written.includes(k))) {
+      expect(uiPreferenceWriteSchema.safeParse({ key, value }).success, key).toBe(false)
+    }
+  })
+})
+
+// APPENDED for ISSUE-300: the Valle window writes the preset in use and each preset's layout (07 machine 28).
+describe('the Valle preset and layouts written by the Valle window (ISSUE-300)', () => {
+  it('[S28.16, S28.17, ADR-024] vallePreset and valleLayout are renderer-writable in their 14 §3.9 shapes, strictly; the other four Valle keys are not yet', () => {
+    expect(uiPreferenceWriteSchema.safeParse({ key: 'vallePreset', value: 'front' }).success).toBe(
+      true
+    )
+    expect(
+      uiPreferenceWriteSchema.safeParse({ key: 'valleLayout', value: VALLE_ANSWER.valleLayout })
+        .success
+    ).toBe(true)
+    for (const wrong of [
+      { key: 'vallePreset', value: 'mosaic' },
+      { key: 'valleLayout', value: null },
+      {
+        key: 'valleLayout',
+        value: {
+          ...VALLE_ANSWER.valleLayout,
+          front: { ...VALLE_ANSWER.valleLayout.front, scrollLeft: 0 }
+        }
+      },
+      { key: 'vallePreset', value: 'front', extra: true }
+    ]) {
+      expect(uiPreferenceWriteSchema.safeParse(wrong).success, JSON.stringify(wrong)).toBe(false)
+    }
+    for (const key of ['valleLastFrontMineId', 'valleMosaicOrder', 'pins', 'mutedMineIds']) {
+      const value = VALLE_ANSWER[key as keyof typeof VALLE_ANSWER]
       expect(uiPreferenceWriteSchema.safeParse({ key, value }).success, key).toBe(false)
     }
   })

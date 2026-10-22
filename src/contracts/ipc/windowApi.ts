@@ -485,7 +485,8 @@ export const uiPreferencesAnswerSchema = z
     // ISSUE-294: Settings › General "Mode at launch" (US-SET-002.AC09), read and written by the Panel renderer.
     modeAtLaunch: modeAtLaunchSchema.optional(),
     // ISSUE-299: the Valle stores, read by the Valle renderer before its first paint (07 S39.03); each becomes
-    // renderer-writable in the issue that first writes it (ISSUE-300…ISSUE-310). An unwritten layout is not answered.
+    // renderer-writable in the issue that first writes it (ISSUE-300: the preset and the layouts; ISSUE-301…ISSUE-310
+    // the rest). An unwritten layout is not answered.
     valleLayout: valleLayoutSchema.optional(),
     vallePreset: vallePresetSchema.optional(),
     valleLastFrontMineId: valleLastFrontMineIdSchema.optional(),
@@ -523,7 +524,11 @@ export const revealDwarfChatPushSchema = z
  */
 export const uiPreferenceWriteSchema = z.discriminatedUnion('key', [
   z.object({ key: z.literal('startWithSystem'), value: z.boolean() }).strict(),
-  z.object({ key: z.literal('modeAtLaunch'), value: modeAtLaunchSchema }).strict()
+  z.object({ key: z.literal('modeAtLaunch'), value: modeAtLaunchSchema }).strict(),
+  // ISSUE-300: the Valle window writes the preset in use and each preset's layout on every change (07 S28.06,
+  // S28.11, S28.16, S28.17); the other Valle keys become writable in the issue that first writes them.
+  z.object({ key: z.literal('vallePreset'), value: vallePresetSchema }).strict(),
+  z.object({ key: z.literal('valleLayout'), value: valleLayoutSchema }).strict()
 ]) satisfies z.ZodType<UiPreferenceWrite>
 
 // A-N13 `moveToMode`, A-N14 `onModeTransition`, A-N15 `modeTransitionDone` (14 §2.2, §3.9; ADR-025 item 3;

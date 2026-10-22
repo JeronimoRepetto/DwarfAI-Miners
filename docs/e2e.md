@@ -74,7 +74,9 @@ cases can run, while a release build lists a mode only from the issue that ships
 `DWARFAI_BUILD_PROFILE=e2e` at `pnpm build`. `electron.vite.config.ts` stamps it into UI main and the renderer, which
 both read the one list, `builtModesOf` in `src/contracts/ipc/builtModes.ts` (ISSUE-285): `release` (or no value, or
 any other value) is the Panel and Veta (Veta since ISSUE-294); `e2e` adds Valle, whose window is built from ISSUE-299
-on (`e2e/valle/`, the Valle page found by polling `app.windows()` in `e2e/support/valle.ts`). So both builds have the
+on (`e2e/valle/`, the Valle page found by polling `app.windows()` in `e2e/support/valle.ts`; `e2e/valle/presets.e2e.ts`
+relaunches on one profile and, while the app is closed, writes the stores no Valle control writes yet, the pins and the
+mosaic order, in UI main's own file shapes, ISSUE-300). So both builds have the
 Veta window, the nav's "▼ Veta" and Settings › General "Mode at launch"; only the E2E build has the Valle window and
 draws "▲ Valle". The release guarantee is proven by the unit tests over `builtModesOf('release')`, and
 `e2e/panel/hidden-until-built.e2e.ts` checks a build against the profile it was built with: run it with

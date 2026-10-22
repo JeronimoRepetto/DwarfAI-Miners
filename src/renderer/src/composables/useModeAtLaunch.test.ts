@@ -20,7 +20,7 @@ function world(options: { stored?: ModeAtLaunch; refuse?: boolean } = {}) {
       return Promise.resolve(request.keys.includes('modeAtLaunch') ? { modeAtLaunch: stored } : {})
     },
     setUiPreference: (write) => {
-      writes.push(write)
+      writes.push(write as UiPreferenceWrite)
       if (options.refuse === true) {
         // How the router answers a write it refuses (ui-main/ipc/router.ts), typed looser than the row's answer.
         return Promise.resolve({
@@ -29,7 +29,7 @@ function world(options: { stored?: ModeAtLaunch; refuse?: boolean } = {}) {
         } as never)
       }
       if (write.key === 'modeAtLaunch') stored = write.value
-      return Promise.resolve(write)
+      return Promise.resolve(write as never)
     },
     onUiPreferencesReset: (h) => (resets.push(h), () => {})
   })

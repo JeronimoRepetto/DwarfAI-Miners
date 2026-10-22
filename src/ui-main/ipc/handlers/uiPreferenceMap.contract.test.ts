@@ -202,12 +202,44 @@ describe('the Valle keys over seam A (ISSUE-299; 14 §2.2 A-N20, A-N21)', () => 
       mutedMineIds: []
     })
     expect(CHANNELS[UI_PREFERENCES_GET].response.safeParse(asked).success).toBe(true)
+    // AMENDED for ISSUE-300 (was: a `vallePreset` write refused): ISSUE-300 builds the preset and layout writes
+    // (asserted in its own case below); a Valle key not built yet, here the mosaic order, is still refused.
     expect(
       await router.dispatch(UI_PREFERENCES_SET, FROM_PANEL, {
-        key: 'vallePreset',
-        value: 'control'
+        key: 'valleMosaicOrder',
+        value: []
       })
     ).toMatchObject({ ok: false, error: { code: 'INVALID_PARAMS' } })
+    expect(store.load('valleMosaicOrder')).toEqual([mine])
+  })
+})
+
+// APPENDED for ISSUE-300: the Valle window writes the preset in use and each preset's layout through the gate.
+describe('the Valle preset and layouts over seam A (ISSUE-300; 14 §2.2 A-N21)', () => {
+  it('[S28.16, S28.17, ADR-024] setUiPreference stores vallePreset and valleLayout and answers them in the registry shape; pins stay INVALID_PARAMS', async () => {
+    const { router, store } = world()
+    const layout = {
+      control: { chatWidth: 0, split: false, foldedList: false, zones: {} },
+      front: { chatWidth: 0, split: false, foldedList: true, zone: { content: 'mine' } }
+    }
+    const answerSchema = CHANNELS[UI_PREFERENCES_SET].response
+    const preset = await router.dispatch(UI_PREFERENCES_SET, FROM_PANEL, {
+      key: 'vallePreset',
+      value: 'front'
+    })
+    expect(preset).toEqual({ key: 'vallePreset', value: 'front' })
+    expect(answerSchema.safeParse(preset).success).toBe(true)
+    const written = await router.dispatch(UI_PREFERENCES_SET, FROM_PANEL, {
+      key: 'valleLayout',
+      value: layout
+    })
+    expect(written).toEqual({ key: 'valleLayout', value: layout })
+    expect(answerSchema.safeParse(written).success).toBe(true)
     expect(store.load('vallePreset')).toBe('front')
+    expect(store.load('valleLayout')).toEqual(layout)
+    expect(
+      await router.dispatch(UI_PREFERENCES_SET, FROM_PANEL, { key: 'pins', value: null })
+    ).toMatchObject({ ok: false, error: { code: 'INVALID_PARAMS' } })
+    expect(store.load('pins')).toBeNull()
   })
 })
