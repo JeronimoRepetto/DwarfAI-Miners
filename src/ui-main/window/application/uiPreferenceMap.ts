@@ -60,8 +60,16 @@ const VALLE_KEYS = [
   'mutedMineIds'
 ] as const satisfies readonly UiPreferenceKey[]
 
-/** The Valle keys the Valle window writes (ISSUE-300: 07 S28.06, S28.11, S28.16, S28.17; ISSUE-302: 07 machine 29). */
-const VALLE_WRITTEN: readonly UiPreferenceKey[] = ['vallePreset', 'valleLayout', 'pins']
+/**
+ * The Valle keys the Valle window writes (ISSUE-300: 07 S28.06, S28.11, S28.16, S28.17; ISSUE-302: 07 machine 29;
+ * ISSUE-301: the last mine worked in, 07 S28.03, S28.15).
+ */
+const VALLE_WRITTEN: readonly UiPreferenceKey[] = [
+  'vallePreset',
+  'valleLayout',
+  'pins',
+  'valleLastFrontMineId'
+]
 
 /**
  * How a built key is read (`undefined`: nothing to answer) and, unless UI main alone writes it, written. A key read here

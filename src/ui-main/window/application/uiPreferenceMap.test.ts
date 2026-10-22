@@ -185,10 +185,8 @@ describe('the Valle preset and layouts written through A-N21 (ISSUE-300; ADR-024
       ok: false,
       error: 'not-built'
     })
-    expect(map.set({ key: 'valleLastFrontMineId', value: MINE })).toEqual({
-      ok: false,
-      error: 'not-built'
-    })
+    // AMENDED for ISSUE-301 (was: `valleLastFrontMineId` refused `not-built` here): the dive writes it, asserted in
+    // its own case below.
     expect(map.set({ key: 'mutedMineIds', value: [MINE] })).toEqual({
       ok: false,
       error: 'not-built'
@@ -219,6 +217,29 @@ describe('the Valle pins written through A-N21 (ISSUE-302; ADR-024 items 1, 4, 9
     expect(store.storage.logged).toEqual([
       { level: 'warn', event: 'uiprefs.write-failed', subsystem: 'window', msg: 'pins' }
     ])
+    expect(map.set({ key: 'valleMosaicOrder', value: [MINE] })).toEqual({
+      ok: false,
+      error: 'not-built'
+    })
+  })
+})
+
+// APPENDED for ISSUE-301: the dive and a Work front swap write the last mine worked in (07 S28.03, S28.15; N-15).
+describe('the last mine worked in written through A-N21 (ISSUE-301; ADR-024 items 1, 4, 9)', () => {
+  const MINE = '018f3a2e-7c4b-7d1e-9a5b-2f6c8d0e1a02' as MineId
+
+  it('[S28.02, S28.03, S28.15] valleLastFrontMineId is written into UI main’s store and answered as stored, the next open reading it', () => {
+    const store = new InMemoryUiPreferenceStore()
+    const map = createUiPreferenceMap({ valle: store })
+    expect(map.set({ key: 'valleLastFrontMineId', value: MINE })).toEqual({
+      ok: true,
+      value: { key: 'valleLastFrontMineId', value: MINE }
+    })
+    expect(store.load('valleLastFrontMineId')).toBe(MINE)
+    expect(createUiPreferenceMap({ valle: store }).get(['valleLastFrontMineId'])).toEqual({
+      valleLastFrontMineId: MINE
+    })
+    // The mosaic order is still another issue's (ISSUE-304).
     expect(map.set({ key: 'valleMosaicOrder', value: [MINE] })).toEqual({
       ok: false,
       error: 'not-built'

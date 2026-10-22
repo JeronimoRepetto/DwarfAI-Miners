@@ -243,3 +243,25 @@ describe('the Valle preset and layouts over seam A (ISSUE-300; 14 §2.2 A-N21)',
     expect(store.load('pins')).toBeNull()
   })
 })
+
+// APPENDED for ISSUE-301: the dive writes the last mine worked in through the gate (07 S28.03, S28.15; N-15).
+describe('the last mine worked in over seam A (ISSUE-301; 14 §2.2 A-N21)', () => {
+  it('[S28.03, S28.15, ADR-024] setUiPreference stores valleLastFrontMineId and answers it in the registry shape; null stays INVALID_PARAMS', async () => {
+    const { router, store } = world()
+    const mine = '018f3a2e-7c4b-7d1e-9a5b-2f6c8d0e1a02'
+    const written = await router.dispatch(UI_PREFERENCES_SET, FROM_PANEL, {
+      key: 'valleLastFrontMineId',
+      value: mine
+    })
+    expect(written).toEqual({ key: 'valleLastFrontMineId', value: mine })
+    expect(CHANNELS[UI_PREFERENCES_SET].response.safeParse(written).success).toBe(true)
+    expect(store.load('valleLastFrontMineId')).toBe(mine)
+    expect(
+      await router.dispatch(UI_PREFERENCES_SET, FROM_PANEL, {
+        key: 'valleLastFrontMineId',
+        value: null
+      })
+    ).toMatchObject({ ok: false, error: { code: 'INVALID_PARAMS' } })
+    expect(store.load('valleLastFrontMineId')).toBe(mine)
+  })
+})

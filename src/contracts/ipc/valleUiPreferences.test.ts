@@ -75,8 +75,9 @@ describe('the Valle preferences of 14 §3.9 (ISSUE-299)', () => {
   it('[ADR-024] no Valle key is renderer-writable before the issue that first writes it', () => {
     // AMENDED for ISSUE-300 (was: every Valle key refused): the preset and the layouts are written from ISSUE-300 on
     // (asserted below). AMENDED for ISSUE-302 (was: `pins` refused too): the pins are written from ISSUE-302 on
-    // (asserted below); the other three are still refused.
-    const written = ['vallePreset', 'valleLayout', 'pins']
+    // (asserted below); the other three are still refused. AMENDED for ISSUE-301 (was: `valleLastFrontMineId` refused
+    // too): the dive writes the last mine worked in from ISSUE-301 on (asserted below).
+    const written = ['vallePreset', 'valleLayout', 'pins', 'valleLastFrontMineId']
     for (const [key, value] of Object.entries(VALLE_ANSWER).filter(([k]) => !written.includes(k))) {
       expect(uiPreferenceWriteSchema.safeParse({ key, value }).success, key).toBe(false)
     }
@@ -108,9 +109,26 @@ describe('the Valle preset and layouts written by the Valle window (ISSUE-300)',
       expect(uiPreferenceWriteSchema.safeParse(wrong).success, JSON.stringify(wrong)).toBe(false)
     }
     // AMENDED for ISSUE-302 (was: `pins` in this list): the pins are renderer-writable from ISSUE-302 on.
-    for (const key of ['valleLastFrontMineId', 'valleMosaicOrder', 'mutedMineIds']) {
+    // AMENDED for ISSUE-301 (was: `valleLastFrontMineId` in this list): written by the dive from ISSUE-301 on.
+    for (const key of ['valleMosaicOrder', 'mutedMineIds']) {
       const value = VALLE_ANSWER[key as keyof typeof VALLE_ANSWER]
       expect(uiPreferenceWriteSchema.safeParse({ key, value }).success, key).toBe(false)
+    }
+  })
+})
+
+// APPENDED for ISSUE-301: the dive and a Work front swap write the last mine worked in (07 S28.03, S28.15; N-15).
+describe('the last mine worked in written by the Valle window (ISSUE-301)', () => {
+  it('[S28.03, S28.15, ADR-024] valleLastFrontMineId is renderer-writable as a mine id, strictly; never null, which only Reset metrics restores', () => {
+    expect(
+      uiPreferenceWriteSchema.safeParse({ key: 'valleLastFrontMineId', value: MINE }).success
+    ).toBe(true)
+    for (const wrong of [
+      { key: 'valleLastFrontMineId', value: null },
+      { key: 'valleLastFrontMineId', value: 'not-a-mine-id' },
+      { key: 'valleLastFrontMineId', value: MINE, extra: true }
+    ]) {
+      expect(uiPreferenceWriteSchema.safeParse(wrong).success, JSON.stringify(wrong)).toBe(false)
     }
   })
 })
@@ -133,9 +151,26 @@ describe('the Valle pins written by the Valle window (ISSUE-302)', () => {
     ]) {
       expect(uiPreferenceWriteSchema.safeParse(wrong).success, JSON.stringify(wrong)).toBe(false)
     }
-    for (const key of ['valleLastFrontMineId', 'valleMosaicOrder', 'mutedMineIds']) {
+    // AMENDED for ISSUE-301 (was: `valleLastFrontMineId` in this list): written by the dive from ISSUE-301 on.
+    for (const key of ['valleMosaicOrder', 'mutedMineIds']) {
       const value = VALLE_ANSWER[key as keyof typeof VALLE_ANSWER]
       expect(uiPreferenceWriteSchema.safeParse({ key, value }).success, key).toBe(false)
+    }
+  })
+})
+
+// APPENDED for ISSUE-301: the dive and a Work front swap write the last mine worked in (07 S28.03, S28.15; N-15).
+describe('the last mine worked in written by the Valle window (ISSUE-301)', () => {
+  it('[S28.03, S28.15, ADR-024] valleLastFrontMineId is renderer-writable as a mine id, strictly; never null, which only Reset metrics restores', () => {
+    expect(
+      uiPreferenceWriteSchema.safeParse({ key: 'valleLastFrontMineId', value: MINE }).success
+    ).toBe(true)
+    for (const wrong of [
+      { key: 'valleLastFrontMineId', value: null },
+      { key: 'valleLastFrontMineId', value: 'not-a-mine-id' },
+      { key: 'valleLastFrontMineId', value: MINE, extra: true }
+    ]) {
+      expect(uiPreferenceWriteSchema.safeParse(wrong).success, JSON.stringify(wrong)).toBe(false)
     }
   })
 })
