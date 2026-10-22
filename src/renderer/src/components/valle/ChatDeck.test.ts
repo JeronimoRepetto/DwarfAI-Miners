@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
-import { NO_PINS, stepPins, type PinInput, type PinSet } from '../../lib/valle/pins'
+import { NO_PINS, pinViews, stepPins, type PinInput, type PinSet } from '../../lib/valle/pins'
 import { pinFacts, pinHarness } from '../../lib/valle/testing/pinHarness'
 import { BORIN, DAIN, EREBOR, MORIA, NALI } from '../../lib/veta/testing/vetaFixtures'
 import ChatDeck from './ChatDeck.vue'
@@ -151,5 +151,78 @@ describe('the chat tabs (ISSUE-302)', () => {
     expect(order()).toEqual([NALI, BORIN, DAIN])
     expect(set.value.pins.map((pin) => pin.key)).toEqual([NALI, BORIN, DAIN])
     expect(set.value.dragging).toBeNull()
+  })
+})
+
+describe('the split (ISSUE-303)', () => {
+  /** The deck alone, BORIN and DAIN side by side, focus in `focus`'s pane. */
+  function mountSplit(
+    focus: string,
+    button = { disabled: false, pressed: true, title: 'Split · two chats side by side' }
+  ) {
+    const wrapper = mount(ChatDeck, {
+      props: {
+        pins: pinViews(three(), facts),
+        focus,
+        focusRequest: null,
+        split: { panes: [BORIN, DAIN], button }
+      },
+      attachTo: document.body
+    })
+    root = wrapper
+    return wrapper
+  }
+  const brass = (wrapper: VueWrapper) => ({
+    tabs: wrapper.findAll('.dm-ctab.is-focus-pane').map((t) => t.attributes('data-pin')),
+    panes: wrapper.findAll('.dm-cdeck__pane.is-focus').map((p) => p.attributes('data-pane'))
+  })
+
+  it('[US-VALLE-008.AC07, S30.09] with both panes shown both tabs read as selected and only the focused pane and its tab carry the brass mark', async () => {
+    const deck = mountSplit(DAIN)
+    expect(deck.get('.dm-cdeck__panes').attributes('data-split')).toBe('true')
+    expect(deck.findAll('.dm-cdeck__pane').map((p) => p.attributes('data-pane'))).toEqual([
+      BORIN,
+      DAIN
+    ])
+    expect(selected(deck)).toEqual([BORIN, DAIN])
+    expect(brass(deck)).toEqual({ tabs: [DAIN], panes: [DAIN] })
+
+    // A click in the other pane asks for its chat; a click in the focused pane asks nothing.
+    await deck.get(`.dm-cdeck__pane[data-pane="${BORIN}"]`).trigger('pointerdown')
+    await deck.get(`.dm-cdeck__pane[data-pane="${DAIN}"]`).trigger('pointerdown')
+    expect(deck.emitted('select')).toEqual([[BORIN]])
+    await deck.setProps({ focus: BORIN })
+    expect(selected(deck)).toEqual([BORIN, DAIN])
+    expect(brass(deck)).toEqual({ tabs: [BORIN], panes: [BORIN] })
+
+    // ⫽: a toggle reporting aria-pressed, titled per machine 30; a press asks for the split.
+    const press = deck.get('button.dm-cdeck__split')
+    expect(press.text()).toBe('⫽')
+    expect(press.attributes('title')).toBe('Split · two chats side by side')
+    expect(press.attributes('aria-pressed')).toBe('true')
+    await press.trigger('click')
+    expect(deck.emitted('split')).toHaveLength(1)
+  })
+
+  it('[US-VALLE-008.AC04, US-VALLE-008.AC06] one pane shows its tab with the brass edge and no pane outline; a disabled ⫽ carries its title', () => {
+    const deck = mount(ChatDeck, {
+      props: {
+        pins: pinViews(three(), facts),
+        focus: BORIN,
+        focusRequest: null,
+        split: {
+          panes: [BORIN],
+          button: { disabled: true, pressed: true, title: 'Split · needs a wider window' }
+        }
+      },
+      attachTo: document.body
+    })
+    root = deck
+    expect(deck.get('.dm-cdeck__panes').attributes('data-split')).toBe('false')
+    expect(selected(deck)).toEqual([BORIN])
+    expect(brass(deck)).toEqual({ tabs: [BORIN], panes: [] })
+    const press = deck.get('button.dm-cdeck__split')
+    expect(press.attributes('disabled')).toBeDefined()
+    expect(press.attributes('title')).toBe('Split · needs a wider window')
   })
 })

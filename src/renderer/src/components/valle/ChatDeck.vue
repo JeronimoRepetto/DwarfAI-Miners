@@ -13,17 +13,31 @@
  *   before it, else the deck itself (tabindex -1), never dropped (AC04).
  * - Dragging a tab moves it among the others as it crosses them; the drop commits the order, a drag ended any other
  *   way (Esc included) keeps it (AC05; S29.07…S29.09).
+ * - "⫽" beside the strip shows two chats side by side, never three (07 machine 30; US-VALLE-008; ISSUE-303): a toggle
+ *   reporting `aria-pressed`, disabled and titled as machine 30 says. With both panes shown both tabs read as selected;
+ *   only the focused pane's tab carries the brass edge (`is-focus-pane`), and its pane the brass outline (`is-focus`),
+ *   which shows only in a split (AC07). A press in the other pane selects its chat (S30.09).
  *
  * Presentational: the set, its selection and every decision are the Valle root's (`useVallePins`).
  */
 import { computed, nextTick, ref, shallowRef, watch } from 'vue'
 import { arrowTarget, type FocusRequest, type PinKey, type PinView } from '../../lib/valle/pins'
+import type { SplitButton } from '../../lib/valle/split'
+import ActionButton from '../controls/ActionButton.vue'
+
+/** The split as the Work front shows it: the panes, first then second, and "⫽". */
+export interface DeckSplit {
+  readonly panes: readonly PinKey[]
+  readonly button: SplitButton
+}
 
 const props = defineProps<{
   pins: readonly PinView[]
   /** The selected tab. */
   focus: PinKey | null
   focusRequest: FocusRequest | null
+  /** Machine 30's panes and "⫽"; absent, the selected tab's pane alone and no "⫽". */
+  split?: DeckSplit | null
 }>()
 const emit = defineEmits<{
   select: [key: PinKey]
@@ -31,6 +45,7 @@ const emit = defineEmits<{
   drag: [key: PinKey]
   drop: [order: readonly PinKey[]]
   'drag-cancel': []
+  split: []
 }>()
 
 const root = ref<HTMLElement | null>(null)
@@ -47,7 +62,18 @@ const shown = computed((): readonly PinView[] => {
   if (order === null) return props.pins
   return order.flatMap((key) => props.pins.filter((pin) => pin.key === key))
 })
-const selectedPin = computed(() => props.pins.find((pin) => pin.key === props.focus) ?? null)
+/** The panes shown, first then second: the split's two, else the selected tab's. */
+const panes = computed((): readonly PinView[] => {
+  const keys = props.split?.panes ?? (props.focus === null ? [] : [props.focus])
+  return keys.flatMap((key) => props.pins.filter((pin) => pin.key === key)).slice(0, 2)
+})
+const splitShown = computed(() => panes.value.length === 2)
+const isShown = (key: PinKey): boolean => panes.value.some((pane) => pane.key === key)
+
+/** S30.09: a press in the other pane selects its chat. */
+function onPanePress(key: PinKey): void {
+  if (key !== props.focus) emit('select', key)
+}
 const inTabOrder = computed(() => {
   const key = rover.value
   return key !== null && props.pins.some((pin) => pin.key === key) ? key : props.focus
@@ -152,11 +178,11 @@ function onDragEnd(): void {
           v-for="pin in shown"
           :key="pin.key"
           class="dm-ctab m-mat"
-          :class="{ 'is-dragging': pin.key === dragged }"
+          :class="{ 'is-dragging': pin.key === dragged, 'is-focus-pane': pin.key === focus }"
           role="tab"
           draggable="true"
           :tabindex="pin.key === inTabOrder ? 0 : -1"
-          :aria-selected="pin.key === focus ? 'true' : 'false'"
+          :aria-selected="isShown(pin.key) ? 'true' : 'false'"
           :aria-label="pin.text.tabLabel"
           :data-pin="pin.key"
           :data-pin-mine="pin.mineId"
@@ -186,15 +212,30 @@ function onDragEnd(): void {
           </button>
         </div>
       </div>
+      <ActionButton
+        v-if="split"
+        class="dm-cdeck__split"
+        label="⫽"
+        size="sm"
+        :title="split.button.title"
+        :pressed="split.button.pressed"
+        :disabled="split.button.disabled"
+        @click="emit('split')"
+      />
     </header>
-    <div class="dm-cdeck__panes" data-split="false">
+    <div class="dm-cdeck__panes" :data-split="splitShown ? 'true' : 'false'">
       <div
-        v-if="selectedPin !== null"
+        v-for="pane in panes"
+        :key="pane.key"
         class="dm-cdeck__pane"
-        :data-pane="selectedPin.key"
-        :data-read-only="selectedPin.readOnly ? 'true' : 'false'"
+        :class="{ 'is-focus': splitShown && pane.key === focus }"
+        role="tabpanel"
+        :aria-label="pane.text.name"
+        :data-pane="pane.key"
+        :data-read-only="pane.readOnly ? 'true' : 'false'"
+        @pointerdown.capture="onPanePress(pane.key)"
       >
-        <slot name="chat" :pin="selectedPin" />
+        <slot name="chat" :pin="pane" />
       </div>
     </div>
   </section>
@@ -242,11 +283,32 @@ function onDragEnd(): void {
   min-width: 0;
   min-height: 0;
 }
+.dm-cdeck__panes[data-split='true'] {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
 .dm-cdeck__pane {
   position: relative;
   display: flex;
   min-width: 0;
   min-height: 0;
+}
+.dm-cdeck__pane > * {
+  flex: 1;
+  min-width: 0;
+}
+/* The focused pane's brass outline sits on an overlay every pane has, so focus only paints it (NFR-A11Y-01). */
+.dm-cdeck__pane::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.dm-cdeck__pane.is-focus::after {
+  box-shadow: inset 0 0 0 2px var(--brass);
+}
+.dm-cdeck__split {
+  flex: none;
+  font-size: var(--fs-section);
 }
 .dm-ctab {
   position: relative;
@@ -275,6 +337,9 @@ function onDragEnd(): void {
   --mat-fill: var(--wood-hi);
   --mat-hi: var(--gold-lo);
   --mat-lo: var(--wood-lo);
+}
+.dm-ctab.is-focus-pane {
+  --mat-edge: var(--brass);
 }
 .dm-ctab__add {
   display: grid;

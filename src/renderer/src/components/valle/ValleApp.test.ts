@@ -3,6 +3,7 @@ import type { MoveToModeParams, UiPreferenceWrite } from '@dwarfai/contracts'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createFakeWindowApi } from '../../../../contracts/ipc/testing/fakeWindowApi'
+import type { ValleBodyObserver } from '../../composables/useValleSplit'
 import { VALLE_STORE_DEFAULTS, type ValleStores } from '../../composables/useValleStores'
 import { defaultValleLayouts } from '../../lib/valle/preset'
 import {
@@ -37,7 +38,10 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-function mountValle(stores: Partial<ValleStores>) {
+function mountValle(
+  stores: Partial<ValleStores>,
+  bodyObserver: ValleBodyObserver = () => () => {}
+) {
   const writes: UiPreferenceWrite[] = []
   const moves: MoveToModeParams[] = []
   const api = createFakeWindowApi({
@@ -63,7 +67,9 @@ function mountValle(stores: Partial<ValleStores>) {
     props: {
       bridge: valleBridgeOf(api),
       stores: { ...VALLE_STORE_DEFAULTS, ...stores },
-      observer: () => new InertObserver()
+      observer: () => new InertObserver(),
+      // jsdom has no ResizeObserver: unless a test measures the body, it never is, and the split stays off.
+      bodyObserver
     }
   })
   return { root, writes, moves }
@@ -166,5 +172,37 @@ describe('the pinned chats in the Valle root (ISSUE-302)', () => {
     expect(writes.filter((write) => write.key === 'pins')).toEqual([
       { key: 'pins', value: [{ dwarfId: BORIN, mineId: MORIA, order: 0 }] }
     ])
+  })
+
+  it('[US-VALLE-008.AC01, US-VALLE-008.AC02, S30.01, S30.02] ⫽ in the Work front shows two chats side by side and back, the wish written with the Work front layout through A-N21', async () => {
+    // The body measured once, wide enough for 640 px of room beside the mine (07 machine 30).
+    const { root, writes } = mountValle(
+      {
+        preset: 'front',
+        pins: [
+          { dwarfId: BORIN, mineId: MORIA, order: 0 },
+          { dwarfId: DAIN, mineId: EREBOR, order: 1 }
+        ]
+      },
+      (_target, callback) => {
+        callback(1600)
+        return () => {}
+      }
+    )
+    await flushPromises()
+    const panes = () => root.findAll('.dm-cdeck__pane').map((p) => p.attributes('data-pane'))
+    expect(panes()).toEqual([BORIN])
+    const press = root.get('button.dm-cdeck__split')
+    expect(press.attributes('disabled')).toBeUndefined()
+    await press.trigger('click')
+    expect(panes()).toEqual([BORIN, DAIN])
+    await press.trigger('click')
+    expect(panes()).toEqual([BORIN])
+    const split = (on: boolean) => {
+      const layouts = defaultValleLayouts()
+      layouts.front.split = on
+      return { key: 'valleLayout', value: layouts }
+    }
+    expect(writes).toEqual([split(true), split(false)])
   })
 })

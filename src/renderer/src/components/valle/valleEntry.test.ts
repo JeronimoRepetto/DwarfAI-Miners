@@ -46,7 +46,9 @@ describe('the Valle entry of the renderer (ADR-025 item 1; 05 §2.3; ISSUE-299)'
           void callback
           void options
           return new InertObserver()
-        }
+        },
+        // jsdom has no ResizeObserver: the body is never measured, so the split stays off.
+        bodyObserver: () => () => {}
       }
     })
     const valle = root.find('[data-valle-root]')
@@ -56,8 +58,9 @@ describe('the Valle entry of the renderer (ADR-025 item 1; 05 §2.3; ISSUE-299)'
     expect(valle.attributes('data-held')).toBe('false')
     // AMENDED for ISSUE-300 (was: no text at all): the top bar and the Work front's mines list are built, each with
     // the design's own copy (`organisms/valle-bar`, `organisms/mine-rows`); the zones' contents are not yet.
+    // AMENDED for ISSUE-303: the Work front's deck carries "⫽" (`organisms/chat-deck`), disabled with no pin.
     expect(root.text().replace(/\s+/g, ' ').trim()).toBe(
-      'Control roomWork frontMODE ▼ Panel ▼ Veta Mines ⇤'
+      'Control roomWork frontMODE ▼ Panel ▼ Veta Mines ⇤ ⫽'
     )
     root.unmount()
   })

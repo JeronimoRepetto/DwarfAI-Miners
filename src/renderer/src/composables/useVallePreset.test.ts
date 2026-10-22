@@ -71,6 +71,31 @@ describe('the Valle preset in use (ISSUE-300)', () => {
     scope.stop()
   })
 
+  it("[US-VALLE-008.AC01, S30.01, S30.02] the split wish is written at once with the Work front layout, the Control room's untouched", () => {
+    const fake = fakeBridge()
+    const scope = effectScope()
+    const left: ValleLayouts = { ...LEFT, front: { ...LEFT.front, split: false } }
+    const preset = scope.run(() =>
+      useVallePreset({
+        bridge: fake.bridge,
+        stores: shallowRef(storesWith({ preset: 'front', layout: left })),
+        facts: () => ({ enterableMine: true })
+      })
+    )!
+    preset.wishSplit(true)
+    expect(fake.stored.valleLayout).toEqual({ ...left, front: { ...left.front, split: true } })
+    expect(preset.view.value.layouts.front.split).toBe(true)
+    // The next layout write keeps the wish.
+    preset.send({ kind: 'fold' })
+    expect(fake.stored.valleLayout?.front).toEqual({ ...left.front, split: true, foldedList: true })
+    preset.wishSplit(false)
+    expect(fake.stored.valleLayout?.front.split).toBe(false)
+    // The same wish again writes nothing.
+    preset.wishSplit(false)
+    expect(fake.writes).toEqual(['valleLayout', 'valleLayout', 'valleLayout'])
+    scope.stop()
+  })
+
   it('[S28.25, S28.02] after Reset metrics the stores read again open the Control room on its defaults', async () => {
     const fake = fakeBridge()
     const stores = shallowRef(storesWith({ preset: 'front', layout: LEFT }))

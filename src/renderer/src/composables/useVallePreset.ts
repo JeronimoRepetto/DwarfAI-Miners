@@ -39,6 +39,8 @@ export interface VallePresetPart {
   view: Readonly<Ref<ValleView>>
   /** Steps machine 28; answers whether the input was taken. */
   send(input: ValleInput): boolean
+  /** Machine 30's wish, the Work front layout's `split` (07 N-17), written at once with that layout (A-N21). */
+  wishSplit(split: boolean): void
 }
 
 const opened = (stores: ValleStores): ValleView =>
@@ -68,7 +70,8 @@ export function useVallePreset(deps: VallePresetDeps): VallePresetPart {
         void deps.bridge.moveToMode(effect.move).catch(ignore)
         return
       case 'reclamp':
-        // The chat zone's clamp and the split's room check are the splitter's and the split's (ISSUE-305, ISSUE-303).
+        // The chat zone's clamp is the splitter's (ISSUE-305); the split re-checks on the body's own
+        // resize (useValleSplit, ISSUE-303).
         return
     }
   }
@@ -80,6 +83,13 @@ export function useVallePreset(deps: VallePresetDeps): VallePresetPart {
       view.value = step.view
       step.effects.forEach(carry)
       return true
+    },
+    wishSplit(split) {
+      const current = view.value
+      if (current.layouts.front.split === split) return
+      const layouts = { ...current.layouts, front: { ...current.layouts.front, split } }
+      view.value = { ...current, layouts }
+      carry({ kind: 'write-layouts', layouts })
     }
   }
 }

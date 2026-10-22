@@ -9,7 +9,7 @@
  * - The preset (`useVallePreset`, 07 machine 28; ISSUE-300): the top bar's preset tabs and arrow keys, Esc (a nav page
  *   first, then the Work front's climb out), the Work front's folded list, a nav page over the main zone, a resize, and
  *   "▼ Panel" / "▼ Veta" carrying the chat in focus. Every change is written at once (A-N21). The top bar, the nav and
- *   the chat zone never move. The zones' contents, the pins' own chats, the splitter and the split arrive with their
+ *   the chat zone never move. The zones' contents, the pins' own chats and the splitter arrive with their
  *   issues (ISSUE-301…ISSUE-310; hidden until built, 21 §1 item 8).
  * - Restored once the Host's facts are first read (S32.02): the mosaic order, a mine that no longer exists dropped. The
  *   restore never rewrites the persisted stores.
@@ -18,6 +18,10 @@
  *   front's tabs (`ChatDeck`) in the one chat zone, which never moves. Every change is written at once (A-N21 `pins`,
  *   A-N18 for the session's fields); the chat in focus is the one "▼ Panel" / "▼ Veta" carry. The chats themselves
  *   (the MessagePanel and the Add panel inside a pin) are hosted in the stack's and the deck's `chat` slot.
+ * - The split (`useValleSplit`, 07 machine 30; ISSUE-303): "⫽" in the Work front's deck shows two chats side by side,
+ *   never three; the room beside the mine is measured by one `ResizeObserver` on the body (never polled), and below
+ *   640 px the split steps back to the focused pane and comes back by itself. The wish is written with the Work front
+ *   layout (A-N21), the second pane's chat goes to the session (A-N18).
  * - The read models (`createValleReadModel`): the Host's mines and dwarfs, held as last known while the Host is
  *   unreachable (`data-held`, S34.12), a re-snapshot applied without motion.
  * - On screen (`useVallePresence`, S39.04, S39.05): each zone registers itself through `track` (provided as
@@ -34,6 +38,11 @@ import { useValleArrivalToast } from '../../composables/useValleArrivalToast'
 import { useVallePins } from '../../composables/useVallePins'
 import { useVallePreset } from '../../composables/useVallePreset'
 import { useVallePresence, type VallePresenceDeps } from '../../composables/useVallePresence'
+import {
+  browserBodyObserver,
+  useValleSplit,
+  type ValleBodyObserver
+} from '../../composables/useValleSplit'
 import { useValleStores, type ValleStores } from '../../composables/useValleStores'
 import { useToasts } from '../../composables/useToasts'
 import { SYSTEM_SLOTS, WORLD_SLOTS, type PanelNavSlot } from '../../lib/shell/panelNav'
@@ -55,6 +64,8 @@ const props = defineProps<{
   bridge: ValleBridge
   stores: ValleStores
   observer?: VallePresenceDeps['observer']
+  /** The body's width observer; the browser's `ResizeObserver` unless a test hands one. */
+  bodyObserver?: ValleBodyObserver
 }>()
 
 const { stores } = useValleStores(props.bridge, props.stores)
@@ -117,6 +128,26 @@ const columns = computed(() => {
   }))
 })
 
+/** The Work front's mine: the focused pin's (S35.01), else the last one entered. */
+const frontMine = computed((): MineId | null => {
+  const set = pins.set.value
+  return set.pins.find((p) => p.key === set.focus)?.mineId ?? stores.value.lastFrontMineId
+})
+const body = shallowRef<HTMLElement | null>(null)
+const split = useValleSplit({
+  bridge: props.bridge,
+  pins,
+  stores,
+  factsRead,
+  body,
+  wish: () => view.value.layouts.front.split,
+  writeWish: (on) => preset.wishSplit(on),
+  foldedList: () => view.value.layouts.front.foldedList,
+  portraits: () => model.dwarfs.value.filter((dwarf) => dwarf.mineId === frontMine.value).length,
+  observe: props.bodyObserver ?? browserBodyObserver
+})
+const deckSplit = computed(() => ({ panes: split.panes.value, button: split.button.value }))
+
 /** The chat in focus, carried by "▼ Panel" / "▼ Veta" (S28.21, machine 9): the focused chat pin's. */
 const chat = computed((): { mineId: string; dwarfId: DwarfId } | null => {
   const set = pins.set.value
@@ -169,7 +200,7 @@ onUnmounted(() => {
       @arrow="(key) => preset.send({ kind: 'arrow', key })"
       @leave="(move) => preset.send({ kind: 'leave', move })"
     />
-    <div class="dm-valle__body" :style="{ '--chat-w': chatWidth }">
+    <div ref="body" class="dm-valle__body" :style="{ '--chat-w': chatWidth }">
       <nav class="dm-valle__nav" aria-label="Valle">
         <NavSlot
           v-for="slot in NAV_SLOTS"
@@ -196,19 +227,21 @@ onUnmounted(() => {
           :pins="pins.views.value"
           :focus="pins.set.value.focus"
           :focus-request="pins.focusRequest.value"
-          @select="(key) => pins.send({ kind: 'select', key })"
-          @unpin="(key) => pins.send({ kind: 'unpin', key })"
+          @select="(key) => split.sendPin({ kind: 'select', key })"
+          @unpin="(key) => split.sendPin({ kind: 'unpin', key })"
         />
         <ChatDeck
           v-else
           :pins="pins.views.value"
           :focus="pins.set.value.focus"
           :focus-request="pins.focusRequest.value"
-          @select="(key) => pins.send({ kind: 'select', key })"
-          @unpin="(key) => pins.send({ kind: 'unpin', key })"
-          @drag="(key) => pins.send({ kind: 'drag', key })"
-          @drop="(order) => pins.send({ kind: 'drop', order })"
-          @drag-cancel="pins.send({ kind: 'drag-cancel' })"
+          :split="deckSplit"
+          @select="(key) => split.sendPin({ kind: 'select', key })"
+          @unpin="(key) => split.sendPin({ kind: 'unpin', key })"
+          @drag="(key) => split.sendPin({ kind: 'drag', key })"
+          @drop="(order) => split.sendPin({ kind: 'drop', order })"
+          @drag-cancel="split.sendPin({ kind: 'drag-cancel' })"
+          @split="split.press()"
         />
       </aside>
     </div>
