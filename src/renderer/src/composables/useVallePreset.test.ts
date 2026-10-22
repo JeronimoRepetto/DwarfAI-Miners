@@ -136,3 +136,30 @@ describe('the Valle preset in use (ISSUE-300)', () => {
     scope.stop()
   })
 })
+
+// APPENDED for ISSUE-304: a zone's content is the layouts' own (14 §3.9 `zones`, `zone`; 07 machine 31), written at
+// once with them (TC-304-01).
+describe('the zones written with the layouts (ISSUE-304)', () => {
+  it('[S31.03, S31.05, US-VALLE-009.AC01] a zone content written through the view updates the layouts and writes them at once', () => {
+    const fake = fakeBridge()
+    const scope = effectScope()
+    const preset = scope.run(() =>
+      useVallePreset({
+        bridge: fake.bridge,
+        stores: shallowRef(storesWith({ preset: 'control', layout: LEFT })),
+        facts: () => FACTS
+      })
+    )!
+    const zoned: ValleLayouts = {
+      ...LEFT,
+      control: { ...LEFT.control, zones: { [MINE]: { content: 'history' } } }
+    }
+    preset.writeLayouts(zoned)
+    expect(preset.view.value.layouts).toEqual(zoned)
+    expect(fake.stored.valleLayout).toEqual(zoned)
+    // The same layouts again write nothing.
+    preset.writeLayouts(preset.view.value.layouts)
+    expect(fake.writes).toEqual(['valleLayout'])
+    scope.stop()
+  })
+})

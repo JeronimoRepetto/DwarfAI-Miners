@@ -11,8 +11,6 @@
  *   "▼ Panel" / "▼ Veta" carrying the chat in focus. Every change is written at once (A-N21). The top bar, the nav and
  *   the chat zone never move. The zones' contents, the pins' own chats and the splitter arrive with their
  *   issues (ISSUE-301…ISSUE-310; hidden until built, 21 §1 item 8).
- * - Restored once the Host's facts are first read (S32.02): the mosaic order, a mine that no longer exists dropped. The
- *   restore never rewrites the persisted stores.
  * - The pinned chats (`useVallePins`, 07 machines 18, 29; ISSUE-302): restored once the Host's facts are read (S29.02),
  *   or the start-up pins on a first visit (S29.01); drawn as the Control room's stack (`PinnedStack`) or the Work
  *   front's tabs (`ChatDeck`) in the one chat zone, which never moves. Every change is written at once (A-N21 `pins`,
@@ -28,6 +26,11 @@
  *   while a dive or a climb runs, every press and key inside Valle is dropped but a mode control, which machine 28
  *   holds (the input gate). The dive rebuilds the tab order through the pins (S29.12) and the split (S30.07). A window
  *   going hidden resolves the run at once (S28.22); the Host removing the mine shown swaps or climbs out (S28.23).
+ * - The mosaic and the zones (`useValleMosaic`, 07 machines 31, 32; ISSUE-304): opened once the Host's facts are read
+ *   (S32.01, S32.02); each zone's "⋯" opens its menu (what it shows, "Dive in · Work front", the ambience, "Close this
+ *   column"), the dashed slot after the last column adds a mine, or a new project through the ordinary folder flow. Every
+ *   change is written at once (A-N21); Esc closes an open menu first (NFR-A11Y-02). A closed column's toast goes through
+ *   the window's one toast queue (BR-23); nothing reaches the Host for it.
  * - The read models (`createValleReadModel`): the Host's mines and dwarfs, held as last known while the Host is
  *   unreachable (`data-held`, S34.12), a re-snapshot applied without motion.
  * - On screen (`useVallePresence`, S39.04, S39.05): each zone registers itself through `track` (provided as
@@ -41,6 +44,7 @@
 import type { DwarfId, MineId } from '@dwarfai/contracts'
 import { computed, nextTick, onMounted, onUnmounted, provide, shallowRef, watch } from 'vue'
 import { useValleArrivalToast } from '../../composables/useValleArrivalToast'
+import { useValleMosaic, type ValleZoneKey } from '../../composables/useValleMosaic'
 import { useVallePins } from '../../composables/useVallePins'
 import { useVallePreset } from '../../composables/useVallePreset'
 import { useVallePresence, type VallePresenceDeps } from '../../composables/useVallePresence'
@@ -60,8 +64,8 @@ import {
 } from '../../lib/valle/flip'
 import { valleChatWidth, type ValleFacts, type ValleNavPage } from '../../lib/valle/preset'
 import { createVetaMotion } from '../../lib/veta/vetaMotion'
-import { restoreMosaicOrder } from '../../lib/valle/restore'
 import { createValleReadModel } from '../../lib/valle/valleReadModel'
+import WorktreeDialog from '../browse/WorktreeDialog.vue'
 import ToastHost from '../overlay/ToastHost.vue'
 import ChatDeck from './ChatDeck.vue'
 import NavSlot from '../shell/NavSlot.vue'
@@ -177,7 +181,6 @@ const held = computed(() => String(model.held.value))
 
 /** Whether the Host's facts were read once: the pins and the mosaic order restore against them (S29.02, S32.02). */
 const factsRead = shallowRef(false)
-const mineExists = (mineId: MineId): boolean => model.mines.value.some((mine) => mine.id === mineId)
 const pins = useVallePins({
   bridge: props.bridge,
   stores,
@@ -185,14 +188,54 @@ const pins = useVallePins({
   factsRead,
   talkedLast: () => stores.value.session.panelOpenChat ?? null
 })
-const columns = computed(() => {
-  const order = factsRead.value ? restoreMosaicOrder(stores.value.mosaicOrder, mineExists) : null
-  return (order ?? []).map((mineId) => ({
-    mineId,
-    name: model.mines.value.find((mine) => mine.id === mineId)?.name ?? '',
-    enterable: enterable(mineId)
-  }))
+const mosaic = useValleMosaic({
+  bridge: props.bridge,
+  stores,
+  model,
+  factsRead,
+  view: () => view.value,
+  frontMine: () => frontMine.value,
+  writeLayouts: (layouts) => preset.writeLayouts(layouts),
+  dive: (mineId) => preset.send({ kind: 'dive', mineId }),
+  swap: (mineId) => preset.send({ kind: 'pick', mineId }),
+  showToast: (text) => showToast(text),
+  scrollTo: (mineId) => {
+    void nextTick(() => {
+      const column = room.value?.mosaic?.querySelector(`[data-valle-column="${mineId}"]`)
+      if (column instanceof HTMLElement && typeof column.scrollIntoView === 'function')
+        column.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    })
+  }
 })
+const columns = computed(() =>
+  mosaic.order.value.map((mineId) => ({
+    mineId,
+    name: nameOf(mineId),
+    enterable: enterable(mineId),
+    content: mosaic.contentOf(mineId)
+  }))
+)
+/** The zone menu open on a Control room column, or on the Work front's zone. */
+const columnMenu = computed(() => {
+  const menu = mosaic.menu.value
+  return menu?.zone.preset === 'control'
+    ? { mineId: menu.zone.mineId, entries: menu.entries }
+    : null
+})
+const frontMenu = computed(() => {
+  const menu = mosaic.menu.value
+  return menu?.zone.preset === 'front' ? menu.entries : null
+})
+/** "⋯" pressed: its menu opens, or closes when it is the one open (an outside press, S31.02). */
+function toggleMenu(zone: ValleZoneKey): void {
+  const open = mosaic.menu.value?.zone
+  const same =
+    open !== undefined &&
+    open.preset === zone.preset &&
+    (zone.preset === 'front' || (open.preset === 'control' && open.mineId === zone.mineId))
+  if (same) mosaic.dismiss()
+  else mosaic.openMenu(zone)
+}
 
 /** The Work front's mine: the one dived into or swapped in, else the last one worked in (S28.02, N-15). */
 const frontMine = computed((): MineId | null => view.value.mineId ?? stores.value.lastFrontMineId)
@@ -235,8 +278,11 @@ const NAV_SLOTS = [...WORLD_SLOTS, ...SYSTEM_SLOTS].filter(
 const chatWidth = computed(() => `${valleChatWidth(view.value)}px`)
 
 function onKey(event: KeyboardEvent): void {
-  // No menu, drawer or picker is built in Valle yet: Esc leaves a page, then the Work front (NFR-A11Y-02).
-  if (event.key === 'Escape') preset.send({ kind: 'escape', layerOpen: false })
+  if (event.key !== 'Escape') return
+  // Esc closes the topmost layer first (NFR-A11Y-02): a menu that already took it, an open zone or slot menu, the
+  // worktree question; then a page, then the Work front.
+  if (event.defaultPrevented || mosaic.dismiss()) return
+  preset.send({ kind: 'escape', layerOpen: mosaic.worktree.value !== null })
 }
 const resized = (): void => {
   preset.send({ kind: 'resize' })
@@ -318,6 +364,11 @@ onUnmounted(() => {
         :folded-list="view.layouts.front.foldedList"
         :mines="listMines"
         :mine="shownMine"
+        :content="mosaic.frontContent.value"
+        :menu="frontMenu"
+        @menu="toggleMenu({ preset: 'front' })"
+        @menu-pick="(id) => mosaic.pickMenu(id)"
+        @menu-dismiss="mosaic.dismiss()"
         @fold="preset.send({ kind: 'fold' })"
         @unfold="preset.send({ kind: 'unfold' })"
         @pick="(mineId) => preset.send({ kind: 'pick', mineId })"
@@ -326,6 +377,16 @@ onUnmounted(() => {
         v-else
         ref="room"
         :columns="columns"
+        :menu="columnMenu"
+        :slot-entries="mosaic.slot.value"
+        :notice="mosaic.notice.value"
+        @menu="(mineId) => toggleMenu({ preset: 'control', mineId })"
+        @menu-pick="(id) => mosaic.pickMenu(id)"
+        @menu-dismiss="mosaic.dismiss()"
+        @slot-open="mosaic.openSlot()"
+        @slot-dismiss="mosaic.dismiss()"
+        @slot-pick="(mineId) => mosaic.pickSlot(mineId)"
+        @slot-new="mosaic.newProject()"
         @dive="(mineId) => preset.send({ kind: 'dive', mineId })"
         @sprite-double-click="preset.send({ kind: 'sprite-double-click' })"
       />
@@ -355,6 +416,12 @@ onUnmounted(() => {
       </aside>
     </div>
     <div class="dm-vghosts" aria-hidden="true"></div>
+    <WorktreeDialog
+      :question="mosaic.worktree.value"
+      :adding="mosaic.adopting.value"
+      @accept="mosaic.answerWorktree(true)"
+      @dismiss="mosaic.answerWorktree(false)"
+    />
     <ToastHost />
   </main>
 </template>

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { MoveToModeParams, UiPreferenceWrite, UiSessionPatch } from '@dwarfai/contracts'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createFakeWindowApi } from '../../../../contracts/ipc/testing/fakeWindowApi'
 import type { ValleBodyObserver } from '../../composables/useValleSplit'
 import { VALLE_STORE_DEFAULTS, type ValleStores } from '../../composables/useValleStores'
@@ -150,7 +150,12 @@ describe('the Valle root and its presets (ISSUE-300)', () => {
     // The top bar and the chat zone are the same elements throughout (VA3).
     expect(root.get('header.dm-vbar').element).toBe(bar)
     expect(root.get('aside[aria-label="Pinned chats"]').element).toBe(chats)
-    expect(writes).toEqual([{ key: 'vallePreset', value: 'control' }])
+    // AMENDED for ISSUE-304 (was: the preset alone): the first open with no stored order writes the first mosaic, every
+    // mine with a crew (07 S32.01), before any change of this case.
+    expect(writes).toEqual([
+      { key: 'valleMosaicOrder', value: [MORIA] },
+      { key: 'vallePreset', value: 'control' }
+    ])
   })
 
   it("[US-VALLE-001.AC04, US-VALLE-001.AC07, S28.16, S28.17] the Work front's list folds to the MINES strip and back, each change written through A-N21", async () => {
@@ -164,7 +169,10 @@ describe('the Valle root and its presets (ISSUE-300)', () => {
     expect(root.get('.dm-valle__main').attributes('style')).toContain('--list-w: 232px')
     const folded = defaultValleLayouts()
     folded.front.foldedList = true
+    // AMENDED for ISSUE-304 (was: the two layouts alone): the first open with no stored order writes the first mosaic,
+    // every mine with a crew (07 S32.01), before any change of this case.
     expect(writes).toEqual([
+      { key: 'valleMosaicOrder', value: [MORIA] },
       { key: 'valleLayout', value: folded },
       { key: 'valleLayout', value: defaultValleLayouts() }
     ])
@@ -257,7 +265,9 @@ describe('the pinned chats in the Valle root (ISSUE-302)', () => {
       layouts.front.split = on
       return { key: 'valleLayout', value: layouts }
     }
-    expect(writes).toEqual([split(true), split(false)])
+    // AMENDED for ISSUE-304 (was: the two wishes alone): the first open with no stored order writes the first mosaic,
+    // every mine with a crew (07 S32.01), before any change of this case.
+    expect(writes).toEqual([{ key: 'valleMosaicOrder', value: [MORIA] }, split(true), split(false)])
   })
 })
 
@@ -322,5 +332,200 @@ describe('the dive and the climb in the Valle root (ISSUE-301)', () => {
       if (descriptor !== undefined)
         Object.defineProperty(Element.prototype, 'scrollLeft', descriptor)
     }
+  })
+})
+
+// APPENDED for ISSUE-304: the zone menu, "Close this column" and "Add a mine here" in the Valle root (07 machines 31,
+// 32; UC-058).
+describe('the Valle zones and the mosaic in the root (ISSUE-304)', () => {
+  /** A menu row as it reads: its label, its far-end hint ("✓", a tier) after a space, and "(disabled)" when it is. */
+  const rowText = (item: ReturnType<VueWrapper['get']>): string => {
+    const hint = item.find('.dm-menu__hint')
+    const label = hint.exists() ? item.text().slice(0, -hint.text().length) : item.text()
+    const disabled = item.attributes('disabled') !== undefined ? ' (disabled)' : ''
+    return `${label}${hint.exists() ? ` ${hint.text()}` : ''}${disabled}`
+  }
+  const menuTexts = (root: VueWrapper, menu = '[data-zone-menu]'): string[] =>
+    root
+      .findAll(`${menu} [role="menuitem"], ${menu} [role="separator"]`)
+      .map((item) => (item.attributes('role') === 'separator' ? '—' : rowText(item)))
+  /** The menu row that reads `label`. */
+  const row = (root: VueWrapper, label: string, menu = '[data-zone-menu]') => {
+    const found = root
+      .findAll(`${menu} [role="menuitem"]`)
+      .find((item) => rowText(item).startsWith(label))
+    if (found === undefined) throw new Error(`no menu row "${label}"`)
+    return found
+  }
+
+  it('[US-VALLE-009.AC01, US-VALLE-009.AC05, S31.01, S31.04] a column’s ⋯ opens its zone menu, and Show here swaps it in its slot with the header noting it', async () => {
+    const { root, writes } = mountValle({ preset: 'control', mosaicOrder: [MORIA, EREBOR] })
+    await flushPromises()
+    await root.get(`[data-valle-column="${EREBOR}"] [data-zone-more]`).trigger('click')
+    expect(menuTexts(root)).toEqual([
+      'Dive in · Work front',
+      '—',
+      'Show here: the mine ✓ (disabled)',
+      'Show here: the map',
+      'Show here: the mines list',
+      'Show here: history',
+      '—',
+      'Mute mine ambience',
+      '—',
+      'Close this column'
+    ])
+    await row(root, 'Show here: the mines list').trigger('click')
+    await flushPromises()
+    const column = root.get(`[data-valle-column="${EREBOR}"]`)
+    expect(column.attributes('data-content')).toBe('mineslist')
+    expect(column.get('[data-zone-suffix]').text()).toBe('· Mines')
+    // Its slot is kept: the same place in the mosaic, and the menu closed.
+    expect(
+      root.findAll('[data-valle-column]').map((c) => c.attributes('data-valle-column'))
+    ).toEqual([MORIA, EREBOR])
+    expect(root.find('[data-zone-menu]').exists()).toBe(false)
+    expect(writes.filter((write) => write.key === 'valleLayout').at(-1)).toMatchObject({
+      value: { control: { zones: { [EREBOR]: { content: 'mineslist' } } } }
+    })
+  })
+
+  it('[US-VALLE-009.AC04, US-VALLE-009.AC06, NFR-A11Y-02] the Work front’s zone menu has no mines list and no Close this column, and Esc or an outside click closes it, nothing else', async () => {
+    const { root, writes } = mountValle({ preset: 'front', lastFrontMineId: MORIA })
+    await flushPromises()
+    const before = writes.length
+    await root.get('[data-valle-front-mine] [data-zone-more]').trigger('click')
+    expect(menuTexts(root)).toEqual([
+      'Show here: the mine ✓ (disabled)',
+      'Show here: the map',
+      'Show here: history',
+      '—',
+      'Mute mine ambience'
+    ])
+    // Esc closes the menu, the topmost layer, never the Work front beneath (NFR-A11Y-02).
+    esc()
+    await flushPromises()
+    expect(root.find('[data-zone-menu]').exists()).toBe(false)
+    expect(root.get('[data-valle-root]').attributes('data-preset')).toBe('front')
+    await root.get('[data-valle-front-mine] [data-zone-more]').trigger('click')
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    await flushPromises()
+    expect(root.find('[data-zone-menu]').exists()).toBe(false)
+    expect(writes.slice(before)).toEqual([])
+  })
+
+  it('[US-VALLE-009.AC03, BR-23, S32.03] Close this column takes the column out with its toast', async () => {
+    const { root, writes, moves } = mountValle({ preset: 'control', mosaicOrder: [MORIA, EREBOR] })
+    await flushPromises()
+    await root.get(`[data-valle-column="${MORIA}"] [data-zone-more]`).trigger('click')
+    await row(root, 'Close this column').trigger('click')
+    await flushPromises()
+    expect(
+      root.findAll('[data-valle-column]').map((c) => c.attributes('data-valle-column'))
+    ).toEqual([EREBOR])
+    expect(root.get('.dm-toasts').text()).toContain(
+      'moria left the Control room · its dwarfs keep working'
+    )
+    expect(writes.at(-1)).toEqual({ key: 'valleMosaicOrder', value: [EREBOR] })
+    expect(moves).toEqual([])
+  })
+
+  it('[US-VALLE-006.AC01, US-VALLE-006.AC02, S32.04, S32.05] the add slot after the last column lists the mines not shown, then A new project…, and a picked mine joins the end', async () => {
+    const { root, writes } = mountValle({ preset: 'control', mosaicOrder: [MORIA] })
+    await flushPromises()
+    const slot = root.get('[data-valle-add]')
+    expect(slot.text()).toContain('Add a mine here')
+    await slot.trigger('click')
+    expect(menuTexts(root, '[data-valle-add-menu]')).toEqual([
+      'erebor Silver',
+      '—',
+      'A new project…'
+    ])
+    await row(root, 'erebor', '[data-valle-add-menu]').trigger('click')
+    await flushPromises()
+    expect(
+      root.findAll('[data-valle-column]').map((c) => c.attributes('data-valle-column'))
+    ).toEqual([MORIA, EREBOR])
+    expect(root.find('[data-valle-add-menu]').exists()).toBe(false)
+    expect(writes.at(-1)).toEqual({ key: 'valleMosaicOrder', value: [MORIA, EREBOR] })
+  })
+
+  it('[S31.07, S28.03] Dive in · Work front in a column’s menu dives into its mine', async () => {
+    const { root, clock } = mountValle({ preset: 'control', mosaicOrder: [MORIA, EREBOR] })
+    await flushPromises()
+    await root.get(`[data-valle-column="${EREBOR}"] [data-zone-more]`).trigger('click')
+    await row(root, 'Dive in · Work front').trigger('click')
+    expect(root.get('[data-valle-root]').attributes('data-preset')).toBe('front')
+    clock.advance(330)
+    await flushPromises()
+    expect(root.find(`[data-valle-front-mine="${EREBOR}"]`).exists()).toBe(true)
+  })
+})
+
+// APPENDED for ISSUE-304: each zone registers with the on-screen report; only a zone showing its mine counts (07 S39.05,
+// machine 31; UC-058 A-44).
+describe('the Valle zones in the on-screen report (ISSUE-304)', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('[S39.05, US-VALLE-009.AC01] a column swapped to the map leaves the on-screen report, and comes back showing its mine', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const reports: string[][] = []
+    let seen: ((entries: { target: Element; intersectionRatio: number }[]) => void) | null = null
+    const observed: Element[] = []
+    const api = createFakeWindowApi({
+      getHostSnapshot: () =>
+        Promise.resolve(
+          snapshotPage(10, {
+            minesEverKnown: true,
+            mines: [mineWire(MORIA), mineWire(EREBOR)],
+            dwarfs: [dwarfWire(BORIN, MORIA)]
+          })
+        ) as never,
+      setUiPreference: (write) => Promise.resolve(write) as never,
+      reportVisibleMines: (request) => {
+        reports.push(request.mineIds.map(String))
+      }
+    })
+    root = mount(ValleApp, {
+      attachTo: document.body,
+      props: {
+        bridge: valleBridgeOf(api),
+        stores: { ...VALLE_STORE_DEFAULTS, preset: 'control', mosaicOrder: [MORIA, EREBOR] },
+        observer: (callback) => {
+          seen = callback
+          return {
+            observe: (element: Element) => void observed.push(element),
+            unobserve: () => {},
+            disconnect: () => {}
+          }
+        },
+        bodyObserver: () => () => {}
+      }
+    })
+    await flushPromises()
+    // Both columns fully inside the viewport.
+    seen!(observed.map((target) => ({ target, intersectionRatio: 1 })))
+    await flushPromises()
+    vi.advanceTimersByTime(150)
+    expect(reports.at(-1)).toEqual([MORIA, EREBOR])
+
+    await root.get(`[data-valle-column="${EREBOR}"] [data-zone-more]`).trigger('click')
+    const map = root
+      .findAll('[data-zone-menu] [role="menuitem"]')
+      .find((item) => item.text().startsWith('Show here: the map'))!
+    await map.trigger('click')
+    await flushPromises()
+    vi.advanceTimersByTime(150)
+    expect(reports.at(-1)).toEqual([MORIA])
+
+    await root.get(`[data-valle-column="${EREBOR}"] [data-zone-more]`).trigger('click')
+    const mine = root
+      .findAll('[data-zone-menu] [role="menuitem"]')
+      .find((item) => item.text().startsWith('Show here: the mine'))!
+    await mine.trigger('click')
+    await flushPromises()
+    vi.advanceTimersByTime(150)
+    expect(reports.at(-1)).toEqual([MORIA, EREBOR])
   })
 })

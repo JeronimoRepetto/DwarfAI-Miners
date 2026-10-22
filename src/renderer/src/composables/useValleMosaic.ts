@@ -419,12 +419,3 @@ export function useValleMosaic(deps: ValleMosaicDeps): ValleMosaicPart {
     mapMarker: (zone, mineId) => void sendZone(zone, { kind: 'map-marker', mineId })
   }
 }
-
-/** The mosaic's bridge over a `window.api` (R13: read in composables and the composition root only). */
-export function valleMosaicBridgeOf(api: Window['api']): ValleMosaicBridge {
-  return {
-    setUiPreference: (write) => api.setUiPreference(write),
-    declareMine: () => api.declareMine(),
-    declareMainProject: () => api.declareMainProject()
-  }
-}

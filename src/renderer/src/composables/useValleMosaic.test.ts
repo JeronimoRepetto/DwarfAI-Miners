@@ -23,7 +23,7 @@ import {
 } from '../lib/veta/testing/vetaFixtures'
 import type { MineDeclareResult } from '../types'
 import { DECLARE_UNREACHABLE } from './useProjectBrowse'
-import { useValleMosaic, valleMosaicBridgeOf } from './useValleMosaic'
+import { useValleMosaic } from './useValleMosaic'
 import { VALLE_STORE_DEFAULTS, type ValleStores } from './useValleStores'
 
 /*
@@ -106,7 +106,12 @@ function setup(options: Options = {}) {
   scope = effectScope()
   const mosaic = scope.run(() =>
     useValleMosaic({
-      bridge: valleMosaicBridgeOf(world.api),
+      // The members it uses, each over the page's `window.api` as the Valle root's bridge maps them.
+      bridge: {
+        setUiPreference: (write) => world.api.setUiPreference(write),
+        declareMine: () => world.api.declareMine(),
+        declareMainProject: () => world.api.declareMainProject()
+      },
       stores,
       model: {
         mines,
