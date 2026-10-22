@@ -114,6 +114,21 @@ test.describe("the chats inside Valle's pins and panes (TVC)", () => {
       .toContain('Read the notes.')
     await expect(panel.locator('.dm-msg__log')).toContainText(REPLIES.plain, { timeout: 60_000 })
 
+    // The same layout room on any runner's screen: the Valle window at 1024 × 768 inside its work area, drawn at the
+    // zoom that gives its page 1700 CSS px across, room for the split's 640 px beside the mine at its minimum. Every
+    // width below is in CSS px, the unit the design and machine 33 state.
+    await app.evaluate(({ BrowserWindow, screen }) => {
+      const window = BrowserWindow.getAllWindows().find((w) =>
+        w.webContents.getURL().includes('mode=valle')
+      )!
+      const area = screen.getDisplayMatching(window.getBounds()).workArea
+      window.setContentBounds({ x: area.x, y: area.y, width: 1024, height: 768 })
+      window.webContents.setZoomFactor(1024 / 1700)
+    })
+    await expect
+      .poll(() => valle.evaluate('Math.round(window.innerWidth)'), { timeout: 10_000 })
+      .toBe(1700)
+
     // The Work front, its split on, the chat zone at the splitter's minimum: two panes of 317 px each.
     await valle.locator('[data-preset-tab="front"]').click()
     await valleSettled(valle)
