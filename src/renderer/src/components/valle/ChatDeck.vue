@@ -296,6 +296,17 @@ function onDragEnd(): void {
   flex: 1;
   min-width: 0;
 }
+/*
+ * The MessagePanel or the Add panel in a pane fills it and shrinks with it down to its own min-content width
+ * (decision log, MessagePanel width; 07 S33.11): only its root is sized here, so every part inside keeps its own size,
+ * and its floor sits on the panel, never on the host, so Valle's minimums do not move for it (US-MSG-015.AC06).
+ */
+.dm-cdeck__pane > :deep(.dm-msg),
+.dm-cdeck__pane > :deep(.dm-add) {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: min-content;
+}
 /* The focused pane's brass outline sits on an overlay every pane has, so focus only paints it (NFR-A11Y-01). */
 .dm-cdeck__pane::after {
   content: '';

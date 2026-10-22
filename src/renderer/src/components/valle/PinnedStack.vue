@@ -169,6 +169,17 @@ function onAuxClick(event: MouseEvent, key: PinKey): void {
   flex-direction: column;
   min-height: 240px;
 }
+/*
+ * The MessagePanel or the Add panel in the chat zone fills it and shrinks with it down to its own min-content width
+ * (decision log, MessagePanel width; 07 S33.11): only its root is sized here, so every part inside keeps its own size,
+ * and its floor sits on the panel, never on the host, so Valle's minimums do not move for it (US-MSG-015.AC06).
+ */
+.dm-cstack__open > :deep(.dm-msg),
+.dm-cstack__open > :deep(.dm-add) {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: min-content;
+}
 .dm-cstack__row {
   display: flex;
   flex: none;

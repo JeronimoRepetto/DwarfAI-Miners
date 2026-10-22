@@ -80,6 +80,8 @@ export interface ValleSplitDeps {
 
 export interface ValleSplitPart {
   set: Readonly<Ref<SplitSet>>
+  /** The body's content width as its one observer last measured it, `null` before (the splitter's range reads it too). */
+  bodyWidth: Readonly<Ref<number | null>>
   /** The panes shown, first then second. */
   panes: Readonly<Ref<readonly PinKey[]>>
   /** "⫽": enabled or not, pressed, its title. */
@@ -195,6 +197,7 @@ export function useValleSplit(deps: ValleSplitDeps): ValleSplitPart {
 
   return {
     set,
+    bodyWidth: width,
     panes: computed(() => splitPanes(set.value, deps.pins.set.value.focus)),
     button: computed(() => splitButton(set.value, facts())),
     press() {

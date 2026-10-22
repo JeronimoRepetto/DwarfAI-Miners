@@ -723,3 +723,52 @@ describe('the Settings page over Valle (ISSUE-304)', () => {
     expect(audio.made).toBe(0)
   })
 })
+
+// APPENDED for ISSUE-305: the splitter in the Valle root (07 machine 33; UC-057).
+describe('the splitter in the Valle root (ISSUE-305)', () => {
+  it('[US-VALLE-005.AC07, US-VALLE-005.AC04, S33.08] the root sizes its chat zone from the body, the split and the splitter, writing each commit through A-N21', async () => {
+    const { root, writes } = mountValle(
+      {
+        preset: 'front',
+        pins: [
+          { dwarfId: BORIN, mineId: MORIA, order: 0 },
+          { dwarfId: DAIN, mineId: EREBOR, order: 1 }
+        ]
+      },
+      (_target, callback) => {
+        callback(1600)
+        return () => {}
+      }
+    )
+    await flushPromises()
+    expect(root.findAll('[role="separator"][aria-label="Resize the chats"]')).toHaveLength(1)
+    const bar = root.get('[role="separator"][aria-label="Resize the chats"]')
+    const aria = () => [
+      bar.attributes('aria-valuenow'),
+      bar.attributes('aria-valuemin'),
+      bar.attributes('aria-valuemax')
+    ]
+    const chatWidth = () => root.get('.dm-valle__body').attributes('style')
+    // No mine shown yet, so the mine's minimum is 300 px: 1600 − 56 − 12 − 18 − 232 − 6 − max(300, 400) by default.
+    expect(aria()).toEqual(['876', '340', '976'])
+    expect(chatWidth()).toContain('--chat-w: 876px')
+
+    // Two chats side by side: the chat zone's minimum becomes the split's 640 px.
+    await root.get('button.dm-cdeck__split').trigger('click')
+    expect(aria()).toEqual(['876', '640', '976'])
+
+    await bar.trigger('keydown', { key: 'End' })
+    expect(chatWidth()).toContain('--chat-w: 976px')
+    const layouts = defaultValleLayouts()
+    layouts.front.split = true
+    expect(writes.at(-1)).toEqual({
+      key: 'valleLayout',
+      value: { ...layouts, front: { ...layouts.front, chatWidth: 976 } }
+    })
+
+    // A double click puts the Work front's default back, its stored width cleared.
+    await bar.trigger('dblclick')
+    expect(chatWidth()).toContain('--chat-w: 876px')
+    expect(writes.at(-1)).toEqual({ key: 'valleLayout', value: layouts })
+  })
+})

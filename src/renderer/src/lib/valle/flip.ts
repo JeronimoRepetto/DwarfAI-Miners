@@ -193,8 +193,8 @@ function plateFrames(first: ValleBox, last: ValleBox): ValleFrames {
   ]
 }
 
-/** The title or the roster: translate by the top-left corner, never scaled. */
-function cornerFrames(first: ValleBox, last: ValleBox): ValleFrames {
+/** The title or the roster, or a part the splitter's reset moves: translate by the top-left corner, never scaled. */
+export function cornerFrames(first: ValleBox, last: ValleBox): ValleFrames {
   return [
     { transform: translate(first.left - last.left, first.top - last.top), transformOrigin: CORNER },
     { transform: 'none', transformOrigin: CORNER }
