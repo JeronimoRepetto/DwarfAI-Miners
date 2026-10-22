@@ -6,6 +6,7 @@
  * from the page's own `window.api` (R13), so the root and its parts never read `window.api` themselves.
  */
 import type { HostFrame, UiPreferenceWrite } from '@dwarfai/contracts'
+import type { ValleMosaicBridge, ValleMosaicWrite } from '../../composables/useValleMosaic'
 import type { VallePinsBridge, VallePinsWrite } from '../../composables/useVallePins'
 import type { ValleLastMineWrite, VallePresetBridge } from '../../composables/useVallePreset'
 import type { VallePresenceDeps } from '../../composables/useVallePresence'
@@ -19,20 +20,26 @@ export function isValleRoot(search: string): boolean {
 
 /**
  * The seam A members the Valle root uses: its stores (A-N17, A-N20, A-N12), its read models, its report (A-44), and its
- * preset's writes and moves (A-N21, A-N13; ISSUE-300), its pins' writes (A-N21 `pins`, A-N18; ISSUE-302), and the
- * dive's (A-N21 `valleLastFrontMineId`, A-N18; ISSUE-301).
+ * preset's writes and moves (A-N21, A-N13; ISSUE-300), its pins' writes (A-N21 `pins`, A-N18; ISSUE-302), the
+ * dive's (A-N21 `valleLastFrontMineId`, A-N18; ISSUE-301), and the mosaic's and the zones' (A-N21
+ * `valleMosaicOrder`, `mutedMineIds`; A-30, A-31 for "A new project…"; ISSUE-304).
  */
 export type ValleBridge = ValleStoresBridge &
   ValleReadModelBridge &
   VallePresenceDeps['bridge'] &
   VallePresetBridge &
-  VallePinsBridge
+  VallePinsBridge &
+  ValleMosaicBridge
 
-/** The Valle keys the Valle window writes (A-N21); the last mine worked in from ISSUE-301 on. */
+/**
+ * The Valle keys the Valle window writes (A-N21); the last mine worked in from ISSUE-301 on, the mosaic order and the
+ * muted mines from ISSUE-304 on.
+ */
 type ValleWrite =
   | Extract<UiPreferenceWrite, { key: 'vallePreset' | 'valleLayout' }>
   | VallePinsWrite
   | ValleLastMineWrite
+  | ValleMosaicWrite
 
 /** The Valle bridge over a `window.api`. */
 export function valleBridgeOf(api: Window['api']): ValleBridge {
@@ -47,6 +54,8 @@ export function valleBridgeOf(api: Window['api']): ValleBridge {
     reportVisibleMines: (request) => api.reportVisibleMines(request),
     setUiPreference: (write: ValleWrite) => api.setUiPreference(write),
     moveToMode: (params) => api.moveToMode(params),
-    patchUiSession: (patch) => api.patchUiSession(patch)
+    patchUiSession: (patch) => api.patchUiSession(patch),
+    declareMine: () => api.declareMine(),
+    declareMainProject: () => api.declareMainProject()
   }
 }

@@ -77,10 +77,17 @@ describe('the Valle preferences of 14 §3.9 (ISSUE-299)', () => {
     // (asserted below). AMENDED for ISSUE-302 (was: `pins` refused too): the pins are written from ISSUE-302 on
     // (asserted below); the other three are still refused. AMENDED for ISSUE-301 (was: `valleLastFrontMineId` refused
     // too): the dive writes the last mine worked in from ISSUE-301 on (asserted below).
-    const written = ['vallePreset', 'valleLayout', 'pins', 'valleLastFrontMineId']
-    for (const [key, value] of Object.entries(VALLE_ANSWER).filter(([k]) => !written.includes(k))) {
-      expect(uiPreferenceWriteSchema.safeParse({ key, value }).success, key).toBe(false)
-    }
+    // AMENDED for ISSUE-304 (was: `valleMosaicOrder` and `mutedMineIds` refused here): the zone menu and the add
+    // slot write both from ISSUE-304 on (asserted below), so no Valle key is left unwritten.
+    const written = [
+      'vallePreset',
+      'valleLayout',
+      'pins',
+      'valleLastFrontMineId',
+      'valleMosaicOrder',
+      'mutedMineIds'
+    ]
+    expect(Object.keys(VALLE_ANSWER).filter((k) => !written.includes(k))).toEqual([])
   })
 })
 
@@ -110,10 +117,8 @@ describe('the Valle preset and layouts written by the Valle window (ISSUE-300)',
     }
     // AMENDED for ISSUE-302 (was: `pins` in this list): the pins are renderer-writable from ISSUE-302 on.
     // AMENDED for ISSUE-301 (was: `valleLastFrontMineId` in this list): written by the dive from ISSUE-301 on.
-    for (const key of ['valleMosaicOrder', 'mutedMineIds']) {
-      const value = VALLE_ANSWER[key as keyof typeof VALLE_ANSWER]
-      expect(uiPreferenceWriteSchema.safeParse({ key, value }).success, key).toBe(false)
-    }
+    // AMENDED for ISSUE-304 (was: `valleMosaicOrder` and `mutedMineIds` refused here): both are written from
+    // ISSUE-304 on, asserted in its own case below.
   })
 })
 
@@ -152,10 +157,8 @@ describe('the Valle pins written by the Valle window (ISSUE-302)', () => {
       expect(uiPreferenceWriteSchema.safeParse(wrong).success, JSON.stringify(wrong)).toBe(false)
     }
     // AMENDED for ISSUE-301 (was: `valleLastFrontMineId` in this list): written by the dive from ISSUE-301 on.
-    for (const key of ['valleMosaicOrder', 'mutedMineIds']) {
-      const value = VALLE_ANSWER[key as keyof typeof VALLE_ANSWER]
-      expect(uiPreferenceWriteSchema.safeParse({ key, value }).success, key).toBe(false)
-    }
+    // AMENDED for ISSUE-304 (was: `valleMosaicOrder` and `mutedMineIds` refused here): both are written from
+    // ISSUE-304 on, asserted in its own case below.
   })
 })
 
@@ -169,6 +172,33 @@ describe('the last mine worked in written by the Valle window (ISSUE-301)', () =
       { key: 'valleLastFrontMineId', value: null },
       { key: 'valleLastFrontMineId', value: 'not-a-mine-id' },
       { key: 'valleLastFrontMineId', value: MINE, extra: true }
+    ]) {
+      expect(uiPreferenceWriteSchema.safeParse(wrong).success, JSON.stringify(wrong)).toBe(false)
+    }
+  })
+})
+
+// APPENDED for ISSUE-304: the zone menu and the add slot write the mosaic order and the muted mines (07 machines 31,
+// 32; TC-304-01). After it, every Valle key of 14 §3.9 is renderer-writable.
+describe('the mosaic order and the muted mines written by the Valle window (ISSUE-304)', () => {
+  it('[S32.03, S32.05, S31.08, ADR-024] valleMosaicOrder and mutedMineIds are renderer-writable as lists of mine ids, strictly; the order is never null, which only Reset metrics restores', () => {
+    for (const write of [
+      { key: 'valleMosaicOrder', value: [MINE] },
+      // `[]` is an emptied mosaic, the person's own (07 N-22).
+      { key: 'valleMosaicOrder', value: [] },
+      { key: 'mutedMineIds', value: [MINE] },
+      { key: 'mutedMineIds', value: [] }
+    ]) {
+      expect(uiPreferenceWriteSchema.safeParse(write).success, JSON.stringify(write)).toBe(true)
+    }
+    for (const wrong of [
+      // `null` is "never written": only Reset metrics returns the store to it (S32.16), never a renderer.
+      { key: 'valleMosaicOrder', value: null },
+      { key: 'valleMosaicOrder', value: ['not-a-mine-id'] },
+      { key: 'valleMosaicOrder', value: [MINE], extra: true },
+      { key: 'mutedMineIds', value: null },
+      { key: 'mutedMineIds', value: [DWARF, 42] },
+      { key: 'mutedMineIds', value: [MINE], extra: true }
     ]) {
       expect(uiPreferenceWriteSchema.safeParse(wrong).success, JSON.stringify(wrong)).toBe(false)
     }

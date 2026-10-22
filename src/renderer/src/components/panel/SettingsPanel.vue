@@ -62,6 +62,9 @@ import TypographySettings from './TypographySettings.vue'
  * page opens on the section its owner hands back as `section` (the one last open, NFR-PERS-11),
  * or on General on first run and whenever the shortcut failed to register (US-SHELL-008.AC02),
  * and tells its owner each section it shows (`section-change`), so the owner can keep it.
+ *
+ * Hosted in Valle (ISSUE-304; owner decision 2026-10-22), `panelWindowRows` false leaves out the rows that act on the
+ * Panel window: Position, Always on top and Hide panel are absent, not disabled. Every other row is the same.
  */
 const props = withDefaults(
   defineProps<{
@@ -69,11 +72,13 @@ const props = withDefaults(
     shortcutError: string | null
     shortcutRecording: boolean
     shortcutApplying: boolean
-    edge: PanelEdge
+    /** Whether the rows that act on the Panel window are drawn (Position, Always on top, Hide panel); true in the Panel. */
+    panelWindowRows?: boolean
+    edge?: PanelEdge
     /** True while a layout move (including a position change) is in flight. */
-    edgeApplying: boolean
-    pinned: boolean
-    pinTooltip: string
+    edgeApplying?: boolean
+    pinned?: boolean
+    pinTooltip?: string
     /** Null until main's build answer arrives, and null forever on failure — see App.vue. */
     versionText: string | null
     versionHint: string
@@ -108,7 +113,16 @@ const props = withDefaults(
     /** The options this build offers (`modeAtLaunchOptions`); none means no row. */
     modeAtLaunchOptions?: readonly ModeAtLaunch[]
   }>(),
-  { section: undefined, modeAtLaunch: null, modeAtLaunchOptions: () => [] }
+  {
+    section: undefined,
+    modeAtLaunch: null,
+    modeAtLaunchOptions: () => [],
+    panelWindowRows: true,
+    edge: 'right',
+    edgeApplying: false,
+    pinned: false,
+    pinTooltip: ''
+  }
 )
 
 const emit = defineEmits<{
@@ -274,6 +288,7 @@ watch(
             />
           </SettingsRow>
           <PositionSettings
+            v-if="panelWindowRows"
             :edge="edge"
             :applying="edgeApplying"
             @select="emit('select-edge', $event)"
@@ -291,6 +306,7 @@ watch(
             @close="emit('close')"
           />
           <SettingsRow
+            v-if="panelWindowRows"
             label="Always on top"
             help="Pinned: the panel stays above other windows. Unpinned: other windows can cover the panel."
           >
@@ -351,7 +367,7 @@ watch(
           <p v-if="versionText" class="version" :title="versionHint">
             <b>DwarfAI-Miners</b> · version <b>{{ versionText }}</b>
           </p>
-          <div>
+          <div v-if="panelWindowRows">
             <ActionButton
               class="hide-panel"
               label="Hide panel"

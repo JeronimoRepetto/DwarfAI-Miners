@@ -37,11 +37,6 @@ export interface MineHistoryState {
 /** A-19's target answer, read with the registry's own schema so a malformed answer is never taken for a history. */
 const historyAnswer = CHANNELS['mine:history'].response
 
-// Singleton store: module-scope state shared by every useMineHistory() caller (house style).
-const state = reactive<MineHistoryState>({ mineId: null, readable: null, tabs: [] })
-/** Which read is the current one, so a slow answer cannot land on a mine the panel has since left. */
-let historyToken = 0
-
 function tabOf(speaker: MineHistoryView['speakers'][number]): MineHistoryTab {
   const said = speaker.messages.map((message) => message.providerTime ?? message.createdAt)
   return {
@@ -87,7 +82,22 @@ export function historyAsToday(state: MineHistoryState): MineHistoryResult | und
   }
 }
 
-export function useMineHistory() {
+/** One mine history store: what was read for one mine, the last read winning. */
+export interface MineHistoryStore {
+  state: MineHistoryState
+  open(mineId: MineId, read: HostMineHistoryRead): Promise<void>
+  close(): void
+}
+
+/**
+ * A mine history store of its own (ISSUE-304): a Valle zone shows one mine's history beside another zone's, so each
+ * zone holds its own; the Panel's one panel uses the window's singleton (`useMineHistory`).
+ */
+export function createMineHistory(): MineHistoryStore {
+  const state = reactive<MineHistoryState>({ mineId: null, readable: null, tabs: [] })
+  /** Which read is the current one, so a slow answer cannot land on a mine the panel has since left. */
+  let historyToken = 0
+
   async function open(mineId: MineId, read: HostMineHistoryRead): Promise<void> {
     const token = ++historyToken
     state.mineId = mineId
@@ -116,4 +126,11 @@ export function useMineHistory() {
   }
 
   return { state, open, close }
+}
+
+// Singleton store: module-scope state shared by every useMineHistory() caller (house style).
+const singleton = createMineHistory()
+
+export function useMineHistory(): MineHistoryStore {
+  return singleton
 }

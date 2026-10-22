@@ -204,10 +204,12 @@ describe('the Valle keys over seam A (ISSUE-299; 14 §2.2 A-N20, A-N21)', () => 
     expect(CHANNELS[UI_PREFERENCES_GET].response.safeParse(asked).success).toBe(true)
     // AMENDED for ISSUE-300 (was: a `vallePreset` write refused): ISSUE-300 builds the preset and layout writes
     // (asserted in its own case below); a Valle key not built yet, here the mosaic order, is still refused.
+    // AMENDED for ISSUE-304 (was: `valleMosaicOrder: []` refused): ISSUE-304 builds the mosaic order's write (asserted
+    // in its own case below); its "never written" `null` stays UI main's own, so the gate refuses it.
     expect(
       await router.dispatch(UI_PREFERENCES_SET, FROM_PANEL, {
         key: 'valleMosaicOrder',
-        value: []
+        value: null
       })
     ).toMatchObject({ ok: false, error: { code: 'INVALID_PARAMS' } })
     expect(store.load('valleMosaicOrder')).toEqual([mine])
@@ -263,5 +265,29 @@ describe('the last mine worked in over seam A (ISSUE-301; 14 §2.2 A-N21)', () =
       })
     ).toMatchObject({ ok: false, error: { code: 'INVALID_PARAMS' } })
     expect(store.load('valleLastFrontMineId')).toBe(mine)
+  })
+})
+
+// APPENDED for ISSUE-304: the zone menu and the add slot write the mosaic order and the muted mines through the gate
+// (07 machines 31, 32; TC-304-01).
+describe('the mosaic order and the muted mines over seam A (ISSUE-304; 14 §2.2 A-N21)', () => {
+  it('[S32.03, S32.05, S31.08, ADR-024] setUiPreference stores valleMosaicOrder and mutedMineIds and answers them in the registry shape; a null order stays INVALID_PARAMS', async () => {
+    const { router, store } = world()
+    const mine = '018f3a2e-7c4b-7d1e-9a5b-2f6c8d0e1a02'
+    const answerSchema = CHANNELS[UI_PREFERENCES_SET].response
+    for (const write of [
+      { key: 'valleMosaicOrder', value: [mine] },
+      { key: 'mutedMineIds', value: [mine] }
+    ]) {
+      const answer = await router.dispatch(UI_PREFERENCES_SET, FROM_PANEL, write)
+      expect(answer).toEqual(write)
+      expect(answerSchema.safeParse(answer).success).toBe(true)
+    }
+    expect(store.load('valleMosaicOrder')).toEqual([mine])
+    expect(store.load('mutedMineIds')).toEqual([mine])
+    expect(
+      await router.dispatch(UI_PREFERENCES_SET, FROM_PANEL, { key: 'mutedMineIds', value: null })
+    ).toMatchObject({ ok: false, error: { code: 'INVALID_PARAMS' } })
+    expect(store.load('mutedMineIds')).toEqual([mine])
   })
 })

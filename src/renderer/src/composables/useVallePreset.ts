@@ -35,6 +35,7 @@ import {
   type ValleEffect,
   type ValleFacts,
   type ValleInput,
+  type ValleLayouts,
   type ValleView
 } from '../lib/valle/preset'
 import { restoreValleView } from '../lib/valle/restore'
@@ -87,6 +88,8 @@ export interface VallePresetPart {
   send(input: ValleInput): boolean
   /** Machine 30's wish, the Work front layout's `split` (07 N-17), written at once with that layout (A-N21). */
   wishSplit(split: boolean): void
+  /** Both layouts as a zone change leaves them (07 machine 31; ISSUE-304), written at once (A-N21). */
+  writeLayouts(layouts: ValleLayouts): void
 }
 
 const opened = (stores: ValleStores): ValleView =>
@@ -185,6 +188,12 @@ export function useVallePreset(deps: VallePresetDeps): VallePresetPart {
       const current = view.value
       if (current.layouts.front.split === split) return
       const layouts = { ...current.layouts, front: { ...current.layouts.front, split } }
+      view.value = { ...current, layouts }
+      carry({ kind: 'write-layouts', layouts })
+    },
+    writeLayouts(layouts) {
+      const current = view.value
+      if (current.layouts === layouts) return
       view.value = { ...current, layouts }
       carry({ kind: 'write-layouts', layouts })
     }

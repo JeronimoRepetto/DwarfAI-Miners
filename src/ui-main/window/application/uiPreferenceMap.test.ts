@@ -1,5 +1,11 @@
 // layer: L2
-import type { DwarfId, MineId, UiPreferenceKey, UiPreferencesMap } from '@dwarfai/contracts'
+import type {
+  DwarfId,
+  MineId,
+  UiPreferenceKey,
+  UiPreferencesMap,
+  UiPreferenceWrite
+} from '@dwarfai/contracts'
 import { describe, expect, it } from 'vitest'
 import { InMemoryUiPreferenceStore } from '../ports/fakes/InMemoryUiPreferenceStore'
 import { createUiPreferenceMap } from './uiPreferenceMap'
@@ -127,7 +133,16 @@ describe('the Valle keys of the UI preference map (ISSUE-299; 07 S39.03, S39.13)
     // Each becomes writable in the issue that first writes it. AMENDED for ISSUE-300 (was: `vallePreset` and
     // `valleLayout` refused `not-built` too): ISSUE-300 writes those two, asserted in its own case below.
     // AMENDED for ISSUE-302 (was: `pins` refused here): ISSUE-302 writes the pins; a key still unwritten stands in.
-    expect(map.set({ key: 'mutedMineIds', value: [] })).toEqual({ ok: false, error: 'not-built' })
+    // AMENDED for ISSUE-304 (was: `mutedMineIds` refused `not-built` on this map): ISSUE-304 writes the last two Valle
+    // keys, asserted in its own case below; a Valle key is still refused where the Valle stores are not composed.
+    expect(map.set({ key: 'mutedMineIds', value: [] })).toEqual({
+      ok: true,
+      value: { key: 'mutedMineIds', value: [] }
+    })
+    expect(createUiPreferenceMap({}).set({ key: 'mutedMineIds', value: [] })).toEqual({
+      ok: false,
+      error: 'not-built'
+    })
   })
 
   it('[S39.13, FM-053] an unreadable store falls back to its defaults and logs uiprefs.corrupt', () => {
@@ -155,7 +170,6 @@ describe('the Valle keys of the UI preference map (ISSUE-299; 07 S39.03, S39.13)
 
 // APPENDED for ISSUE-300: the Valle window writes the preset in use and each preset's layout (07 machine 28).
 describe('the Valle preset and layouts written through A-N21 (ISSUE-300; ADR-024 items 1, 4, 9)', () => {
-  const MINE = '018f3a2e-7c4b-7d1e-9a5b-2f6c8d0e1a02' as MineId
   const LAYOUT: UiPreferencesMap['valleLayout'] = {
     control: { chatWidth: 0, split: false, foldedList: false, zones: {} },
     front: { chatWidth: 0, split: false, foldedList: true, zone: { content: 'mine' } }
@@ -181,16 +195,12 @@ describe('the Valle preset and layouts written through A-N21 (ISSUE-300; ADR-024
     })
     // Each of the others becomes writable in the issue that first writes it (ISSUE-301…ISSUE-310). AMENDED for
     // ISSUE-302 (was: `pins` refused here too): the pins are written from ISSUE-302 on, asserted in its own case.
-    expect(map.set({ key: 'valleMosaicOrder', value: [MINE] })).toEqual({
-      ok: false,
-      error: 'not-built'
-    })
     // AMENDED for ISSUE-301 (was: `valleLastFrontMineId` refused `not-built` here): the dive writes it, asserted in
     // its own case below.
-    expect(map.set({ key: 'mutedMineIds', value: [MINE] })).toEqual({
-      ok: false,
-      error: 'not-built'
-    })
+    // AMENDED for ISSUE-304 (was: `valleMosaicOrder` and `mutedMineIds` refused `not-built` here): both are written
+    // from ISSUE-304 on, asserted in its own case below; writing the layouts left them as they were.
+    expect(store.load('valleMosaicOrder')).toBeNull()
+    expect(store.load('mutedMineIds')).toEqual([])
   })
 })
 
@@ -217,10 +227,9 @@ describe('the Valle pins written through A-N21 (ISSUE-302; ADR-024 items 1, 4, 9
     expect(store.storage.logged).toEqual([
       { level: 'warn', event: 'uiprefs.write-failed', subsystem: 'window', msg: 'pins' }
     ])
-    expect(map.set({ key: 'valleMosaicOrder', value: [MINE] })).toEqual({
-      ok: false,
-      error: 'not-built'
-    })
+    // AMENDED for ISSUE-304 (was: `valleMosaicOrder` refused `not-built` here): written from ISSUE-304 on, asserted in
+    // its own case below; the failed pins write left the mosaic order as it was.
+    expect(store.load('valleMosaicOrder')).toBeNull()
   })
 })
 
@@ -239,10 +248,38 @@ describe('the last mine worked in written through A-N21 (ISSUE-301; ADR-024 item
     expect(createUiPreferenceMap({ valle: store }).get(['valleLastFrontMineId'])).toEqual({
       valleLastFrontMineId: MINE
     })
-    // The mosaic order is still another issue's (ISSUE-304).
-    expect(map.set({ key: 'valleMosaicOrder', value: [MINE] })).toEqual({
-      ok: false,
-      error: 'not-built'
+    // AMENDED for ISSUE-304 (was: `valleMosaicOrder` refused `not-built`, "still another issue's"): written from
+    // ISSUE-304 on, asserted in its own case below; the last mine's write left the mosaic order as it was.
+    expect(store.load('valleMosaicOrder')).toBeNull()
+  })
+})
+
+// APPENDED for ISSUE-304: the zone menu and the add slot write the mosaic order and the muted mines (07 machines 31,
+// 32; TC-304-01). After it, every Valle key is written by the Valle window.
+describe('the mosaic order and the muted mines written through A-N21 (ISSUE-304; ADR-024 items 1, 4, 9)', () => {
+  const MINE = '018f3a2e-7c4b-7d1e-9a5b-2f6c8d0e1a02' as MineId
+
+  // TC-304-01: the mosaic order and the muted mines are persisted at once.
+  it('[S32.03, S32.05, S31.08, S32.02] valleMosaicOrder and mutedMineIds are written into UI main’s store and answered as stored, the next open reading them', () => {
+    const store = new InMemoryUiPreferenceStore()
+    const map = createUiPreferenceMap({ valle: store })
+    for (const write of [
+      { key: 'valleMosaicOrder', value: [MINE] },
+      { key: 'mutedMineIds', value: [MINE] }
+    ] satisfies UiPreferenceWrite[]) {
+      expect(map.set(write)).toEqual({ ok: true, value: write })
+    }
+    expect(
+      createUiPreferenceMap({ valle: store }).get(['valleMosaicOrder', 'mutedMineIds'])
+    ).toEqual({
+      valleMosaicOrder: [MINE],
+      mutedMineIds: [MINE]
     })
+    // An emptied mosaic is stored as emptied, never as "never written" (07 N-22).
+    expect(map.set({ key: 'valleMosaicOrder', value: [] })).toEqual({
+      ok: true,
+      value: { key: 'valleMosaicOrder', value: [] }
+    })
+    expect(store.load('valleMosaicOrder')).toEqual([])
   })
 })

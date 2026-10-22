@@ -27,30 +27,22 @@ import GuildPage from './components/shell/GuildPage.vue'
 import { useAudio } from './composables/useAudio'
 import { useMessageDock } from './composables/useMessageDock'
 import { useMines } from './composables/useMines'
-import { historyAsToday, useMineHistory } from './composables/useMineHistory'
+import { useMineHistoryPage } from './composables/useMineHistoryPage'
 import type { MineId } from '@dwarfai/contracts'
-import { useMapTime } from './composables/useMapTime'
+import { useMapPage } from './composables/useMapPage'
 import { usePanelLayout } from './composables/usePanelLayout'
 import { usePinnedWindow } from './composables/usePinnedWindow'
 import { useShellFold } from './composables/useShellFold'
 import type { MotionAnimate } from './lib/shell/boundedMotion'
-import { useProjectBrowse } from './composables/useProjectBrowse'
+import { useMinesPage } from './composables/useMinesPage'
+import { useSettingsPage } from './composables/useSettingsPage'
 import { useToasts } from './composables/useToasts'
 import { useAttentionCues } from './composables/useAttentionCues'
 import { useDwarfQuestion } from './composables/useDwarfQuestion'
-import { browseRows } from './lib/browse/boardRows'
 import { createBrowseRefresh } from './lib/browse/browseRefresh'
 import { columnMine, launchMineOpens, openableMineIds } from './lib/browse/columnMine'
-import { mineCardView, mineRefusalToast } from './lib/browse/mineCard'
-import { removedToast, sortToast, type MineSort } from './lib/browse/minesList'
-import { useResetMetrics } from './composables/useResetMetrics'
 import { useStopEverything } from './composables/useStopEverything'
-import { useToggleShortcut } from './composables/useToggleShortcut'
 import { takeLaunchMine, useView } from './composables/useView'
-import { useNotificationSettings } from './composables/useNotificationSettings'
-import { useJevSettings } from './composables/useJevSettings'
-import { useOpenCodeSettings } from './composables/useOpenCodeSettings'
-import { useTypography } from './composables/useTypography'
 import { useHostConnection } from './composables/useHostConnection'
 import { useRecoveryReport } from './composables/useRecoveryReport'
 import { useWelcomeStep } from './composables/useWelcomeStep'
@@ -69,9 +61,7 @@ import { mineOnScreen } from './lib/shell/mineOnScreen'
 import { unavailableAreaOf } from './lib/shell/shellNav'
 import { needsYouCount, reachableArea } from './lib/shell/panelNav'
 import { SHIPPED_MODES, leverModes, leverMove, type LeverMode } from './lib/shell/builtDestinations'
-import { modeAtLaunchPart } from './composables/useModeAtLaunch'
-import { versionLabel, versionTitle } from './lib/appBuild'
-import type { AppBuild, Dwarf, FeatureFlags, Mine, MineHistoryResult, ShellArea } from './types'
+import type { Dwarf, FeatureFlags, Mine, ShellArea } from './types'
 
 const props = defineProps<{
   /**
@@ -103,8 +93,11 @@ const stopWatchingReducedMotion = watchReducedMotion((asked) => {
 onBeforeUnmount(stopWatchingReducedMotion)
 
 const { state, start: followHostBoard, stop: stopFollowingHostBoard, hostDwarfs } = useMines()
-/** The painting the Map page wears, by the time of day (#136). */
-const mapVariant = useMapTime()
+/**
+ * The Map page in use (#136; useMapPage, ISSUE-304): the painting it wears by the time of day, and until the first
+ * board arrives it claims no empty valley (`loading`).
+ */
+const { variant: mapVariant, loading, loaded: boardLoaded } = useMapPage()
 const { state: viewState, openMine, closeMine, showArea, showMap, syncWithMines } = useView()
 
 /**
@@ -172,6 +165,9 @@ function closeDockToOpener(): void {
 const dwarfDelivery = dock.delivery
 const { pinned, sync: syncPinned, toggle: togglePinned } = usePinnedWindow()
 
+/** The Settings page's read models and actions (useSettingsPage, ISSUE-304), drawn by SettingsPanel below. */
+const settingsPage = useSettingsPage({ pinned })
+
 /* --- System notifications (#316) — one block, appended --------------------- */
 /**
  * Settings' notifications switch (#316).
@@ -186,7 +182,7 @@ const {
   start: followNotificationSettings,
   stop: stopFollowingNotificationSettings,
   set: setNotificationsEnabled
-} = useNotificationSettings()
+} = settingsPage.notifications
 /* --- end of the #316 block ------------------------------------------------- */
 
 /* --- Notification reveal (ISSUE-114) — one block, appended ------------------ */
@@ -226,7 +222,7 @@ const {
   read: readModeAtLaunch,
   pick: pickModeAtLaunch,
   dispose: disposeModeAtLaunch
-} = modeAtLaunchPart()
+} = settingsPage.modeAtLaunch
 /* --- end of the ISSUE-294 block --------------------------------------------- */
 
 /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
@@ -251,7 +247,7 @@ const {
   save: saveJevApiKey,
   clear: clearJevApiKey,
   setPreferences: setJevPreferences
-} = useJevSettings()
+} = settingsPage.jev
 /* --- end of the #509 block ------------------------------------------------- */
 
 /* --- OpenCode permission relay: consent and server password (#588 T6) — one block, appended --- */
@@ -272,7 +268,7 @@ const {
   setPluginEnabled: setOpenCodePluginEnabled,
   savePassword: saveOpenCodeServerPassword,
   clearPassword: clearOpenCodeServerPassword
-} = useOpenCodeSettings()
+} = settingsPage.openCode
 /* --- end of the #588 T6 block ------------------------------------------------ */
 
 /* --- Typography preferences (#370) — one block, appended ------------------- */
@@ -289,7 +285,7 @@ const {
   sync: syncTypography,
   set: setTypography,
   listen: listenTypography
-} = useTypography()
+} = settingsPage.typography
 /* --- end of the #370 block ------------------------------------------------- */
 
 /**
@@ -458,13 +454,7 @@ async function waitForPanelLeaves(): Promise<void> {
  * nav and the page; lib/shell/composition.ts went with them.
  */
 
-// The hover line explains what the CURRENT state does; the accessible name
-// stays stable and aria-pressed carries the state (see the pin button below).
-const pinTooltip = computed(() =>
-  pinned.value
-    ? 'Pinned: the panel stays above other windows'
-    : 'Unpinned: other windows can cover the panel'
-)
+const pinTooltip = settingsPage.pinTooltip
 
 /**
  * Settings surface (see #17). App owns the composable — and therefore the IPC —
@@ -481,7 +471,7 @@ const {
   stopRecording: stopShortcutRecording,
   record: recordShortcut,
   reset: resetShortcut
-} = useToggleShortcut()
+} = settingsPage.shortcut
 
 /**
  * Settings' "Reset metrics" action (#138). Same reasoning as the shortcut
@@ -493,7 +483,7 @@ const {
   resetting: metricsResetting,
   error: metricsResetError,
   reset: resetMetrics
-} = useResetMetrics()
+} = settingsPage.resetMetrics
 
 /**
  * The browse over every project the app remembers (#92). App owns the
@@ -514,13 +504,16 @@ const {
   refresh: refreshProjects,
   setSearch: setProjectSearch,
   setTier: setProjectTier,
-  setSort: setProjectSort,
-  addProject,
   worktreeQuestion,
-  openMainProject,
   dismissWorktreeQuestion,
-  removeProject
-} = useProjectBrowse()
+  mineCards,
+  reveal: revealMine,
+  refuse: refuseMine,
+  sort: sortProjects,
+  remove: removeFromBrowse,
+  add: addMine,
+  adoptMainProject
+} = useMinesPage({ open: (mineId) => openFromBrowse(mineId), mines: () => state.mines })
 // Reads the list again while Mines is on screen when the board shows a measurement it lacks (#635).
 const browseRefresh = createBrowseRefresh()
 
@@ -597,81 +590,13 @@ function openFromBrowse(projectId: string): void {
   openMine(projectId)
 }
 
-/**
- * Remove the mine a card asked about, once the Mines page has had it confirmed (#169), and say it
- * happened ("<name> removed", screens/browse.md).
- *
- * Nothing else to do here, and two things deliberately not done. The map is not told: it draws
- * the board, and the poll main publishes as part of the removal no longer carries this mine.
- * Neither is the mine held open beside the list — `syncWithMines` already lets go of an open mine
- * that has left the board, on that same push, and a second path closing it here would be a rule
- * with two homes.
- */
-async function removeFromBrowse(projectId: string): Promise<void> {
-  const name = projects.value.find((project) => project.id === projectId)?.name ?? projectId
-  if (await removeProject(projectId)) showToast(removedToast(name))
-}
-
 /* --- The Mines page (#635) — one block, appended ------------------------- */
 const { showToast } = useToasts()
 
-/**
- * Every mine as its card, built once per change of the list or the board: the page filters and
- * orders them itself, so the board rows are joined unfiltered (lib/browse/boardRows.ts).
- */
-const mineCards = computed(() =>
-  browseRows(projects.value, state.mines, { search: '', tier: null }).map((row) =>
-    mineCardView(row, state.mines)
-  )
-)
-
 /*
- * A press on a mine that cannot be entered (PANEL-QUESTIONS 6): nothing opens, and a toast says
- * why, "<name>: <reason>", with the warning icon, from the Mines page and the map alike.
+ * The cards, a refusal's and a sort's toast, a removal said, and a mine just added opened once it is on the board:
+ * useMinesPage (ISSUE-304), above.
  */
-function refuseMine(projectId: string): void {
-  const name = projects.value.find((project) => project.id === projectId)?.name ?? projectId
-  showToast(mineRefusalToast(name), 'warning')
-}
-
-function sortProjects(mode: MineSort): void {
-  setProjectSort(mode)
-  showToast(sortToast(mode))
-}
-
-/**
- * The mine an add just made, until it is on the board (decision log, First run: add a mine: the
- * folder picked becomes the mine and opens in the mine column at once). Main publishes the new mine
- * on its next push, so a mine not on the board yet opens as soon as it arrives; the page scrolls
- * its card into view either way. Adding a mine never opens the Add panel.
- */
-const pendingOpen = ref<string | null>(null)
-const revealMine = ref<string | null>(null)
-
-function openAdded(mineId: string | undefined): void {
-  if (mineId === undefined) return
-  revealMine.value = mineId
-  if (state.mines.some((mine) => mine.id === mineId)) openFromBrowse(mineId)
-  else pendingOpen.value = mineId
-}
-
-watch(
-  () => state.mines,
-  (mines) => {
-    const id = pendingOpen.value
-    if (id === null || !mines.some((mine) => mine.id === id)) return
-    pendingOpen.value = null
-    openFromBrowse(id)
-  }
-)
-
-async function addMine(): Promise<void> {
-  openAdded(await addProject())
-}
-
-async function adoptMainProject(): Promise<void> {
-  openAdded(await openMainProject())
-}
 
 /** The Music slot says what it did: "Music on" or "Music off", with that icon (components.md, Nav). */
 function toggleMusicAndSay(): void {
@@ -683,20 +608,8 @@ function toggleMusicAndSay(): void {
 }
 /* --- end of the #635 block ----------------------------------------------- */
 
-/**
- * Which build is running (see #79). Read from main once on mount, because a
- * version cannot change under a live process — there is nothing to keep in
- * step and nothing to subscribe to.
- *
- * Null until it arrives, and null forever if the read fails, in which case the
- * settings panel prints nothing at all. That is deliberate: a placeholder like
- * "unknown" would be furniture for a case that means the bridge itself is
- * down, and inventing a version where the real one belongs is the one failure
- * this whole feature exists to prevent.
- */
-const build = ref<AppBuild | null>(null)
-const versionText = computed(() => (build.value === null ? null : versionLabel(build.value)))
-const versionHint = computed(() => (build.value === null ? '' : versionTitle(build.value)))
+/** Which build is running (#79), for Settings' About (useSettingsPage). */
+const { versionText, versionHint, loadBuild } = settingsPage
 
 /**
  * The mine column's width, published to CSS from the same constants main
@@ -718,7 +631,6 @@ const mineColumnWidth =
  */
 const shellHeight = `calc(100vh - ${SHELL_CONTENT_INSET}px)`
 
-const loading = ref(true)
 let unlistenAudio: (() => void) | undefined
 /* --- Typography preferences (#370) — one block, appended ------------------- */
 let unlistenTypography: (() => void) | undefined
@@ -844,7 +756,7 @@ function boardChanged(): void {
   if (viewState.area === 'mines' && browseRefresh.due(state.mines, projects.value)) {
     void refreshProjects()
   }
-  loading.value = false
+  boardLoaded()
   boardRead = true
   pruneOpenMine()
   if (import.meta.env.DEV) {
@@ -857,15 +769,6 @@ function boardChanged(): void {
   }
 }
 watch(() => state.mines, boardChanged)
-
-async function loadBuild(): Promise<void> {
-  try {
-    build.value = await window.api.getAppBuild()
-  } catch {
-    // Main is the only source there is, so there is nothing to fall back on
-    // and nothing worth guessing: the settings panel stays as it was.
-  }
-}
 
 function enterMine(mineId: string): void {
   openMine(mineId)
@@ -912,8 +815,16 @@ const historyOpen = ref(false)
  * previous answer stays on screen until the next lands, or a live update would flash "reading" over a transcript
  * somebody is in the middle of; a slow answer for a mine the panel left never lands (the store's own token).
  */
-const { state: hostHistory, open: readHostHistory, close: closeHostHistory } = useMineHistory()
-const mineHistory = computed<MineHistoryResult | undefined>(() => historyAsToday(hostHistory))
+const {
+  history: mineHistory,
+  pathRefusal: historyPathRefusal,
+  openPath: openHistoryPath,
+  openLink: openHistoryLink
+} = useMineHistoryPage({
+  mineId: () => viewState.mineId as MineId | null,
+  mine: () => currentMine.value,
+  open: () => historyOpen.value
+})
 
 /**
  * The mine's History action (#192), and the MessagePanel's (#635): the history opens in the dock's
@@ -1001,77 +912,10 @@ watch(dock.error, (text) => {
  * a refused or lost read is "could not be read", a different statement from "nobody has spoken" (useMineHistory).
  */
 
-/**
- * The refusal main gave for the LAST History path click (#279), keyed by the
- * row so it can only ever land on the row that was clicked — see
- * MineHistoryPanel's own `pathRefusal` prop. This panel has no status line of
- * its own, unlike the message panel, so the refusal shows on the row itself.
+/*
+ * A History path click's refusal, kept on its row (#279), a link relayed to main (#635), and the re-read while the
+ * history is open whenever the crew says something (#183, #192): useMineHistoryPage (ISSUE-304), above.
  */
-const historyPathRefusal = ref<{ key: string; reason: string } | undefined>(undefined)
-
-/**
- * Open an activity line's own path from the History panel (#279). Resolved
- * and verified entirely in main, against the open mine's own folder — this
- * window only relays the click and hands the verdict back to the row that
- * asked for it.
- */
-async function openHistoryPath(payload: { key: string; target: string }): Promise<void> {
-  if (currentMine.value === undefined) return
-  historyPathRefusal.value = undefined
-  try {
-    const result = await window.api.openMinePath({
-      mineId: currentMine.value.id,
-      target: payload.target
-    })
-    if (!result.opened) historyPathRefusal.value = { key: payload.key, reason: result.reason }
-  } catch {
-    historyPathRefusal.value = { key: payload.key, reason: 'That file could not be opened.' }
-  }
-}
-
-/**
- * A link in a history message (#635): relayed to main, which validates it again and owns the only
- * `shell.openExternal` in the app, as the MessagePanel's are (#347). A refusal has nowhere to be
- * said in a read-only panel, and the link stays where it was.
- */
-async function openHistoryLink(href: string): Promise<void> {
-  try {
-    await window.api.openExternalLink(href)
-  } catch {
-    // The bridge is the only way out; nothing else can open it.
-  }
-}
-
-/**
- * The signal the history re-reads on while open: the SAME two the message
- * panel's feed watches (#183, see the watch below it), over every dwarf in the
- * mine rather than the one selected — `lastMessage` for an agent that spoke,
- * `transcriptUpdatedAt` for any writer at all — plus a dwarf turning 'leaving'
- * or dropping off the board, since its final words land with its exit (#192).
- * Folded into one string so the watch fires on a change to any of them and
- * stays silent on a poll that moved none: an idle mine costs no disk.
- */
-const crewSignal = computed(() =>
-  (currentMine.value?.dwarfs ?? [])
-    .map(
-      (dwarf) =>
-        `${dwarf.id}|${dwarf.lastMessage ?? ''}|${dwarf.transcriptUpdatedAt ?? ''}|${dwarf.status === 'leaving'}`
-    )
-    .join('\n')
-)
-
-watch(
-  [historyOpen, () => viewState.mineId, crewSignal],
-  ([open, mineId]) => {
-    if (!open || mineId === null) {
-      // Nothing to show: a read still in flight cannot land on a panel that has since closed or moved on.
-      closeHostHistory()
-      return
-    }
-    void readHostHistory(mineId as MineId, window.api.getMineHistory)
-  },
-  { immediate: true }
-)
 
 /**
  * What the ambience is a reading of (#173), and since #330 it is the mine held

@@ -224,7 +224,7 @@ function arrive(dwarf: DwarfWire, announce: boolean): void {
   arrivals.add(dwarf.id)
   emit({ kind: 'walk-in', dwarfId: dwarf.id, mineId: dwarf.mineId })
   const mine = board.mines.get(dwarf.mineId)
-  if (announce && mine !== undefined) useToasts().showToast(startedIn(dwarf, mine))
+  if (announce && announcing && mine !== undefined) useToasts().showToast(startedIn(dwarf, mine))
 }
 
 function depart(dwarfId: DwarfId, mineId: MineId, cause: DepartureCause): void {
@@ -295,12 +295,18 @@ function boardOf(chunks: readonly SnapshotChunk[]): HostBoard {
 }
 
 let follower: ReturnType<typeof followHost<HostBoard>> | null = null
+/**
+ * Whether this window's board says an announced arrival itself (US-OBS-002.AC07): the Panel's does; Valle's does not,
+ * since Valle says it once through its own arrival toast (ISSUE-304).
+ */
+let announcing = true
 
 /**
  * Follows the Host read path (A-N02 first, then A-N01). Answers whether the Host now feeds the board; when it does
  * not (the Host did not answer a snapshot), the board stays as it is until a later read succeeds.
  */
-async function start(): Promise<boolean> {
+async function start(options: { announce?: boolean } = {}): Promise<boolean> {
+  announcing = options.announce ?? true
   follower ??= followHost(
     {
       subscribe: (listener) => window.api.onHostEvent((frames) => listener(frames as HostFrame[])),
