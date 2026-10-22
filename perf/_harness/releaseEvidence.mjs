@@ -31,8 +31,12 @@ export const VETA_IDLE_EVIDENCE = {
   processes: ['renderer', 'app']
 }
 
-/** The requirement ids a scene's rows are evidence for. */
+/**
+ * The requirement ids a scene's rows are evidence for. The Control-room scaling scenes (`perf/valleScaling.perf.ts`,
+ * ISSUE-298, spike S-034-1) are evidence for NFR-PERF-10 alone; their frame-time summaries carry no CPU and make no row.
+ */
 function requirementsOf(scene) {
+  if (scene.startsWith('control-room-')) return ['NFR-PERF-10']
   return VETA_IDLE_EVIDENCE.scenes.includes(scene)
     ? ['NFR-PERF-04', 'NFR-OBS-03', 'NFR-PLAT']
     : ['NFR-PERF-04', 'NFR-OBS-03']

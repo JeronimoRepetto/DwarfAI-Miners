@@ -24,6 +24,9 @@
     "src/renderer/src/**/*.ts",
     "src/renderer/src/**/*.vue",
     "src/preload/index.d.ts",
-    "src/contracts/**/*.ts"
-  ]
+    "src/contracts/**/*.ts",
+    "perf/fixtures/controlRoom/**/*.ts",
+    "perf/fixtures/controlRoom/**/*.vue"
+  ],
+  "exclude": ["perf/fixtures/controlRoom/buildPage.ts"]
 }
