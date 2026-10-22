@@ -23,6 +23,9 @@ import { modeTransitionPart } from './composables/useModeTransition'
 import { usePanelFrameClock } from './composables/usePanelFrameClock'
 import VetaApp from './components/veta/VetaApp.vue'
 import { windowRoot } from './components/veta/vetaEntry'
+import ValleApp from './components/valle/ValleApp.vue'
+import { isValleRoot, valleBridgeOf } from './components/valle/valleEntry'
+import { readValleStores } from './composables/useValleStores'
 
 /*
  * One window, one root (#635). The message panel had a window of its own beside the shell (#162),
@@ -45,8 +48,17 @@ import { windowRoot } from './components/veta/vetaEntry'
 // The Panel's sprites play on a clock held still while the Panel window is hidden (ISSUE-297; ADR-025 item 7): UI main
 // says when it is, because a hidden frameless window's `document.hidden` is a platform detail. Veta keeps its own
 // clock, which plays while Veta is shown.
+//
+// The Valle window loads this same page with `?mode=valle` (ADR-025 item 1; ISSUE-299) and mounts the Valle root once
+// its stores and session fields were read, so its first paint is the stored layout (07 S39.03). UI main builds that
+// window only where Valle is in the build's built-modes list.
 modeTransitionPart()
-if (windowRoot(window.location.search) === 'veta') {
+if (isValleRoot(window.location.search)) {
+  const bridge = valleBridgeOf(window.api)
+  void readValleStores(bridge).then((stores) => {
+    createApp(ValleApp, { bridge, stores }).mount('#app')
+  })
+} else if (windowRoot(window.location.search) === 'veta') {
   createApp(VetaApp).mount('#app')
 } else {
   void restoreLaunchView(window.api).then(() => {
