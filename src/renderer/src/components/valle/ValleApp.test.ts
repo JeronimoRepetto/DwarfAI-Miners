@@ -18,12 +18,16 @@ import {
   EREBOR,
   KHAZAD,
   MORIA,
+  NALI,
   dwarfWire,
   frame,
   mineWire,
   snapshotPage
 } from '../../lib/veta/testing/vetaFixtures'
 import { DEFAULT_AUDIO_PREFERENCES, type ProjectSummary } from '../../types'
+import HistoryPanel from '../history/HistoryPanel.vue'
+import AddPanel from '../launch/AddPanel.vue'
+import DwarfMessagePanel from '../message/DwarfMessagePanel.vue'
 import ValleApp from './ValleApp.vue'
 import { valleBridgeOf } from './valleEntry'
 
@@ -770,5 +774,284 @@ describe('the splitter in the Valle root (ISSUE-305)', () => {
     await bar.trigger('dblclick')
     expect(chatWidth()).toContain('--chat-w: 876px')
     expect(writes.at(-1)).toEqual({ key: 'valleLayout', value: layouts })
+  })
+})
+
+// APPENDED for TVC (a Valle package gap resolved in development, EPIC-20): the chats inside the pins and panes, the
+// Panel's own MessagePanel and Add panel fed by the window's one message dock (BR-21; ADR-033 item 5).
+describe("the chats inside Valle's pins and panes (TVC)", () => {
+  /** Borin in Moria and Dain in Erebor, both present; `asks` adds the Host's asks section. */
+  function twoDwarfs(asks?: unknown): Partial<Window['api']> {
+    return {
+      getHostSnapshot: () => {
+        const page = snapshotPage(10, {
+          minesEverKnown: true,
+          mines: [mineWire(MORIA), mineWire(EREBOR)],
+          dwarfs: [dwarfWire(BORIN, MORIA), dwarfWire(DAIN, EREBOR)]
+        })
+        if (asks !== undefined && page.ok) {
+          page.value.chunks.push({ section: 'asks', data: asks } as never)
+        }
+        return Promise.resolve(page) as never
+      }
+    }
+  }
+  const BOTH = [
+    { dwarfId: BORIN, mineId: MORIA, order: 0 },
+    { dwarfId: DAIN, mineId: EREBOR, order: 1 }
+  ]
+  const wide: ValleBodyObserver = (_target, callback) => {
+    callback(1600)
+    return () => {}
+  }
+  /** The MessagePanels on screen, by the dwarf each one shows. */
+  const panels = (root: VueWrapper) =>
+    root
+      .findAllComponents(DwarfMessagePanel)
+      .map((panel) => (panel.props('dwarf') as { id: string }).id)
+  const composer = (root: VueWrapper, dwarfId: string) =>
+    root.get(`[data-valle-chat="${dwarfId}"] .dm-composer textarea`)
+  const typed = (root: VueWrapper, dwarfId: string): string =>
+    (composer(root, dwarfId).element as HTMLTextAreaElement).value
+  const line = (root: VueWrapper, key: string) => root.get(`.dm-cstack [data-pin="${key}"]`)
+
+  it("[US-VALLE-007.AC08, US-VALLE-007.AC09, BR-21] the expanded line and the Work front's pane hold the Panel's own MessagePanel on the pinned dwarf", async () => {
+    const { root, clock } = mountValle({ preset: 'control', pins: BOTH }, undefined, twoDwarfs())
+    await flushPromises()
+    // The expanded line holds Borin's chat, the host's direct child (its rule reaches it, ISSUE-305).
+    const open = root.get('.dm-cstack__open')
+    expect(open.attributes('data-pin')).toBe(BORIN)
+    expect(open.find(':scope > .dm-msg').exists()).toBe(true)
+    expect(panels(root)).toEqual([BORIN])
+    expect(root.getComponent(DwarfMessagePanel).props('hostedIn')).toBe('valle')
+
+    await line(root, DAIN).trigger('click')
+    await flushPromises()
+    expect(panels(root)).toEqual([DAIN])
+
+    await root.get('[data-preset-tab="front"]').trigger('click')
+    clock.advance(330)
+    await flushPromises()
+    const pane = root.get('.dm-cdeck__pane')
+    expect(pane.find(':scope > .dm-msg').exists()).toBe(true)
+    expect(panels(root)).toEqual([pane.attributes('data-pane')])
+  })
+
+  it('[US-VALLE-008.AC01, US-MSG-009.AC03] a split shows two conversations side by side, each its own dwarf and its own draft', async () => {
+    const { root, clock } = mountValle({ preset: 'front', pins: BOTH }, wide, twoDwarfs())
+    await flushPromises()
+    clock.advance(330)
+    await flushPromises()
+    await root.get('button.dm-cdeck__split').trigger('click')
+    await flushPromises()
+    const panes = root.findAll('.dm-cdeck__pane').map((pane) => pane.attributes('data-pane')!)
+    expect(panes).toHaveLength(2)
+    expect(panels(root)).toEqual(panes)
+
+    await composer(root, panes[0]!).setValue('first pane words')
+    await composer(root, panes[1]!).setValue('second pane words')
+    await flushPromises()
+    expect(typed(root, panes[0]!)).toBe('first pane words')
+    expect(typed(root, panes[1]!)).toBe('second pane words')
+    // Back to one pane and to two again: each pane's chat takes its own draft back.
+    await root.get('button.dm-cdeck__split').trigger('click')
+    await root.get('button.dm-cdeck__split').trigger('click')
+    await flushPromises()
+    expect(typed(root, panes[0]!)).toBe('first pane words')
+    expect(typed(root, panes[1]!)).toBe('second pane words')
+  })
+
+  it("[US-MSG-009.AC01, ADR-024] a pin's draft comes back after a fold, a focus move and a preset switch", async () => {
+    const { root, clock } = mountValle({ preset: 'control', pins: BOTH }, undefined, twoDwarfs())
+    await flushPromises()
+    await composer(root, BORIN).setValue('half a thought')
+    // Borin's line folds as Dain's opens: Dain's composer is empty.
+    await line(root, DAIN).trigger('click')
+    await flushPromises()
+    expect(typed(root, DAIN)).toBe('')
+    await line(root, BORIN).trigger('click')
+    await flushPromises()
+    expect(typed(root, BORIN)).toBe('half a thought')
+
+    // Into the Work front (Moria, Borin's tab first) and back: the draft is still Borin's.
+    await root.get('[data-preset-tab="front"]').trigger('click')
+    clock.advance(330)
+    await flushPromises()
+    expect(typed(root, BORIN)).toBe('half a thought')
+    await root.get('[data-preset-tab="control"]').trigger('click')
+    clock.advance(330)
+    await flushPromises()
+    expect(typed(root, BORIN)).toBe('half a thought')
+  })
+
+  it('[S18.02, S29.13, US-VALLE-007.AC07] a pin whose dwarf left keeps its conversation, read-only', async () => {
+    const sendDwarfText = vi.fn(() => Promise.resolve({ ok: true, value: {} }))
+    const { root, push } = mountValle({ preset: 'control', pins: BOTH }, undefined, {
+      ...twoDwarfs(),
+      sendDwarfText: sendDwarfText as never
+    })
+    await flushPromises()
+    push([frame(11, 'dwarf.departed', { dwarfId: BORIN, mineId: MORIA, cause: 'stopped' })])
+    await flushPromises()
+    expect(line(root, BORIN).attributes('data-pin-state')).toBe('gone')
+    expect(root.get('.dm-cstack__open').attributes('data-read-only')).toBe('true')
+    expect(panels(root)).toEqual([BORIN])
+    expect(composer(root, BORIN).attributes('disabled')).toBeDefined()
+    // Nothing it would send leaves.
+    root.getComponent(DwarfMessagePanel).vm.$emit('send', { text: 'hello?', pressEnter: true })
+    await flushPromises()
+    expect(sendDwarfText).not.toHaveBeenCalled()
+  })
+
+  it("[S29.16, S29.17, US-VALLE-007.AC15] an Add pin holds the Panel's own Add panel aimed at its mine, its prompt kept through a fold, and its launch becomes that dwarf's chat", async () => {
+    const LAUNCH = '01920000-0000-7000-8000-0000000003c1'
+    const { root, push } = mountValle(
+      {
+        preset: 'control',
+        pins: [{ dwarfId: DAIN, mineId: EREBOR, order: 0 }],
+        session: {
+          ...VALLE_STORE_DEFAULTS.session,
+          valle: { addPins: [{ mineId: MORIA, order: 1 }] }
+        }
+      },
+      undefined,
+      {
+        ...twoDwarfs(),
+        listAgentProviders: () =>
+          Promise.resolve({
+            ok: true,
+            value: [
+              {
+                providerId: 'claude',
+                label: 'claude',
+                models: [],
+                permissionModes: [],
+                offeredModes: [],
+                installed: true,
+                publicLaunch: 'enabled',
+                answerChannel: 'available'
+              }
+            ]
+          }) as never,
+        launchAgent: () => Promise.resolve({ ok: true, value: { launchId: LAUNCH } }) as never,
+        getJevSettings: () => Promise.resolve({ configured: false }) as never
+      }
+    )
+    await flushPromises()
+    await line(root, `add:${MORIA}`).trigger('click')
+    await flushPromises()
+    const open = root.get('.dm-cstack__open')
+    expect(open.attributes('data-pin')).toBe(`add:${MORIA}`)
+    expect(open.find(':scope > .dm-add').exists()).toBe(true)
+    expect(root.getComponent(AddPanel).props('mineName')).toBe('moria')
+
+    await root.get('.dm-add__chips button').trigger('click')
+    await root.get('.dm-add__prompt textarea').setValue('dig the east gallery')
+    // A fold and back: the prompt is still there.
+    await line(root, DAIN).trigger('click')
+    await flushPromises()
+    await line(root, `add:${MORIA}`).trigger('click')
+    await flushPromises()
+    expect((root.get('.dm-add__prompt textarea').element as HTMLTextAreaElement).value).toBe(
+      'dig the east gallery'
+    )
+
+    await root.get('button.dm-add__launch').trigger('click')
+    await flushPromises()
+    push([
+      frame(11, 'launch.changed', {
+        launch: {
+          launchId: LAUNCH,
+          mineId: MORIA,
+          state: 'succeeded',
+          wayKind: 'supplier',
+          requestedAt: 1,
+          dwarfId: BORIN
+        }
+      } as never)
+    ])
+    await flushPromises()
+    expect(root.findAll('.dm-cstack [data-pin]').map((pin) => pin.attributes('data-pin'))).toEqual([
+      DAIN,
+      BORIN
+    ])
+    expect(root.get('.dm-cstack__open').attributes('data-pin')).toBe(BORIN)
+    expect(panels(root)).toEqual([BORIN])
+  })
+
+  it('[US-ASK-003.AC07, ADR-010] a permission answered in a Valle-hosted chat goes to the Host broker once, as the Panel’s does', async () => {
+    const ASK = '01920000-0000-7000-8000-0000000a5141'
+    const answerDwarfPermission = vi.fn(() =>
+      Promise.resolve({ ok: true, value: { kind: 'accepted' } })
+    )
+    const { root } = mountValle({ preset: 'control', pins: BOTH }, undefined, {
+      ...twoDwarfs({
+        asks: [
+          {
+            id: ASK,
+            dwarfId: BORIN,
+            kind: 'permission',
+            channel: 'hook-keystroke',
+            providerRequestId: 'toolu_1',
+            payload: { toolName: 'Bash', requestText: 'pnpm test' },
+            currentStep: 0,
+            state: 'open',
+            reannounce: true,
+            openedAt: 1_000
+          }
+        ],
+        needsYou: []
+      }),
+      answerDwarfPermission: answerDwarfPermission as never
+    })
+    await flushPromises()
+    const card = root.get(`[data-valle-chat="${BORIN}"] .dm-qcard`)
+    const allow = card.findAll('button').find((button) => button.text().includes('Allow'))
+    expect(allow).toBeDefined()
+    await allow!.trigger('click')
+    const submit = card.findAll('button').find((button) => button.text().includes('Submit'))
+    await submit!.trigger('click')
+    await flushPromises()
+    expect(answerDwarfPermission).toHaveBeenCalledTimes(1)
+    expect(answerDwarfPermission).toHaveBeenCalledWith(
+      expect.objectContaining({ askId: ASK, decision: 'allow' })
+    )
+  })
+
+  it("[US-MINE-006.AC03, S31.05] a message that failed from a Valle-hosted chat is marked in a zone's history of its mine", async () => {
+    const { root } = mountValle(
+      { preset: 'control', pins: BOTH, mosaicOrder: [MORIA, EREBOR] },
+      undefined,
+      { ...twoDwarfs(), sendDwarfText: (() => Promise.reject(new Error('gone'))) as never }
+    )
+    await flushPromises()
+    root
+      .getComponent(DwarfMessagePanel)
+      .vm.$emit('send', { text: 'are you there?', pressEnter: true })
+    await flushPromises()
+    await root.get(`[data-valle-column="${MORIA}"] [data-zone-more]`).trigger('click')
+    const row = root
+      .findAll('[data-zone-menu] [role="menuitem"]')
+      .find((item) => item.text().startsWith('Show here: history'))
+    await row!.trigger('click')
+    await flushPromises()
+    const failed = root.getComponent(HistoryPanel).props('failed') as Record<
+      string,
+      { text: string }[]
+    >
+    expect(failed[BORIN]?.map((send) => send.text)).toEqual(['are you there?'])
+  })
+
+  it('[US-OBS-002.AC07, S39.11] with chats hosted, an announced arrival is still said once in Valle, not twice', async () => {
+    const { root, push } = mountValle({ preset: 'control', pins: BOTH }, undefined, twoDwarfs())
+    await flushPromises()
+    expect(panels(root)).toEqual([BORIN])
+    // The window's toast queue outlives a mount: only what this arrival adds is counted.
+    const startedIn = (): number =>
+      root.findAll('.dm-toasts > *').filter((toast) => toast.text().includes('started in')).length
+    const before = startedIn()
+    push([frame(11, 'dwarf.arrived', { dwarf: dwarfWire(NALI, EREBOR), announce: true })])
+    await flushPromises()
+    expect(startedIn() - before).toBe(1)
   })
 })

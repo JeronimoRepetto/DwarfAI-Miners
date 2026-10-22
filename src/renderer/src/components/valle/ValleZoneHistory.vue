@@ -7,8 +7,8 @@
  *
  * - Its own close (and Esc inside it) shows the zone's mine again (S31.06); the Esc stops there, never leaving the
  *   Work front or a page beneath (NFR-A11Y-02).
- * - Accepted difference (ISSUE-304): no failed sends are marked until Valle hosts chats; the Panel's come from its
- *   message dock.
+ * - Its failed sends are marked from the chats Valle hosts (TVC), their dock's record of the send, as the Panel's come
+ *   from its message dock (#635); this closes ISSUE-304's accepted difference.
  */
 import type { MineId } from '@dwarfai/contracts'
 import { computed, inject } from 'vue'
@@ -46,7 +46,7 @@ function escape(event: KeyboardEvent): void {
       :mine="mine"
       :history="history"
       :path-refusal="pathRefusal"
-      :failed="{}"
+      :failed="pages.failed()"
       @close="emit('close')"
       @open-path="openPath"
       @open-link="openLink"
