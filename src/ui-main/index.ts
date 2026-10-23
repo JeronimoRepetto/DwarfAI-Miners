@@ -1518,13 +1518,17 @@ export async function startUiMain({
                         }
                       },
                       // Each mode's reveal reaches its own window alone (ADR-025 item 8): the Panel's the Panel
-                      // windows, Veta's the Veta window, whose renderer rises that dwarf's chat (07 S24.15, ISSUE-290).
+                      // windows, Veta's the Veta window, whose renderer rises that dwarf's chat (07 S24.15, ISSUE-290),
+                      // and Valle's the Valle window, whose renderer reveals it in the shown preset (07 S39.06, ISSUE-311).
                       reveals: {
                         panel: createPanelReveal(() =>
                           modeWindowList().filter((w) => isPanelWindow(w.webContentsId))
                         ),
                         veta: createPanelReveal(() =>
                           modeWindowList().filter((w) => isVeta(w.webContentsId))
+                        ),
+                        valle: createPanelReveal(() =>
+                          modeWindowList().filter((w) => isValle(w.webContentsId))
                         )
                       },
                       dwarfPresent: (t) => departedDwarfs.present(t),
