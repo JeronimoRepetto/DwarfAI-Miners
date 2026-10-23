@@ -2,25 +2,39 @@
 // The packaged-artifact check runner (`20` §2.1 `package`, §2.3; ISSUE-268): runs every P check against the folder
 // electron-builder wrote, on the runner of the OS that built it.
 //
-//   pnpm test:packaged [<artifact dir>] [--checks <dir>]
+//   pnpm test:packaged [<artifact dir>] [--checks <dir>] [--release [--required <file>]]
 //
 // The artifact folder defaults to `release` (package.json `build.directories.output`). Each check is a module named
 // `p<nn>-<name>.packaged.mjs` beside this file (or in `--checks <dir>`) that exports its P id as `id` and, as its
 // default export, an async function `({ artifactDir }) => ({ ok, detail })`. The runner prints one line per check,
 // `<id> ok: <detail>` or `<id> FAIL: <detail>`, and exits 1 when any check fails, when it finds no check, or when the
-// artifact folder is missing, so an empty run never passes. It reads files only.
-import { readdir, stat } from 'node:fs/promises'
+// artifact folder is missing, so an empty run never passes. With `--release` the run is also held to
+// `required.json` (`--required <file>` names another): every P id it lists must have a check file here and pass, and
+// a missing or blocked id fails the run, named with the issue that owns it (ISSUE-271; `20` §2.3). Without the flag
+// the runner runs what is present. It reads files only.
+import { readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const CHECK_FILE = /^p\d+-[\w-]+\.packaged\.mjs$/
 
 function parseArgs(argv) {
-  const args = { artifactDir: 'release', checksDir: path.dirname(fileURLToPath(import.meta.url)) }
+  const here = path.dirname(fileURLToPath(import.meta.url))
+  const args = {
+    artifactDir: 'release',
+    checksDir: here,
+    release: false,
+    requiredFile: path.join(here, 'required.json')
+  }
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--checks') {
       args.checksDir = argv[i + 1]
       i += 1
+    } else if (argv[i] === '--required') {
+      args.requiredFile = argv[i + 1]
+      i += 1
+    } else if (argv[i] === '--release') {
+      args.release = true
     } else {
       args.artifactDir = argv[i]
     }
@@ -66,8 +80,37 @@ export async function runPackagedChecks({ artifactDir, checksDir }) {
   return results
 }
 
+/**
+ * The ids of `required` (`[{ id, issue }]`) that release mode fails: one `{ id, ok: false, detail }` per id with no
+ * result (no check file) or a failed one (a check that throws is a failure), each naming its owning issue. A required
+ * id that passed is not listed; the results of the checks present are reported as they ran.
+ */
+export function releaseGaps({ required, results }) {
+  const gaps = []
+  for (const { id, issue } of required) {
+    const found = results.filter((result) => result.id === id)
+    const pattern = `p${id.slice(2)}-*.packaged.mjs`
+    if (found.length === 0) {
+      gaps.push({ id, detail: `missing, no ${pattern} check; owned by ${issue}` })
+    } else if (!found.some((result) => result.ok)) {
+      gaps.push({ id, detail: `blocked, the check does not pass; owned by ${issue}` })
+    }
+  }
+  return gaps
+}
+
+async function readRequired(file) {
+  const required = JSON.parse(await readFile(file, 'utf8'))
+  const valid =
+    Array.isArray(required) &&
+    required.length > 0 &&
+    required.every((entry) => typeof entry?.id === 'string' && typeof entry?.issue === 'string')
+  if (!valid) throw new Error(`${file} is not a list of { id, issue }`)
+  return required
+}
+
 async function main() {
-  const { artifactDir, checksDir } = parseArgs(process.argv.slice(2))
+  const { artifactDir, checksDir, release, requiredFile } = parseArgs(process.argv.slice(2))
   const folder = await stat(artifactDir).catch(() => null)
   if (!folder?.isDirectory()) {
     console.error(`packaged checks: no artifact folder at ${artifactDir}`)
@@ -83,7 +126,19 @@ async function main() {
     if (ok) console.log(line)
     else console.error(line)
   }
-  return results.every((result) => result.ok) ? 0 : 1
+  let complete = true
+  if (release) {
+    const required = await readRequired(requiredFile).catch((error) => {
+      console.error(`packaged checks: cannot read the required ids: ${error.message}`)
+      return null
+    })
+    if (required === null) return 1
+    for (const { id, detail } of releaseGaps({ required, results })) {
+      console.error(`${id} FAIL: ${detail}`)
+      complete = false
+    }
+  }
+  return complete && results.every((result) => result.ok) ? 0 : 1
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
