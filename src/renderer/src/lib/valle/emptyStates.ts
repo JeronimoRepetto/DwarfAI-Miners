@@ -1,5 +1,4 @@
 import type { MineId } from '@dwarfai/contracts'
-import type { PinSet } from './pins'
 
 /*
  * 07 machine 38 `ValleEmptyState` (ISSUE-310; US-VALLE-014, US-VALLE-015; UC-063; ADR-024 item 4): what the chat zone
@@ -10,6 +9,11 @@ import type { PinSet } from './pins'
  *   of other mines are tabs too (07 §22.4 V-03). An open Add panel is a pin (S29.16), so it keeps both populated.
  * - The mosaic is empty with no column: only the add slot shows, and no text (07 §24 I-34: the package has no copy).
  */
+
+/** What the empty states read of the pins: how many there are, a `PinSet` or the views drawn from it. */
+export interface Pinned {
+  readonly pins: readonly unknown[]
+}
 
 export type StackState = 'stack-empty' | 'stack-populated'
 export type DeckState = 'deck-empty' | 'deck-populated'
@@ -27,11 +31,11 @@ export const STACK_EMPTY_TEXT = 'Click a dwarf, in any mine, to pin its chat her
 export const DECK_EMPTY_TEXT = 'No chats pinned. Click a dwarf in the mine to open one.'
 
 /** The Control room's stack: empty with no pin (S38.01), populated with one or more (S38.02). */
-export const stackState = (pins: Pick<PinSet, 'pins'>): StackState =>
+export const stackState = (pins: Pinned): StackState =>
   pins.pins.length === 0 ? 'stack-empty' : 'stack-populated'
 
 /** The Work front's deck: empty only with no pin at all, pins of other mines being tabs too (S38.03, V-03). */
-export const deckState = (pins: Pick<PinSet, 'pins'>): DeckState =>
+export const deckState = (pins: Pinned): DeckState =>
   pins.pins.length === 0 ? 'deck-empty' : 'deck-populated'
 
 /** The mosaic: empty with no column in the order (S38.05), populated with one or more (S38.06). */
@@ -39,7 +43,7 @@ export const mosaicState = (order: readonly MineId[]): MosaicEmptyState =>
   order.length === 0 ? 'mosaic-empty' : 'mosaic-populated'
 
 /** The three empty states the pins and the mosaic order give (the `[*]` entries of machine 38). */
-export const emptyStates = (pins: Pick<PinSet, 'pins'>, order: readonly MineId[]): EmptyStates => ({
+export const emptyStates = (pins: Pinned, order: readonly MineId[]): EmptyStates => ({
   stack: stackState(pins),
   deck: deckState(pins),
   mosaic: mosaicState(order)
