@@ -55,7 +55,7 @@
  *   The window's one sound engine (`useAudio`, owner decision 2026-10-22 lifted by US-VALLE-016) plays only that
  *   mine's room tone, bed and crew, silenced by its own mute; the attention cues (`useAttentionCues`) and a dwarf's
  *   voice are never gated on it. It follows the page's own visibility (a hidden window plays nothing, S35.08), plays
- *   no music and no Panel cue, and adopts the stored Sound settings again on every show and when Valle's Settings page
+ *   the music the nav's Music slot toggles (as the Panel's, EPIC-20 visual parity) and no Panel cue, and adopts the stored Sound settings again on every show and when Valle's Settings page
  *   closes (the page's rows write the preference alone).
  * - The history drawer (`useValleHistoryDrawer`, 07 machine 36; ISSUE-308): "Mine history" in the Work front's mine
  *   toolbar, the deck's History bar, or a chat's mine-history request in the deck opens the mine's history under the
@@ -283,11 +283,13 @@ const pageVisibility: AudioVisibility = {
     return () => document.removeEventListener('visibilitychange', heard)
   }
 }
-/** The window's one sound engine (US-VALLE-016): no music and no Panel cue here. */
+/**
+ * The window's one sound engine (US-VALLE-016): the music the nav's Music slot plays, as the Panel's (`DS` valle.js
+ * `DM.ui.nav({ music: true })`; EPIC-20 visual parity), and no Panel cue here.
+ */
 const audio = useAudio({
   player: props.audioPlayer,
   visibility: pageVisibility,
-  music: false,
   panelCue: false
 })
 let stopCues: (() => void) | undefined
@@ -769,6 +771,13 @@ watch(
   }
 )
 
+/** The nav's Music slot (US-SHELL-005): the window's one engine starts or stops the music and says so, as the Panel's does. */
+function toggleMusic(): void {
+  audio.toggleMusic()
+  const on = audio.musicPlaying.value
+  showToast(on ? 'Music on' : 'Music off', on ? 'music-on' : 'music-off')
+}
+
 /** A nav slot: its page over the main zone (S28.19); the Mines page reads the remembered projects again, as the Panel's. */
 function nav(page: ValleNavPage): void {
   if (page === 'mines') void minesPage.load()
@@ -899,7 +908,15 @@ onUnmounted(() => {
             :label="slot.label"
             :data-slot="slot.id"
             :current="slot.area === view.page"
+            :badge="slot.area === 'mines' ? needsYou.entries.value.length : 0"
             @click="nav(slot.area)"
+          />
+          <NavSlot
+            v-if="group.name === 'System'"
+            :icon="audio.musicPlaying.value ? 'music-on' : 'music-off'"
+            label="Music"
+            :pressed="audio.musicPlaying.value"
+            @click="toggleMusic"
           />
         </div>
       </nav>
