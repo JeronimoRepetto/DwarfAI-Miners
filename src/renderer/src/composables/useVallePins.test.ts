@@ -122,6 +122,39 @@ describe('the Valle pins wired to UI main (ISSUE-302)', () => {
     t.scope.stop()
   })
 
+  // Owner ruling 2026-10-23 (VQA-07): Valle opened before any dwarf exists keeps its start-up pins alive: while the set
+  // is still the empty, never-written start-up set, the start-up pins apply again as the Host's dwarfs arrive.
+  it('[S29.01] a first visit with nobody to pin applies the start-up pins once the first dwarf arrives waiting, then never again', async () => {
+    const t = setUp({ pins: null }, [])
+    t.model.mines.value = []
+    t.factsRead.value = true
+    await nextTick()
+    expect(t.pins.set.value.pins).toEqual([])
+    expect(t.writes).toEqual([])
+    // The first mine and its dwarf, not waiting: still nobody to pin, nothing written.
+    t.model.mines.value = [mineWire(MORIA)]
+    t.model.dwarfs.value = [dwarfWire(BORIN, MORIA)]
+    await nextTick()
+    expect(t.pins.set.value.pins).toEqual([])
+    expect(t.writes).toEqual([])
+    // It starts asking: the start-up pins apply, the waiting dwarf pinned and focused, written at once.
+    t.model.dwarfs.value = [
+      dwarfWire(BORIN, MORIA, { status: 'asking', needsYou: true, askedAt: 5 })
+    ]
+    await nextTick()
+    expect(keys(t.pins)).toEqual([BORIN])
+    expect(t.pins.set.value.focus).toBe(BORIN)
+    expect(t.writes).toEqual([[{ dwarfId: BORIN, mineId: MORIA, order: 0 }]])
+    // The set is the person's now: a second waiting dwarf is not pinned by the start-up rule.
+    t.model.dwarfs.value = [
+      ...t.model.dwarfs.value,
+      dwarfWire(DAIN, MORIA, { status: 'asking', needsYou: true, askedAt: 9 })
+    ]
+    await nextTick()
+    expect(keys(t.pins)).toEqual([BORIN])
+    t.scope.stop()
+  })
+
   it('[S29.02] a stored pin set opens restored, and the restore writes nothing', async () => {
     const stored: UiPreferencesMap['pins'] = [
       { dwarfId: DAIN, mineId: EREBOR, order: 1 },

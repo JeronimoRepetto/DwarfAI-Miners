@@ -2,6 +2,7 @@ import type { MineId } from '@dwarfai/contracts'
 import { describe, expect, it } from 'vitest'
 import { BELEGOST, EREBOR, IRONHILLS, KHAZAD, MORIA } from '../veta/testing/vetaFixtures'
 import {
+  mosaicOrder,
   openMosaic,
   slotMenu,
   stepMosaic,
@@ -35,8 +36,17 @@ const FACTS: MosaicFacts = {
   ]
 }
 
-const idle = (order: readonly MineId[]): Mosaic => ({ state: 'idle', order })
-const at = (state: Mosaic['state'], order: readonly MineId[]): Mosaic => ({ state, order })
+/** A mosaic at rest; `arranged` false: the person never arranged it (owner ruling 2026-10-23, VQA-07). */
+const idle = (order: readonly MineId[], arranged = true): Mosaic => ({
+  state: 'idle',
+  order,
+  arranged
+})
+const at = (state: Mosaic['state'], order: readonly MineId[], arranged = true): Mosaic => ({
+  state,
+  order,
+  arranged
+})
 
 describe('machine 32 diagram conformance', () => {
   it('[US-VALLE-009.AC03, S32.03] Close this column takes the mine out of the mosaic with its toast while the mine, its dwarfs and their sessions keep running', () => {
@@ -154,12 +164,14 @@ describe('machine 32 diagram conformance', () => {
   })
 
   it('[S32.01, S32.13, S32.14, S32.16] the first order, a removed mine, a column added for a jump and Reset metrics follow 07 machine 32', () => {
-    // S32.01: no stored order: every mine with at least one dwarf, in the Host's data order, persisted.
+    // S32.01: no stored order: every mine with at least one dwarf, in the Host's data order.
+    // AMENDED for owner ruling 2026-10-23 (VQA-07) (was: persisted at once): not arranged by the person, so computed
+    // live and never written.
     expect(openMosaic(null, FACTS)).toEqual({
       ok: true,
       id: 'S32.01',
-      mosaic: idle([MORIA, KHAZAD, IRONHILLS]),
-      effects: [{ kind: 'write-order', order: [MORIA, KHAZAD, IRONHILLS] }]
+      mosaic: idle([MORIA, KHAZAD, IRONHILLS], false),
+      effects: []
     })
     // S32.13: a mosaic mine removed: its column leaves, the entry dropped.
     expect(
@@ -199,7 +211,7 @@ describe('machine 32 diagram conformance', () => {
   it('[US-VALLE-006.AC08, S32.01, S32.02] after the first visit a mine whose first dwarf arrives does not join the mosaic by itself', () => {
     // OQ-77 (owner answer A; 07 I-31): after the first visit the mosaic is the person's.
     const first = openMosaic(null, FACTS)
-    expect(first).toMatchObject({ id: 'S32.01', mosaic: idle([MORIA, KHAZAD, IRONHILLS]) })
+    expect(first).toMatchObject({ id: 'S32.01', mosaic: idle([MORIA, KHAZAD, IRONHILLS], false) })
     // Erebor gets its first dwarf: the next open restores the order as stored (S32.02), nothing written, nothing added.
     const later: MosaicFacts = {
       ...FACTS,
@@ -211,8 +223,15 @@ describe('machine 32 diagram conformance', () => {
       mosaic: idle([MORIA, KHAZAD, IRONHILLS]),
       effects: []
     })
-    // A stored order that was emptied stays empty: `[]` is the person's, never "never written".
-    expect(openMosaic([], later)).toMatchObject({ id: 'S32.02', mosaic: idle([]) })
+    // AMENDED for owner ruling 2026-10-23 (VQA-07) (was: a stored `[]` stays empty, the person's): a stored `[]` is
+    // what a first visit with no mine wrote, so it reads as not arranged and the mosaic is computed again. Known risk,
+    // accepted: someone who closed every column gets the mines back on the next open.
+    expect(openMosaic([], later)).toEqual({
+      ok: true,
+      id: 'S32.01',
+      mosaic: idle([MORIA, EREBOR, KHAZAD, IRONHILLS], false),
+      effects: []
+    })
     // An entry whose mine no longer exists is dropped on the way in, the stored value never rewritten.
     expect(openMosaic([EREBOR, '01920000-0000-7000-8000-00000000a0fe' as MineId], later)).toEqual({
       ok: true,
@@ -220,6 +239,73 @@ describe('machine 32 diagram conformance', () => {
       mosaic: idle([EREBOR]),
       effects: []
     })
+  })
+
+  // Owner ruling 2026-10-23 (VQA-07): until the person arranges the order themselves, every new mine joins the Control
+  // room; their first close, pick, reveal, declare or Reset preset writes the order and it is theirs from then on.
+  it('[US-VALLE-006.AC08, S32.01] a mosaic the person never arranged follows the mines live, written only when the person arranges it', () => {
+    const empty: MosaicFacts = { preset: 'control', mines: [] }
+    const first = openMosaic(null, empty)
+    expect(first).toEqual({ ok: true, id: 'S32.01', mosaic: idle([], false), effects: [] })
+    if (!first.ok || first.mosaic === null) throw new Error('opened')
+    // The first mine with a crew appears: it joins, nothing written.
+    const one: MosaicFacts = { preset: 'control', mines: [mine(MORIA, 'Moria')] }
+    expect(mosaicOrder(first.mosaic, one)).toEqual([MORIA])
+    // Every mine with a crew joins, in the Host's data order; a mine with no crew yet does not.
+    expect(mosaicOrder(first.mosaic, FACTS)).toEqual([MORIA, KHAZAD, IRONHILLS])
+    // A mine removed while not arranged leaves by itself: nothing written, still not arranged.
+    const removed = stepMosaic(first.mosaic, { kind: 'mine-removed', mineId: MORIA }, FACTS)
+    expect(removed).toEqual({
+      ok: true,
+      id: 'S32.13',
+      mosaic: idle([KHAZAD, IRONHILLS], false),
+      effects: []
+    })
+    // Close this column arranges it: the live order without the mine, written, the person's from then on.
+    const closed = stepMosaic(first.mosaic, { kind: 'close', mineId: KHAZAD }, FACTS)
+    expect(closed).toMatchObject({
+      ok: true,
+      id: 'S32.03',
+      mosaic: idle([MORIA, IRONHILLS]),
+      effects: [{ kind: 'write-order', order: [MORIA, IRONHILLS] }, { kind: 'toast' }]
+    })
+    if (!closed.ok || closed.mosaic === null) throw new Error('closed')
+    const later: MosaicFacts = {
+      ...FACTS,
+      mines: FACTS.mines.map((each) => (each.mineId === EREBOR ? { ...each, crew: 1 } : each))
+    }
+    expect(mosaicOrder(closed.mosaic, later)).toEqual([MORIA, IRONHILLS])
+    // A reveal, a pick and Reset preset arrange it too.
+    const live = idle([], false)
+    expect(stepMosaic(live, { kind: 'reveal', mineId: EREBOR }, FACTS)).toMatchObject({
+      id: 'S32.14',
+      mosaic: idle([MORIA, KHAZAD, IRONHILLS, EREBOR]),
+      effects: [
+        { kind: 'write-order', order: [MORIA, KHAZAD, IRONHILLS, EREBOR] },
+        { kind: 'scroll-to' }
+      ]
+    })
+    expect(
+      stepMosaic(at('slot-menu', [], false), { kind: 'pick', mineId: EREBOR }, FACTS)
+    ).toMatchObject({ id: 'S32.05', mosaic: idle([MORIA, KHAZAD, IRONHILLS, EREBOR]) })
+    expect(stepMosaic(live, { kind: 'reset-preset' }, FACTS)).toMatchObject({
+      id: 'S32.15',
+      mosaic: idle([MORIA, KHAZAD, IRONHILLS]),
+      effects: [{ kind: 'write-order', order: [MORIA, KHAZAD, IRONHILLS] }]
+    })
+    // A declared mine with a crew already shown live: arranged and written as shown.
+    expect(
+      stepMosaic(at('declaring', [], false), { kind: 'declared', mineId: MORIA }, FACTS)
+    ).toMatchObject({
+      id: 'S32.11',
+      mosaic: idle([MORIA, KHAZAD, IRONHILLS]),
+      effects: [{ kind: 'write-order', order: [MORIA, KHAZAD, IRONHILLS] }]
+    })
+    // The slot's menu offers what the live order does not show.
+    expect(slotMenu(at('slot-menu', [], false), FACTS).filter((e) => e.kind === 'mine')).toEqual([
+      { kind: 'mine', mineId: EREBOR, name: 'Erebor', note: 'Gold', disabled: false },
+      { kind: 'mine', mineId: BELEGOST, name: 'Belegost', note: 'Bronze', disabled: false }
+    ])
   })
 
   it('[US-VALLE-010.AC03, S32.15] Reset preset in the Control room recomputes the order from every mine with a crew in data order, written at once', () => {

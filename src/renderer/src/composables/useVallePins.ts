@@ -186,6 +186,18 @@ export function useVallePins(deps: VallePinsDeps): VallePinsPart {
       if (carried !== null && set.value.focus === carried) origin.value = 'handover'
       return
     }
+    startUp()
+  }
+
+  /**
+   * Owner ruling 2026-10-23 (VQA-07): the start-up pins stay pending while they found nobody to pin. An empty start-up
+   * set writes nothing, so the store stays never written; until the set holds a pin, the start-up pins apply again as
+   * the Host's dwarfs change (a first visit before any mine or dwarf exists). The first pin ends it for good.
+   */
+  let startUpPending = false
+
+  /** S29.01 against the Host's facts now. */
+  function startUp(): void {
     const last = deps.talkedLast()
     const lastDwarf = last === null ? undefined : dwarfOf(last)
     const startUp = startUpPins({
@@ -201,6 +213,7 @@ export function useVallePins(deps: VallePinsDeps): VallePinsPart {
     })
     set.value = startUp.set
     startUp.effects.forEach(carry)
+    startUpPending = startUp.set.pins.length === 0
   }
 
   /** After a re-snapshot: a pinned dwarf no longer listed ended meanwhile, or went with its mine (S29.13, S29.14). */
@@ -234,6 +247,14 @@ export function useVallePins(deps: VallePinsDeps): VallePinsPart {
     () => deps.stores.value,
     () => {
       if (opened) send({ kind: 'reset' })
+    }
+  )
+  // VQA-07 (owner ruling 2026-10-23): nobody was there to pin at the start-up; a dwarf arriving or asking may be.
+  watch(
+    () => model.dwarfs.value,
+    () => {
+      if (opened && startUpPending && set.value.pins.length === 0) startUp()
+      else startUpPending = false
     }
   )
   // The names this window knew, for the pins whose dwarfs left.

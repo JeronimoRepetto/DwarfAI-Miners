@@ -318,25 +318,66 @@ describe('the Valle mosaic and its zones in use (ISSUE-304)', () => {
     expect(world.layoutWrites).toEqual([])
   })
 
-  it('[S32.01, S32.02, S32.13, S32.16] the first open writes the first order, a removed mine leaves, and Reset metrics opens it anew', async () => {
+  it('[S32.01, S32.02, S32.13, S32.16] the first open shows the first order, a removed mine leaves, and Reset metrics opens it anew', async () => {
     const world = setup()
     // Before the Host's facts are read, nothing is computed (07 S32.02 needs them).
     expect(world.mosaic.order.value).toEqual([])
     world.factsRead.value = true
     await flushPromises()
     expect(world.mosaic.order.value).toEqual([MORIA, KHAZAD])
-    expect(orderWrites(world.writes)).toEqual([[MORIA, KHAZAD]])
+    // AMENDED for owner ruling 2026-10-23 (VQA-07) (was: the first order written at once): the person has not arranged
+    // it, so it is computed live and never written.
+    expect(orderWrites(world.writes)).toEqual([])
 
-    // S32.13: the Host removed a mosaic mine: its column leaves, the entry is dropped and written.
+    // S32.13: the Host removed a mosaic mine: its column leaves. AMENDED for owner ruling 2026-10-23 (VQA-07) (was:
+    // the entry dropped and written): never arranged, so nothing is written.
+    world.mines.value = world.mines.value.filter((mine) => mine.id !== KHAZAD)
+    world.dwarfs.value = world.dwarfs.value.filter((dwarf) => dwarf.mineId !== KHAZAD)
     world.hear([{ kind: 'mine-removed', mineId: KHAZAD }])
     expect(world.mosaic.order.value).toEqual([MORIA])
-    expect(orderWrites(world.writes).at(-1)).toEqual([MORIA])
+    expect(orderWrites(world.writes)).toEqual([])
 
     // S32.16: Reset metrics rewrote the order to "never written"; read again, the first order applies anew.
     world.dwarfs.value = [dwarfWire(BORIN, IRONHILLS)]
     world.stores.value = { ...VALLE_STORE_DEFAULTS }
     await flushPromises()
     expect(world.mosaic.order.value).toEqual([IRONHILLS])
+  })
+})
+
+// Owner ruling 2026-10-23 (VQA-07): Valle opened before any mine exists. Until the person arranges the Control room,
+// every new mine with a crew joins it; the stored order is written only when they arrange it.
+describe('the mosaic the person never arranged (owner ruling 2026-10-23, VQA-07)', () => {
+  it("[US-VALLE-006.AC08, S32.01] a first visit with no mine shows each new mine with a crew, writes nothing, and the first close makes the order the person's", async () => {
+    const world = setup({ mines: [], dwarfs: [] })
+    world.factsRead.value = true
+    await flushPromises()
+    expect(world.mosaic.order.value).toEqual([])
+    // The first mine, then its first dwarf: it joins.
+    world.mines.value = [mineWire(MORIA)]
+    expect(world.mosaic.order.value).toEqual([])
+    world.dwarfs.value = [dwarfWire(BORIN, MORIA)]
+    expect(world.mosaic.order.value).toEqual([MORIA])
+    // A second mine with a crew joins too, in the Host's data order.
+    world.mines.value = [mineWire(MORIA), mineWire(KHAZAD)]
+    world.dwarfs.value = [...world.dwarfs.value, dwarfWire(DAIN, KHAZAD)]
+    expect(world.mosaic.order.value).toEqual([MORIA, KHAZAD])
+    expect(orderWrites(world.writes)).toEqual([])
+    // The person closes a column: the order shown, without it, is written and theirs from then on.
+    world.mosaic.openMenu({ preset: 'control', mineId: KHAZAD })
+    world.mosaic.pickMenu('close')
+    await flushPromises()
+    expect(world.mosaic.order.value).toEqual([MORIA])
+    expect(orderWrites(world.writes)).toEqual([[MORIA]])
+    world.mines.value = [...world.mines.value, mineWire(IRONHILLS)]
+    world.dwarfs.value = [...world.dwarfs.value, dwarfWire(DAIN, IRONHILLS)]
+    expect(world.mosaic.order.value).toEqual([MORIA])
+  })
+
+  it('[US-VALLE-006.AC08, S32.01] a stored empty order, as a first visit with no mine wrote it, reads as not arranged once mines exist', async () => {
+    const world = await opened([])
+    expect(world.mosaic.order.value).toEqual([MORIA, KHAZAD])
+    expect(orderWrites(world.writes)).toEqual([])
   })
 })
 
