@@ -32,7 +32,13 @@ export function pinFacts(
 }
 
 /** Mounts `component` over a pin set that machine 29 steps on each emitted event. */
-export function pinHarness(component: Component, initial: PinSet, facts: PinTextFacts) {
+export function pinHarness(
+  component: Component,
+  initial: PinSet,
+  facts: PinTextFacts,
+  /** More props for the component, read on each render from the current set (a deck's `split`). */
+  extra: (set: PinSet) => Record<string, unknown> = () => ({})
+) {
   const set = shallowRef(initial)
   const request = shallowRef<FocusRequest | null>(null)
   const sent: PinInput[] = []
@@ -50,6 +56,7 @@ export function pinHarness(component: Component, initial: PinSet, facts: PinText
   const Harness = defineComponent({
     setup: () => () =>
       h(component, {
+        ...extra(set.value),
         pins: pinViews(set.value, facts),
         focus: set.value.focus,
         focusRequest: request.value,
@@ -60,5 +67,5 @@ export function pinHarness(component: Component, initial: PinSet, facts: PinText
         onDragCancel: () => send({ kind: 'drag-cancel' })
       })
   })
-  return { Harness, set, sent }
+  return { Harness, set, sent, send }
 }
