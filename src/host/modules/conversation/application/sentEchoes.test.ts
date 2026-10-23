@@ -80,6 +80,18 @@ describe('SentEchoes', () => {
     expect(echoes.claim(DWARF, person('Survey the north seam'), 'live-stream')).toBe(null)
   })
 
+  // VQA-05: `claude -p` writes the prompt's transcript line as soon as it reads stdin, so the
+  // transcript echo can be the first to come back.
+  it('[INV-60] a transcript echo of a launch prompt claims the launch once, and never a sent message', () => {
+    const echoes = new SentEchoes()
+    echoes.track(DWARF, SENT, 'Survey the north seam')
+    echoes.trackLaunch(DWARF, LAUNCH, 'Survey the north seam')
+
+    expect(echoes.claim(DWARF, person('Survey the north seam'), 'transcript')).toBe(LAUNCH)
+    expect(echoes.claim(DWARF, person('Survey the north seam'), 'transcript')).toBe(null)
+    expect(echoes.claim(DWARF, person('Survey the north seam'), 'live-stream')).toBe(SENT)
+  })
+
   it('[INV-60] an echo naming a correlation never claims a launch prompt, and a forgotten launch claims nothing', () => {
     const echoes = new SentEchoes()
     echoes.trackLaunch(DWARF, LAUNCH, 'Survey the north seam')

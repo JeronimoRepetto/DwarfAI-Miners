@@ -16,7 +16,9 @@
 //   is read again next cycle, with no event and no warning.
 //
 // Identity: the thread id (the registry row's, which a rollout's `session_meta` repeats; a rollout
-// whose head is unreadable falls back to the id in its file name). Turn ends are reliable
+// whose head is unreadable falls back to the id in its file name). Keys (15 §1.5): every fact is
+// keyed `codex:codex:<threadId>:<eventId>` like the live stream's (15 §4.4), never by the file,
+// whose identity is the cursor's only (VQA-06). Turn ends are reliable
 // (`task_complete`, `turn_aborted`) and leave as `turn-ended` events (08 §0 `ObservedTurnEnded`).
 // No pid is readable (`codexProvider.ts:700-706`): `processIdentitySource` is `none`, so ending an
 // observed Codex session answers `no-identity` until spike S-014-1 (15 §5, ADR-014 item 2).
@@ -68,6 +70,7 @@ import {
   entryOf,
   eventIdOf,
   parseRolloutLine,
+  rolloutKey,
   ROLLOUT_GAP,
   ROLLOUT_START,
   rolloutHeadOf,
@@ -199,6 +202,8 @@ export class CodexObservationAdapter implements ObservationAdapter, TranscriptRe
   private readonly heads = new Map<string, RolloutHead>()
   /** The head of each stream read, by stream id without generation, for window reads. */
   private readonly headOfStream = new Map<string, RolloutHead>()
+  /** Each rollout discovered, by stream id, for a window read whose head is not known yet. */
+  private readonly rolloutOfStream = new Map<string, SourceFile>()
   private readonly checkpoints = new Map<string, Checkpoint>()
   /** The lines the base consumes during the read in flight, by byte offset. */
   private reading: { streamId: string; lines: Map<number, string> } | null = null
@@ -244,6 +249,7 @@ export class CodexObservationAdapter implements ObservationAdapter, TranscriptRe
 
   async discover(fs: FileSystem): Promise<SourceFile[]> {
     const rollouts = await this.rollouts.discover(fs)
+    for (const source of rollouts) this.rolloutOfStream.set(source.streamId, source)
     const registry = await this.registrySource()
     return registry === null ? rollouts : [registry, ...rollouts]
   }
@@ -254,10 +260,18 @@ export class CodexObservationAdapter implements ObservationAdapter, TranscriptRe
       : this.readRollout(source, from)
   }
 
-  entries(
+  async entries(
     ref: ObservedSessionRef,
     window: { before?: string; limit: number }
   ): Promise<TranscriptEntry[]> {
+    // A window keys its entries by the thread id, so each stream's head is known first.
+    for (const streamId of ref.streamIds) {
+      const base = baseStreamId(streamId)
+      const source = this.rolloutOfStream.get(base)
+      if (this.headOfStream.has(base) || source === undefined) continue
+      const head = await this.headOf(source)
+      if (typeof head === 'object') this.headOfStream.set(base, head)
+    }
     return this.rollouts.entries(ref, window)
   }
 
@@ -274,20 +288,18 @@ export class CodexObservationAdapter implements ObservationAdapter, TranscriptRe
     // the same bytes at the same offsets, and `readRollout` keeps only its own range.
     if (this.reading?.streamId === line.streamId) this.reading.lines.set(line.offset, line.text)
     const head = this.headOfStream.get(baseStreamId(line.streamId))
+    // No head, no thread id: nothing can be keyed or attributed (`entries` resolves it first).
+    if (head === undefined) return []
     const sourceEventId = eventIdOf(record, line.text, line.offset)
-    const entry = entryOf(
-      record,
-      head ?? { exec: false },
-      `${this.providerId}:${line.streamId}:${sourceEventId}`
-    )
+    const entry = entryOf(record, head, rolloutKey(this.providerId, head.threadId, sourceEventId))
     if (entry === null) return []
     // Only a window read uses these events, and only their entries: the read's own events come
-    // from `stepRollout`, which knows the stream's head.
+    // from `stepRollout`, with the same keys.
     return [
       {
         kind: 'entries',
         sourceEventId,
-        identity: { providerId: this.providerId, providerSessionId: head?.threadId ?? '' },
+        identity: { providerId: this.providerId, providerSessionId: head.threadId },
         entries: [entry]
       }
     ]
@@ -316,7 +328,7 @@ export class CodexObservationAdapter implements ObservationAdapter, TranscriptRe
       }
     }
     this.headOfStream.set(baseStreamId(source.streamId), head)
-    const context: RolloutContext = { providerId: this.providerId, streamId: source.streamId, head }
+    const context: RolloutContext = { providerId: this.providerId, head }
     let state = await this.stateAt(source, start, context)
 
     const reading = { streamId: source.streamId, lines: new Map<number, string>() }

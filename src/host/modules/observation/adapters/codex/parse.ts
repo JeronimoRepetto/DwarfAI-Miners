@@ -6,6 +6,7 @@
 //   (INV-38, FM-086). A record of a type this reader does not use (`world_state`, `compacted`, …)
 //   is not malformed and yields nothing (C-11).
 // - Event ids (15 §5): the record's item id (`payload.id`), else `<byteOffset>:<sha1(line)>`.
+//   Keys (15 §1.5): `codex:codex:<threadId>:<eventId>`, the live stream's (`rolloutKey`).
 // - Turns: `task_started` opens one; `task_complete` (concluded) and `turn_aborted` (interrupted;
 //   any other abort reason is `errored` with the raw word, ADR-021 item 5) end it, both reliable
 //   (ADR-021 item 4 table, row "Codex observed (rollout)"; #219, #34).
@@ -85,10 +86,9 @@ export const ROLLOUT_START: RolloutState = Object.freeze({ total: ZERO, turn: nu
 /** A stream read from the middle (a gated read or a restart past the look-back): totals unknown. */
 export const ROLLOUT_GAP: RolloutState = Object.freeze({ total: null, turn: null })
 
-/** Who wrote the stream and where its keys live. */
+/** Who wrote the stream: its provider and its head, whose thread id keys its facts (15 §1.5). */
 export interface RolloutContext {
   providerId: ProviderId
-  streamId: string
   head: RolloutHead
 }
 
@@ -136,6 +136,15 @@ export function eventIdOf(record: CodexRecord, text: string, offset: number): st
   const id = asString(record.payload.id)
   if (id !== undefined) return id
   return `${offset}:${createHash('sha1').update(text).digest('hex')}`
+}
+
+/**
+ * The `sourceKey` of a rollout fact (15 §1.5): `<adapterId>:<providerId>:<threadId>:<eventId>`,
+ * the derivation the live stream uses (15 §4.4 Keys, `codex:codex:<threadId>:<itemId>`), so the
+ * same message from both paths inserts once (INV-60). The file is a cursor identity only.
+ */
+export function rolloutKey(providerId: ProviderId, threadId: string, eventId: string): string {
+  return `${providerId}:${providerId}:${threadId}:${eventId}`
 }
 
 /**
@@ -288,9 +297,9 @@ export function stepRollout(
   line: { text: string; offset: number },
   context: RolloutContext
 ): RolloutStep {
-  const { providerId, streamId, head } = context
+  const { providerId, head } = context
   const eventId = eventIdOf(record, line.text, line.offset)
-  const keyOf = (id: string) => `${providerId}:${streamId}:${id}`
+  const keyOf = (id: string) => rolloutKey(providerId, head.threadId, id)
   const identity: ProviderIdentity = { providerId, providerSessionId: head.threadId }
   const base = { identity, ...(head.cwd === null ? {} : { cwd: head.cwd }) }
   const events: ObservedEvent[] = []

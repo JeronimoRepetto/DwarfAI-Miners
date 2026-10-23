@@ -14,7 +14,9 @@
 // - `trackLaunch` (GitHub #1430): a launch's prompt is the dwarf's first message, and the driver
 //   echoes it too. A launch has no receipt (15 §1.2 `echoOf` names a `SendReceipt.correlation`), so
 //   its echo names none: it claims the launch only with no `echoOf` and the same text. The launch
-//   stops waiting at its echo, or when the dwarf's session ends (`forgetLaunches`).
+//   stops waiting at its echo, or when the dwarf's session ends (`forgetLaunches`). Its echo may
+//   come from the transcript (VQA-05: `claude -p` writes the prompt's line as soon as it reads
+//   stdin); a transcript entry claims a launch and nothing else.
 // - At most `WAITING_PER_DWARF` messages wait per dwarf (the oldest goes first).
 // - Host memory only: a Host stopped between a send and its echo forgets it, and that echo is stored
 //   as a row of its own (a recorded known risk, coordinator ruling on #1413).
@@ -81,8 +83,12 @@ export class SentEchoes {
     entry: ConversationEntry,
     origin: 'live-stream' | 'transcript'
   ): MessageId | LaunchId | null {
-    if (origin !== 'live-stream' || entry.role !== 'person') return null
-    const ofDwarf = this.waiting.filter((w) => w.dwarfId === dwarfId)
+    if (entry.role !== 'person') return null
+    // VQA-05: a transcript echo claims only a launch. A sent message's transcript echo is the send
+    // path's to claim (`claimTranscriptEcho`), and an owned session's driver echo comes first.
+    const ofDwarf = this.waiting.filter(
+      (w) => w.dwarfId === dwarfId && (origin === 'live-stream' || w.launch)
+    )
     const { echoOf } = entry
     const byCorrelation =
       echoOf === undefined ? undefined : ofDwarf.find((w) => !w.launch && w.correlation === echoOf)
