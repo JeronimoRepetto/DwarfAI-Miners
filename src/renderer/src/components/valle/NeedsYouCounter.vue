@@ -2,12 +2,20 @@
 /*
  * The "Need you ▸" counter in Valle's top bar (`organisms/valle-bar` `.dm-vbar__needs`; 07 machine 34; US-VALLE-004;
  * ISSUE-306): "1 needs you", "`<n>` need you" or "Nobody waiting", disabled; brass with a bobbing "?" while someone
- * waits, the "?" still under reduced motion. Its accessible name counts and names no dwarf (AC07). It updates in place
+ * waits, the "?" still under reduced motion (`still`, read by the host from the viewer's preference, ISSUE-311;
+ * US-SHELL-011.AC05; the stylesheet's own media rule holds it still too). Its accessible name counts and names no dwarf (AC07). It updates in place
  * and never moves in the top bar (AC05): one button, its words patched.
  */
 import { COUNTER_TITLE, type CounterView } from '../../lib/valle/needsYou'
 
-defineProps<{ view: CounterView }>()
+withDefaults(
+  defineProps<{
+    view: CounterView
+    /** Reduced motion is on (NFR-A11Y-10): the "?" is drawn and does not bob. */
+    still?: boolean
+  }>(),
+  { still: false }
+)
 const emit = defineEmits<{ press: [] }>()
 </script>
 
@@ -17,6 +25,7 @@ const emit = defineEmits<{ press: [] }>()
     class="dm-vbar__needs m-mat"
     data-needs-counter
     :data-count="view.count"
+    :data-still="still ? 'true' : 'false'"
     :disabled="view.disabled"
     :aria-label="view.label"
     :title="view.disabled ? undefined : COUNTER_TITLE"
@@ -73,6 +82,9 @@ const emit = defineEmits<{ press: [] }>()
 .dm-vbar__needs:disabled .dm-vbar__q,
 .dm-vbar__needs:disabled .dm-vbar__go {
   display: none;
+}
+.dm-vbar__needs[data-still='true'] .dm-vbar__q {
+  animation: none;
 }
 @media (prefers-reduced-motion: reduce) {
   .dm-vbar__q {

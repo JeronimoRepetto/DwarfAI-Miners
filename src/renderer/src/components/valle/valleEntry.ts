@@ -11,6 +11,7 @@ import type { VallePinsBridge, VallePinsWrite } from '../../composables/useValle
 import type { ValleLastMineWrite, VallePresetBridge } from '../../composables/useVallePreset'
 import type { VallePresenceDeps } from '../../composables/useVallePresence'
 import type { ValleStoresBridge } from '../../composables/useValleStores'
+import type { ValleRevealBridge } from '../../composables/useValleReveal'
 import type { ValleReadModelBridge } from '../../lib/valle/valleReadModel'
 
 /** Whether the page's query string (`location.search`) is the Valle window's. */
@@ -22,14 +23,16 @@ export function isValleRoot(search: string): boolean {
  * The seam A members the Valle root uses: its stores (A-N17, A-N20, A-N12), its read models, its report (A-44), and its
  * preset's writes and moves (A-N21, A-N13; ISSUE-300), its pins' writes (A-N21 `pins`, A-N18; ISSUE-302), the
  * dive's (A-N21 `valleLastFrontMineId`, A-N18; ISSUE-301), and the mosaic's and the zones' (A-N21
- * `valleMosaicOrder`, `mutedMineIds`; A-30, A-31 for "A new project…"; ISSUE-304).
+ * `valleMosaicOrder`, `mutedMineIds`; A-30, A-31 for "A new project…"; ISSUE-304), and the reveal of a notification
+ * click (A-N16; ISSUE-311).
  */
 export type ValleBridge = ValleStoresBridge &
   ValleReadModelBridge &
   VallePresenceDeps['bridge'] &
   VallePresetBridge &
   VallePinsBridge &
-  ValleMosaicBridge
+  ValleMosaicBridge &
+  ValleRevealBridge
 
 /**
  * The Valle keys the Valle window writes (A-N21); the last mine worked in from ISSUE-301 on, the mosaic order and the
@@ -56,6 +59,7 @@ export function valleBridgeOf(api: Window['api']): ValleBridge {
     moveToMode: (params) => api.moveToMode(params),
     patchUiSession: (patch) => api.patchUiSession(patch),
     declareMine: () => api.declareMine(),
-    declareMainProject: () => api.declareMainProject()
+    declareMainProject: () => api.declareMainProject(),
+    onRevealDwarfChat: (listener) => api.onRevealDwarfChat(listener)
   }
 }
