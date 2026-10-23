@@ -1,0 +1,24 @@
+{
+  "about": "The Electron fuse set of ADR-019 item 5 per build target, as spike S-019-2 recorded it on the wire of every release-target artifact (electron-builder 26.15.3, Electron 44; packaging lane run 39205769685). scripts/release/fuses.mjs flips it in afterPack and P-01 (scripts/release/packaged/p01-fuses.packaged.mjs) reads it back from each packaged artifact. RunAsNode stays enabled: the Host runs the app executable with ELECTRON_RUN_AS_NODE (ADR-002 D1). A known limit with flipped true is still asserted on the wire; one with flipped false is a fuse the target cannot flip, so P-01 asserts every other fuse there. Known limits go to the release notes (R-16).",
+  "fuses": {
+    "RunAsNode": "enabled",
+    "EnableCookieEncryption": "enabled",
+    "EnableNodeOptionsEnvironmentVariable": "disabled",
+    "EnableNodeCliInspectArguments": "disabled",
+    "EnableEmbeddedAsarIntegrityValidation": "enabled",
+    "OnlyLoadAppFromAsar": "enabled"
+  },
+  "targets": {
+    "win32": { "knownLimits": [] },
+    "darwin": { "knownLimits": [] },
+    "linux": {
+      "knownLimits": [
+        {
+          "fuse": "EnableEmbeddedAsarIntegrityValidation",
+          "flipped": true,
+          "limit": "No Linux artifact (AppImage, deb) embeds an asar integrity record, so the fuse is on but has nothing to validate: a modified app.asar is not detected on Linux (S-019-2)."
+        }
+      ]
+    }
+  }
+}

@@ -84,12 +84,43 @@ function sha256Of(text) {
   return createHash('sha256').update(text).digest('hex')
 }
 
+/**
+ * The binary electron-builder's `addElectronFuses` flips in a packed app: the app executable on Windows and Linux,
+ * the `Electron Framework` of the `.app` on macOS (where @electron/fuses finds the wire).
+ */
+function fusedBinaryOf(appOutDir, platform) {
+  if (platform === 'darwin') {
+    return path.join(
+      appOutDir,
+      `${PRODUCT}.app`,
+      'Contents',
+      'Frameworks',
+      'Electron Framework.framework',
+      'Electron Framework'
+    )
+  }
+  return path.join(appOutDir, platform === 'win32' ? `${PRODUCT}.exe` : 'dwarfai-miners')
+}
+
+/**
+ * electron-builder's afterPack context. Its packager carries the fuse writer the afterPack hook calls (ISSUE-269):
+ * this one rewrites the binary as flipping the fuses does, so a manifest written before the flip no longer matches.
+ */
 function contextOf(appOutDir, electronPlatformName) {
   return {
     appOutDir,
     electronPlatformName,
     arch: X64,
-    packager: { appInfo: { productFilename: PRODUCT } }
+    packager: {
+      appInfo: { productFilename: PRODUCT },
+      async generateFuseConfig(options) {
+        return options
+      },
+      async addElectronFuses(context) {
+        const binary = fusedBinaryOf(context.appOutDir, context.electronPlatformName)
+        writeFileSync(binary, `${readFileSync(binary, 'utf8')} with its fuses flipped`)
+      }
+    }
   }
 }
 
@@ -240,6 +271,20 @@ describe('afterPack.mjs (electron-builder afterPack)', () => {
     const pkg = JSON.parse(readFileSync(path.join(rootDir, 'package.json'), 'utf8'))
     expect(pkg.build.afterPack).toBe('scripts/build/afterPack.mjs')
   })
+
+  it.each(['win32', 'linux', 'darwin'])(
+    '[ADR-019, S-019-2] on %s the manifest afterPack writes describes the binary with its fuses flipped',
+    async (platform) => {
+      const app = packedApp(platform)
+      const binary = fusedBinaryOf(app.appOutDir, platform)
+      const before = readFileSync(binary, 'utf8')
+
+      await afterPack(contextOf(app.appOutDir, platform))
+
+      expect(readFileSync(binary, 'utf8'), 'afterPack flipped the fuses').not.toBe(before)
+      expect(await verifyPackagedHostManifest(app.sourceDir, platform)).toEqual({ ok: true })
+    }
+  )
 })
 
 describe('afterSign.mjs (electron-builder afterSign)', () => {
