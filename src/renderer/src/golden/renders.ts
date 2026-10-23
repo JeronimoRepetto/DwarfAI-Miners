@@ -111,6 +111,7 @@ import {
 import { at as sampleTime, silenceMs, type GoldenSample } from './sample'
 import MinePicker from '../components/veta/MinePicker.vue'
 import MineTab from '../components/veta/MineTab.vue'
+import PinnedStack from '../components/valle/PinnedStack.vue'
 import VetaChamber from '../components/veta/VetaChamber.vue'
 import VetaEntrance from '../components/veta/VetaEntrance.vue'
 import VetaIsland from '../components/veta/VetaIsland.vue'
@@ -1937,6 +1938,15 @@ const mineTab: Render = (_sample, _texts, attributes) => {
   }
 }
 
+/*
+ * Valle's pinned chat stack with nothing pinned (ISSUE-310; 07 machine 38 `stack-empty`): the head with its count empty and
+ * the guidance line the component draws from machine 38, in place of the lines.
+ */
+const valleStackEmpty: Render = () => ({
+  component: PinnedStack,
+  props: { pins: [], focus: null, focusRequest: null }
+})
+
 export const RENDERS: Record<string, Render> = {
   // The Panel's nav in each of its states, every prop read off the state's own tree.
   'organisms/nav#default': nav,
@@ -1956,6 +1966,8 @@ export const RENDERS: Record<string, Render> = {
   'organisms/mines-list#live': minesList,
   'organisms/mines-list#empty-first-run': minesList,
   // The mine card in each of its states, every prop read off the state's own tree.
+  // Valle (ISSUE-310): the pinned chat stack with nothing pinned.
+  'organisms/chat-stack#empty': valleStackEmpty,
   // Veta (ISSUE-287): the closed entrance, and a chamber lit or asleep.
   'organisms/veta-strip#first-run': vetaStrip(true),
   'organisms/veta-strip#no-sessions': vetaStrip(false),
