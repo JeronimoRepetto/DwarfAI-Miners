@@ -339,3 +339,36 @@ describe('the Valle mosaic and its zones in use (ISSUE-304)', () => {
     expect(world.mosaic.order.value).toEqual([IRONHILLS])
   })
 })
+
+// APPENDED for ISSUE-309: "Reset preset" in the Control room recomputes the order (07 S32.15) and closes what is open
+// (S31.12), the one writer of `valleMosaicOrder` still.
+describe('the mosaic recomputed by Reset preset (ISSUE-309)', () => {
+  it('[US-VALLE-010.AC03, S32.15] resetting the Control room writes every mine with a crew in data order, closes an open menu and nothing reaches the Host', async () => {
+    // The person's own order: Khazad first, Erebor (no crew) added.
+    const world = await opened([KHAZAD, EREBOR, MORIA])
+    world.mosaic.openMenu({ preset: 'control', mineId: KHAZAD })
+    expect(world.mosaic.menu.value).not.toBeNull()
+    world.called.length = 0
+
+    expect(world.mosaic.resetPreset()).toBe(true)
+    expect(world.mosaic.order.value).toEqual([MORIA, KHAZAD])
+    expect(orderWrites(world.writes)).toEqual([[MORIA, KHAZAD]])
+    expect(world.mosaic.menu.value).toBeNull()
+    expect(world.mosaic.state.value).toBe('idle')
+    expect(world.called).toEqual(['setUiPreference'])
+  })
+
+  it("[US-VALLE-010.AC03, S32.15] the slot's menu is closed first and a reset in the Work front recomputes nothing", async () => {
+    const world = await opened([KHAZAD])
+    world.mosaic.openSlot()
+    expect(world.mosaic.slot.value).not.toBeNull()
+    expect(world.mosaic.resetPreset()).toBe(true)
+    expect(world.mosaic.slot.value).toBeNull()
+    expect(world.mosaic.order.value).toEqual([MORIA, KHAZAD])
+
+    const front = await opened([KHAZAD], { preset: 'front' })
+    expect(front.mosaic.resetPreset()).toBe(false)
+    expect(front.mosaic.order.value).toEqual([KHAZAD])
+    expect(orderWrites(front.writes)).toEqual([])
+  })
+})

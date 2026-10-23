@@ -149,6 +149,12 @@ export interface ValleMosaicPart {
    * S31.06), as "Show here: the mine" does.
    */
   showMine(zone: ValleZoneKey): void
+  /**
+   * "Reset preset" in the Control room (S37.03): every zone back to its mine, an open zone menu or the slot's menu closed
+   * (S31.12), the order recomputed from every mine with a crew in data order and written (S32.15). Answers whether the
+   * mosaic took it: the Work front has none, and one not yet opened against the Host's facts has nothing to recompute.
+   */
+  resetPreset(): boolean
 }
 
 const sameZone = (a: ValleZoneKey | null, b: ValleZoneKey): boolean =>
@@ -428,6 +434,11 @@ export function useValleMosaic(deps: ValleMosaicDeps): ValleMosaicPart {
         sendZone(zone, { kind: 'menu' })
       }
       sendZone(zone, { kind: 'show', content: 'mine' })
+    },
+    resetPreset() {
+      // S31.12: a zone menu or the slot's menu closes; the zones' contents are the layouts', reset with them.
+      dismiss()
+      return sendMosaic({ kind: 'reset-preset' })
     }
   }
 }

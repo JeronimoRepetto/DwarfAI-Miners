@@ -163,3 +163,47 @@ describe('the zones written with the layouts (ISSUE-304)', () => {
     scope.stop()
   })
 })
+
+// APPENDED for ISSUE-309: "Reset preset" writes the preset's defaults through this one writer of `valleLayout`
+// (07 machine 37; S37.05, S37.06).
+describe('the reset layouts written through the one writer (ISSUE-309)', () => {
+  it("[US-VALLE-010.AC04, S37.05] reset layouts apply to the view at once and are written through A-N21, the other preset's layout as it was", async () => {
+    const fake = fakeBridge()
+    const scope = effectScope()
+    const preset = scope.run(() =>
+      useVallePreset({
+        bridge: fake.bridge,
+        stores: shallowRef(storesWith({ preset: 'control', layout: LEFT })),
+        facts: () => FACTS
+      })
+    )!
+    const reset: ValleLayouts = { ...LEFT, control: defaultValleLayouts().control }
+    const written = preset.resetLayouts(reset)
+    expect(preset.view.value.layouts).toEqual(reset)
+    expect(preset.view.value.layouts.front).toBe(LEFT.front)
+    expect(fake.stored.valleLayout).toEqual(reset)
+    await expect(written).resolves.toBe(true)
+    expect(fake.writes).toEqual(['valleLayout'])
+    scope.stop()
+  })
+
+  it('[S37.06] a failed layout write still leaves the defaults applied for the session and answers false', async () => {
+    const fake = fakeBridge()
+    const failing: VallePresetBridge = {
+      ...fake.bridge,
+      setUiPreference: () => Promise.reject(new Error('store down'))
+    }
+    const scope = effectScope()
+    const preset = scope.run(() =>
+      useVallePreset({
+        bridge: failing,
+        stores: shallowRef(storesWith({ preset: 'front', layout: LEFT })),
+        facts: () => FACTS
+      })
+    )!
+    const reset: ValleLayouts = { ...LEFT, front: defaultValleLayouts().front }
+    await expect(preset.resetLayouts(reset)).resolves.toBe(false)
+    expect(preset.view.value.layouts).toEqual(reset)
+    scope.stop()
+  })
+})

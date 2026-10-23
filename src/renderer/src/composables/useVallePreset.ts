@@ -90,6 +90,11 @@ export interface VallePresetPart {
   wishSplit(split: boolean): void
   /** Both layouts as a zone change leaves them (07 machine 31; ISSUE-304), written at once (A-N21). */
   writeLayouts(layouts: ValleLayouts): void
+  /**
+   * Both layouts as "Reset preset" leaves them (07 machine 37; ISSUE-309), applied to the view at once and written at once
+   * (A-N21); answers whether UI main took the write. A failed write leaves the layouts applied for the session (S37.06).
+   */
+  resetLayouts(layouts: ValleLayouts): Promise<boolean>
 }
 
 const opened = (stores: ValleStores): ValleView =>
@@ -106,15 +111,16 @@ export function useVallePreset(deps: VallePresetDeps): VallePresetPart {
 
   // A write or a move UI main refuses or cannot take leaves the view as it is: the window never fails for it.
   const ignore = (): void => {}
+  /** A-N21 `setUiPreference(valleLayout)`: the one writer of the key, both layouts whole. */
+  const writeLayoutsNow = (layouts: ValleLayouts): Promise<unknown> =>
+    deps.bridge.setUiPreference({ key: 'valleLayout', value: layouts })
   function carry(effect: ValleEffect): void {
     switch (effect.kind) {
       case 'write-preset':
         void deps.bridge.setUiPreference({ key: 'vallePreset', value: effect.preset }).catch(ignore)
         return
       case 'write-layouts':
-        void deps.bridge
-          .setUiPreference({ key: 'valleLayout', value: effect.layouts })
-          .catch(ignore)
+        void writeLayoutsNow(effect.layouts).catch(ignore)
         return
       case 'write-last-mine':
         void deps.bridge
@@ -196,6 +202,13 @@ export function useVallePreset(deps: VallePresetDeps): VallePresetPart {
       if (current.layouts === layouts) return
       view.value = { ...current, layouts }
       carry({ kind: 'write-layouts', layouts })
+    },
+    resetLayouts(layouts) {
+      view.value = { ...view.value, layouts }
+      return writeLayoutsNow(layouts).then(
+        () => true,
+        () => false
+      )
     }
   }
 }
