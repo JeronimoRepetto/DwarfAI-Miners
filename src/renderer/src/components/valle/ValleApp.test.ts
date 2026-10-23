@@ -2274,3 +2274,43 @@ describe("the Work front's mines list in the Valle root (EPIC-20 visual parity)"
     expect(root.find(`[data-valle-front-mine="${EREBOR}"]`).exists()).toBe(true)
   })
 })
+
+// APPENDED for the Valle visual parity (EPIC-20): the Work front mine's toolbar leads with ♪, the mine's ambience
+// (`DS` organisms/mine-zone `.dm-vz__front-only`: ♪, History, ⋯), the same mute the zone menu toggles (S31.08), written
+// through the one writer of `mutedMineIds`.
+describe("the Work front mine's ♪ ambience toggle (EPIC-20 visual parity)", () => {
+  it('[US-VALLE-009.AC05, S31.08] ♪ in the Work front mine’s toolbar mutes its ambience and back, as its menu item does', async () => {
+    const { root, writes } = mountValle({
+      preset: 'front',
+      mosaicOrder: [MORIA],
+      lastFrontMineId: MORIA,
+      mutedMineIds: []
+    })
+    await flushPromises()
+    const tools = () => root.get(`[data-valle-front-mine="${MORIA}"] .dm-vz__tools`)
+    expect(
+      tools()
+        .findAll('button')
+        .map((button) => button.attributes('title'))
+    ).toEqual(['Mine ambience', 'Mine history · opens under the chats', 'Mine options'])
+    const toggle = () => tools().get('button[title="Mine ambience"]')
+    expect(toggle().attributes('aria-pressed')).toBe('true')
+    await toggle().trigger('click')
+    await flushPromises()
+    expect(writes.at(-1)).toEqual({ key: 'mutedMineIds', value: [MORIA] })
+    expect(toggle().attributes('aria-pressed')).toBe('false')
+    expect(root.get(`[data-valle-front-mine="${MORIA}"]`).attributes('data-ambience')).toBe('off')
+    // The zone menu reads the same mute.
+    await tools().get('[data-zone-more]').trigger('click')
+    expect(
+      root
+        .findAll('[data-zone-menu] [role="menuitem"]')
+        .some((item) => item.text().startsWith('Mine ambience on'))
+    ).toBe(true)
+    await root.get('[data-zone-more]').trigger('click')
+    await toggle().trigger('click')
+    await flushPromises()
+    expect(writes.at(-1)).toEqual({ key: 'mutedMineIds', value: [] })
+    expect(toggle().attributes('aria-pressed')).toBe('true')
+  })
+})

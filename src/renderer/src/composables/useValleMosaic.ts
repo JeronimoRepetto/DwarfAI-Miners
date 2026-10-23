@@ -130,6 +130,8 @@ export interface ValleMosaicPart {
   pickSlot(mineId: MineId): void
   /** "A new project…" (S32.08). */
   newProject(): void
+  /** ♪ in the Work front mine's toolbar: the mine's ambience muted or on again, as its menu item does (S31.08). */
+  toggleMute(mineId: MineId): void
   /**
    * "Add a mine" in the Work front's list (`DS` mine-rows `onAdd`; EPIC-20 visual parity): the slot's "A new project…"
    * at once, the ordinary folder flow (S32.04, S32.08); in the Work front the mine added is swapped in (S28.15).
@@ -423,6 +425,7 @@ export function useValleMosaic(deps: ValleMosaicDeps): ValleMosaicPart {
     },
     pickSlot: (mineId) => void sendMosaic({ kind: 'pick', mineId }),
     newProject: () => void sendMosaic({ kind: 'new-project' }),
+    toggleMute: (mineId) => toggleAmbience(mineId, !isMuted(mineId)),
     addProject() {
       if (openZone.value !== null) dismiss()
       if (sendMosaic({ kind: 'slot' })) notice.value = null

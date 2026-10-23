@@ -955,6 +955,8 @@ onUnmounted(() => {
         @current="(mineId) => currentMine.send({ kind: 'painting', mineId })"
         @history="toggleHistory"
         @add="addPressed"
+        :muted="shownMine !== null && mosaic.isMuted(shownMine.mineId)"
+        @ambience="(mineId) => mosaic.toggleMute(mineId)"
         @add-mine="mosaic.addProject()"
         @sorted="(text) => showToast(text, 'sort')"
       >

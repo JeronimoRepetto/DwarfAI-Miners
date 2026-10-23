@@ -14,6 +14,8 @@
  *   the dive's FLIP moves into place (`flip.ts`). The art (`art` slot) and the roster (`roster` slot) are the host's,
  *   drawn with the Panel's own parts; "+ Dwarf" under the roster reports the mine (`add`, S29.16). What the zone shows
  *   instead of its mine is the `content` slot.
+ * - ♪ in the mine's toolbar, before History (`DS` organisms/mine-zone `.dm-vz__front-only`; EPIC-20 visual parity): the
+ *   mine's ambience muted or on again, the same mute its zone menu toggles (S31.08), reported (`ambience`).
  * - "Mine history · opens under the chats" in the mine's toolbar asks for the history drawer under the chats (07 S36.01;
  *   US-VALLE-011; ISSUE-308), reporting whether it is open (`aria-expanded`); the drawer itself is the deck's.
  * - The zone registers with the on-screen report (`VALLE_TRACK_ZONE`, S39.05): it counts only while showing its mine.
@@ -77,6 +79,8 @@ const props = defineProps<{
   moving?: boolean
   /** The history drawer under the chats is drawn (07 machine 36). */
   historyOpen?: boolean
+  /** The mine's ambience is muted (`mutedMineIds`, S31.08): ♪ reads it. */
+  muted?: boolean
 }>()
 const emit = defineEmits<{
   fold: []
@@ -91,6 +95,8 @@ const emit = defineEmits<{
   history: [mineId: MineId]
   /** S29.16: "+ Dwarf" under the roster, a new dwarf in this mine. */
   add: [mineId: MineId]
+  /** ♪ in the mine's toolbar: its ambience muted or on again (S31.08). */
+  ambience: [mineId: MineId]
   /** "Add a mine" in the list's header. */
   'add-mine': []
   /** The order changed: its toast's words. */
@@ -240,6 +246,7 @@ const listWidth = computed(
         aria-current="true"
         :aria-label="`Mine ${mine.name}, current`"
         :data-closed="closed ? 'true' : 'false'"
+        :data-ambience="muted ? 'off' : 'on'"
         :style="{ '--min-front': `${mineMinimum(mine.portraits ?? 0)}px` }"
       >
         <div class="dm-vz__bg" aria-hidden="true"></div>
@@ -252,6 +259,14 @@ const listWidth = computed(
             @menu="emit('menu')"
           >
             <template #tools>
+              <ActionButton
+                :icon="muted ? 'ambience-off' : 'ambience-on'"
+                size="sm"
+                title="Mine ambience"
+                :pressed="!muted"
+                data-valle-ambience
+                @click="emit('ambience', mine.mineId)"
+              />
               <ActionButton
                 icon="history"
                 size="sm"
