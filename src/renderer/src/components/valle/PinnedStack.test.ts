@@ -171,3 +171,22 @@ describe('the pinned chat stack empty state (ISSUE-310; 07 machine 38; US-VALLE-
     expect(root.get('.dm-cstack__count').text()).toBe('')
   })
 })
+
+// APPENDED for the Valle visual parity (EPIC-20): an Add pin's line leads with the "+" box where a portrait would be
+// (`DS/prototype/organisms/chat-stack/chat-stack.js`: `span.dm-ctab__add` holding the add icon), open or collapsed.
+describe("an Add pin's line in the stack (EPIC-20 visual parity)", () => {
+  it('[US-VALLE-007.AC12] an Add pin leads its line with the "+" box, expanded or collapsed, where a chat has its portrait', async () => {
+    const opened = stepPins(three(), { kind: 'add-open', mineId: EREBOR })
+    if (!opened.ok) throw new Error('refused')
+    const { root } = mountStack(opened.set)
+    const open = root.get(`[data-pin="${addKey(EREBOR)}"] .dm-cstack__row`)
+    expect(open.element.firstElementChild?.classList.contains('dm-ctab__add')).toBe(true)
+    expect(open.find('.dm-ctab__add .dm-icon').exists()).toBe(true)
+    // Collapsed once another pin takes the focus.
+    await root.get(`.dm-cstack__row[data-pin="${BORIN}"]`).trigger('click')
+    await flushPromises()
+    const line = root.get(`.dm-cstack__row[data-pin="${addKey(EREBOR)}"]`)
+    expect(line.attributes('data-expanded')).toBe('false')
+    expect(line.element.firstElementChild?.classList.contains('dm-ctab__add')).toBe(true)
+  })
+})

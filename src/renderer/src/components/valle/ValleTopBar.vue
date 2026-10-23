@@ -1,6 +1,8 @@
 <script setup lang="ts">
 /*
- * Valle's top bar (`organisms/valle-bar`; 07 S28.06, S28.11, S28.21; US-VALLE-001.AC01, .AC05; ISSUE-300): the preset
+ * Valle's top bar (`organisms/valle-bar`; 07 S28.06, S28.11, S28.21; US-VALLE-001.AC01, .AC05; ISSUE-300): the app mark
+ * "Hide Valle", which hides the window as the app mark does in every mode (07 S10.08, US-SHELL-002.AC01), a mode move to
+ * `hidden` held like the lever during a dive or a climb (`data-lever`; EPIC-20 visual parity); the preset
  * tabs, a tablist whose ← and → move between the presets as a click does, and the mode lever, "▼ Panel" and "▼ Veta",
  * which leave Valle for that mode carrying the chat in focus, as the Panel's lever does (US-SHELL-001), and the "⋯" preset
  * menu holding "Reset preset" (`ValleTopBarMenu`, 07 machine 37; ISSUE-309). The needs-you counter fills the `counter` slot
@@ -11,6 +13,7 @@ import type { DwarfId, MineId, MoveToModeParams } from '@dwarfai/contracts'
 import { nextTick, ref, watch } from 'vue'
 import type { VallePreset } from '../../lib/valle/preset'
 import ActionButton from '../controls/ActionButton.vue'
+import PixelIcon from '../icon/PixelIcon.vue'
 import ValleTopBarMenu from './ValleTopBarMenu.vue'
 
 const props = withDefaults(
@@ -76,6 +79,16 @@ function leave(mode: 'panel' | 'veta'): void {
 
 <template>
   <header class="dm-vbar m-mat" aria-label="Valle" :data-preset="preset">
+    <button
+      class="dm-vbar__mark"
+      type="button"
+      title="Hide Valle"
+      aria-label="Hide Valle"
+      data-lever="hidden"
+      @click="emit('leave', { mode: 'hidden' })"
+    >
+      <PixelIcon name="mark" :scale="2" />
+    </button>
     <div ref="tablist" class="dm-vbar__tabs" role="tablist" aria-label="Valle preset">
       <button
         v-for="tab in TABS"
@@ -137,6 +150,34 @@ function leave(mode: 'panel' | 'veta'): void {
   padding: 0 6px;
   margin: var(--px);
   min-width: 0;
+}
+/* The app mark: a rock plate with a notched brass edge, sunk on its top-left (`DS` valle-bar.css `.dm-vbar__mark`). */
+.dm-vbar__mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: var(--hit-nav);
+  height: var(--hit-nav);
+  margin: var(--px);
+  background: var(--rock);
+  box-shadow:
+    0 -2px 0 0 var(--brass-lo),
+    0 2px 0 0 var(--brass-lo),
+    -2px 0 0 0 var(--brass-lo),
+    2px 0 0 0 var(--brass-lo),
+    inset 2px 2px 0 0 var(--rock-lo);
+  transition: transform var(--dur-press) var(--ease-step);
+}
+.dm-vbar__mark:hover {
+  box-shadow:
+    0 -2px 0 0 var(--brass),
+    0 2px 0 0 var(--brass),
+    -2px 0 0 0 var(--brass),
+    2px 0 0 0 var(--brass),
+    inset 2px 2px 0 0 var(--rock-lo);
+}
+.dm-vbar__mark:active {
+  transform: translateY(var(--px));
 }
 .dm-vbar__tabs {
   display: flex;

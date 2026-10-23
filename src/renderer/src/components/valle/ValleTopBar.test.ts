@@ -34,3 +34,18 @@ describe('the Valle top bar (ISSUE-300)', () => {
     bar.unmount()
   })
 })
+
+// APPENDED for the Valle visual parity (EPIC-20): the app mark leads the top bar (`DS` organisms/valle-bar, "Hide Valle"),
+// and hides the window as the app mark does in every mode (07 S10.08), a mode move to `hidden`.
+describe("the Valle top bar's app mark (EPIC-20 visual parity)", () => {
+  it('[US-SHELL-002.AC01, US-SHELL-001.AC05] the app mark leads the bar, named Hide Valle, and asks for the hidden mode', async () => {
+    const bar = mount(ValleTopBar, { props: { preset: 'control', chat: null } })
+    const mark = bar.get('header.dm-vbar > button.dm-vbar__mark')
+    expect(bar.get('header.dm-vbar').element.firstElementChild).toBe(mark.element)
+    expect(mark.attributes('title')).toBe('Hide Valle')
+    expect(mark.attributes('aria-label')).toBe('Hide Valle')
+    await mark.trigger('click')
+    expect(bar.emitted('leave')).toEqual([[{ mode: 'hidden' }]])
+    bar.unmount()
+  })
+})

@@ -13,10 +13,12 @@
  *   Panel's column does; the window's one engine plays only the current mine's (US-VALLE-016.AC03).
  * - Its sprites run on a frame clock of its own, held still while none of the zone is in the viewport
  *   (`useValleArtClocks`; NFR-PERF-10, ADR-034 item 5): `data-clock` says which.
- * - The crew already there is drawn on its stations; a dwarf arriving or leaving is placed at once. The Panel's walk in
- *   and out lives inside its mine column (`MineColumn.vue`), with no seam to reuse it here: a known difference.
+ * - The crew walks as the Panel's column walks it, through the same composable (`useCrewWalk`; US-MINE-009): the crew
+ *   already there is placed, a later arrival, or one the board saw arrive (`arrived`, #156), walks in from the spawn
+ *   point, a leaver walks out, and reduced motion places everyone at once.
  */
 import { computed, inject, onBeforeUnmount, onMounted, provide, shallowRef } from 'vue'
+import { useCrewWalk } from '../../composables/useCrewWalk'
 import { FRAME_CLOCK_KEY } from '../../composables/useFramePlayer'
 import { VALLE_ART_CLOCKS, browserArtClock } from '../../composables/useValleArtClocks'
 import { INTERIOR_ART_SIZE, INTERIOR_SRC } from '../../lib/art'
@@ -31,8 +33,10 @@ const props = withDefaults(
     mine: Mine
     /** The dwarf whose chat is in focus, or null. */
     selectedId?: string | null
+    /** The dwarfs the board saw arrive since it last published (#156): they walk in. */
+    arrived?: ReadonlySet<string>
   }>(),
-  { selectedId: null }
+  { selectedId: null, arrived: () => new Set<string>() }
 )
 const emit = defineEmits<{
   dwarf: [dwarf: Dwarf]
@@ -45,6 +49,11 @@ provide(FRAME_CLOCK_KEY, clock)
 const runs = shallowRef(true)
 
 const stands = computed(() => mineStands(mineCrew(props.mine), props.mine.tier))
+const { placed } = useCrewWalk({
+  stands,
+  tier: () => props.mine.tier,
+  arrived: () => props.arrived
+})
 const artStyle = computed(() => ({
   backgroundImage: `url("${INTERIOR_SRC[props.mine.tier]}")`,
   '--interior-aspect': `${INTERIOR_ART_SIZE.width} / ${INTERIOR_ART_SIZE.height}`,
@@ -83,12 +92,15 @@ onBeforeUnmount(() => {
     :data-clock="runs ? 'running' : 'paused'"
   >
     <SceneDwarf
-      v-for="stand in stands"
+      v-for="stand in placed"
       :key="stand.dwarf.id"
       :dwarf="stand.dwarf"
       :x="stand.x"
       :y="stand.y"
       :faces-left="stand.facesLeft"
+      :walking="stand.walking"
+      :walk-ms="stand.walkMs"
+      :entering="arrived.has(stand.dwarf.id)"
       :selected="stand.dwarf.id === selectedId"
       @select="pressed(stand.dwarf)"
       @crew-sound="crewSound(stand.dwarf, $event)"

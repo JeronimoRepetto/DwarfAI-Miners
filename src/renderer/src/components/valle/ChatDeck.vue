@@ -217,7 +217,9 @@ function onDragEnd(): void {
           @dragover="onDragOver($event, pin.key)"
           @dragend="onDragEnd"
         >
-          <span v-if="pin.kind === 'add'" class="dm-ctab__add" aria-hidden="true">+</span>
+          <span v-if="pin.kind === 'add'" class="dm-ctab__add" aria-hidden="true"
+            ><PixelIcon name="add"
+          /></span>
           <slot v-else name="portrait" :pin="pin" />
           <span class="dm-ctab__name">{{ pin.text.name }}</span>
           <span class="dm-ctab__ask" aria-hidden="true">{{ pin.text.tab }}</span>
@@ -436,6 +438,7 @@ function onDragEnd(): void {
   width: 32px;
   height: 32px;
   background: var(--rock);
+  box-shadow: inset 2px 2px 0 0 var(--rock-lo);
 }
 .dm-ctab__name {
   min-width: 0;
