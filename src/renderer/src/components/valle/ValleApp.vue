@@ -413,7 +413,11 @@ const listMines = computed(() =>
     mineId: mine.id,
     name: mine.name,
     tier: mine.tier,
-    crew: mineRowCrew(crewCount(mine.id), mine.state !== 'unenterable')
+    crew: mineRowCrew(crewCount(mine.id), mine.state !== 'unenterable'),
+    count: crewCount(mine.id),
+    needs: model.needsYou.value.filter((entry) => entry.mineId === mine.id).length,
+    measured: mine.hasBeenMeasured,
+    enterable: mine.state !== 'unenterable'
   }))
 )
 const shownMine = computed(() => {
@@ -951,6 +955,8 @@ onUnmounted(() => {
         @current="(mineId) => currentMine.send({ kind: 'painting', mineId })"
         @history="toggleHistory"
         @add="addPressed"
+        @add-mine="mosaic.addProject()"
+        @sorted="(text) => showToast(text, 'sort')"
       >
         <template #art="{ mineId }">
           <ValleMineArt

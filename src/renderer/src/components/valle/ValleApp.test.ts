@@ -2202,3 +2202,75 @@ describe("the walk in a Valle zone's painting (EPIC-20 visual parity)", () => {
     expect(nali!.props('walking')).toBe(true)
   })
 })
+
+// APPENDED for the Valle visual parity (EPIC-20): the Work front's compact list, its sort toast through the window's one
+// queue, its "?" read from the Host's needs-you queue, and "Add a mine" running the ordinary folder flow ("A new
+// project…", S32.08…S32.11), the mine added then swapped in (S28.15; `DS` valle.js `addMine` → `pickFront`).
+describe("the Work front's mines list in the Valle root (EPIC-20 visual parity)", () => {
+  const asking = () => {
+    const page = snapshotPage(10, {
+      minesEverKnown: true,
+      mines: [mineWire(MORIA), mineWire(EREBOR)],
+      dwarfs: [
+        dwarfWire(BORIN, MORIA),
+        dwarfWire(DAIN, EREBOR, { needsYou: true, status: 'asking', askedAt: 1 })
+      ]
+    })
+    if (!page.ok) throw new Error('fixture')
+    return {
+      ...page,
+      value: {
+        ...page.value,
+        chunks: [
+          ...page.value.chunks,
+          {
+            section: 'asks',
+            data: { asks: [], needsYou: [{ dwarfId: DAIN, mineId: EREBOR, askedAt: 1 }] }
+          }
+        ]
+      }
+    }
+  }
+
+  it('[US-MINES-003.AC07, US-VALLE-004.AC03] the list lines read the Host’s needs-you queue, and a new order is said in the window’s toast', async () => {
+    const { root } = mountValle(
+      { preset: 'front', mosaicOrder: [MORIA, EREBOR], lastFrontMineId: MORIA },
+      undefined,
+      { getHostSnapshot: () => Promise.resolve(asking()) as never }
+    )
+    await flushPromises()
+    const erebor = root.get(`[data-valle-row="${EREBOR}"]`)
+    expect(erebor.attributes('aria-label')).toBe('erebor, 1 dwarf, 1 needs you')
+    expect(erebor.get('.dm-mrow__ask').text()).toBe('?')
+    // Needs you first: EREBOR leads.
+    expect(root.findAll('[data-valle-row]').map((r) => r.attributes('data-valle-row'))).toEqual([
+      EREBOR,
+      MORIA
+    ])
+    await root.get('.dm-mrows__head [data-mrows-sort]').trigger('click')
+    await flushPromises()
+    expect(root.get('[data-valle-toasts]').text()).toContain('Sorted by tier, richest first')
+  })
+
+  it('[US-MINES-001.AC01, S32.08, S32.11, S28.15] "Add a mine" in the list runs the folder flow, and the mine added is swapped in', async () => {
+    let asked = 0
+    const { root, writes, clock } = mountValle(
+      { preset: 'front', mosaicOrder: [MORIA], lastFrontMineId: MORIA },
+      undefined,
+      {
+        declareMine: () => {
+          asked += 1
+          return Promise.resolve({ outcome: 'added', mineId: EREBOR }) as never
+        }
+      }
+    )
+    await flushPromises()
+    await root.get('.dm-mrows__head button[title="Add a mine"]').trigger('click')
+    await flushPromises()
+    clock.advance(400)
+    await flushPromises()
+    expect(asked).toBe(1)
+    expect(writes).toContainEqual({ key: 'valleMosaicOrder', value: [MORIA, EREBOR] })
+    expect(root.find(`[data-valle-front-mine="${EREBOR}"]`).exists()).toBe(true)
+  })
+})

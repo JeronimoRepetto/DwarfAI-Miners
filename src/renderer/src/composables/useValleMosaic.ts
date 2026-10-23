@@ -130,6 +130,11 @@ export interface ValleMosaicPart {
   pickSlot(mineId: MineId): void
   /** "A new project…" (S32.08). */
   newProject(): void
+  /**
+   * "Add a mine" in the Work front's list (`DS` mine-rows `onAdd`; EPIC-20 visual parity): the slot's "A new project…"
+   * at once, the ordinary folder flow (S32.04, S32.08); in the Work front the mine added is swapped in (S28.15).
+   */
+  addProject(): void
   /** Esc or an outside click: closes the open zone menu or slot menu; answers whether one was open. */
   dismiss(): boolean
   /** Why the last "A new project…" added nothing (S32.12), or `null`. */
@@ -220,7 +225,11 @@ export function useValleMosaic(deps: ValleMosaicDeps): ValleMosaicPart {
   const folder = createFolderDeclare(deps.bridge, {
     picked: () => sendMosaic({ kind: 'folder-picked' }),
     cancelled: () => sendMosaic({ kind: 'folder-cancelled' }),
-    declared: (mineId) => sendMosaic({ kind: 'declared', mineId }),
+    declared: (mineId) => {
+      sendMosaic({ kind: 'declared', mineId })
+      // The Work front shows the mine added (`DS` valle.js `addMine` → `pickFront`; S28.15).
+      if (deps.view().preset === 'front') deps.swap?.(mineId)
+    },
     failed: (reason) => {
       notice.value = reason
       sendMosaic({ kind: 'declare-failed' })
@@ -414,6 +423,11 @@ export function useValleMosaic(deps: ValleMosaicDeps): ValleMosaicPart {
     },
     pickSlot: (mineId) => void sendMosaic({ kind: 'pick', mineId }),
     newProject: () => void sendMosaic({ kind: 'new-project' }),
+    addProject() {
+      if (openZone.value !== null) dismiss()
+      if (sendMosaic({ kind: 'slot' })) notice.value = null
+      sendMosaic({ kind: 'new-project' })
+    },
     dismiss,
     notice,
     worktree: folder.worktree,
