@@ -37,10 +37,11 @@ DwarfAI-Miners has been rebuilt from the ground up. The app is now two parts:
 - the **window**, an Electron client of the Host. Closing it never ends a session; the Host keeps
   running, with its tray icon, until you choose **Stop everything and quit…** in the tray menu.
 
-**[v0.21.1](https://github.com/JeronimoRepetto/DwarfAI-Miners/releases/tag/v0.21.1) is the latest
-preview of the rebuilt app.** It adds Veta, the compact mode you reach from the Panel's **▼ Veta**
-lever, and the **Mode at launch** choice in Settings › General. It has installers for Windows, macOS
-and Linux, plus `SHA256SUMS`.
+**[v0.22.0](https://github.com/JeronimoRepetto/DwarfAI-Miners/releases/tag/v0.22.0) is the latest
+preview of the rebuilt app.** It completes the three modes: beside the Panel there is now **Veta**,
+the compact strip at the screen edge, and **Valle**, the full workspace with every mine at once (see
+[Three ways to watch](#three-ways-to-watch)). **Mode at launch** in Settings › General picks the one
+the app opens in. It has installers for Windows, macOS and Linux, plus `SHA256SUMS`.
 The builds are not signed yet, so Windows SmartScreen and macOS Gatekeeper ask before the first
 open; the release notes say how to get past them. The work still open before v1 is in EPIC-17
 (packaging and distribution): signing and notarization in the release pipeline, the release job
@@ -99,6 +100,69 @@ not this one.
 <p align="center">
   <img src="docs/readme/crew.svg" width="644" alt="The crew at work: two workers swinging pickaxes, a foreman standing by and a foreman asleep">
 </p>
+
+<p align="center"><img src="docs/readme/plates/three-ways-to-watch.png" width="644" alt="Section plate: Three ways to watch"></p>
+
+## Three ways to watch
+
+The app grows and shrinks along one ladder: **Valle ⇄ Panel ⇄ Veta**. The **mode lever** jumps
+straight to the mode it names, and your dwarfs keep working whichever one is showing.
+
+| Mode      | What it is                                              | Switch with                                       |
+| --------- | ------------------------------------------------------- | ------------------------------------------------- |
+| **Panel** | The floating panel: Map, Mines and Settings, full chats | **▲ Valle** / **▼ Veta** at the bottom of the nav |
+| **Veta**  | A compact strip at a screen edge                        | **▲** at the strip's end; the grip menu           |
+| **Valle** | The full workspace: every mine at once, chats pinned    | **▼ Panel** / **▼ Veta** in the top bar           |
+
+### Panel
+
+The default mode, and the one the [Highlights](#highlights) show.
+
+- **The nav** reaches the Map, the Mines page and Settings.
+- **The mine column** shows a mine's interior with its crew, its roster, its ore and **+ Dwarf**.
+- **Click a dwarf for its full chat:** the conversation, the folded tool steps, and its questions
+  and permissions.
+- **The mode lever** sits at the bottom of the nav: **▲ Valle** above **▼ Veta**.
+
+### Veta
+
+<p align="center">
+  <img src="docs/readme/cards/veta.png" width="644" alt="Veta: a strip at the bottom edge of the screen with the grip, a +2 for two more mines, four mine chambers trimmed in their tier colours with their dwarfs working, asking and asleep, and the ▲ that opens the Panel; above it, the chat of an asking dwarf risen from the strip, with a question card on step 1 of 3">
+</p>
+
+- **Every mine at work gets a chamber,** its dwarfs at full size. A mine that needs you lights its
+  lamp and gets a heavy outline, and the asking dwarf raises **?**.
+- **Click a dwarf to open its chat,** risen from the strip: the same chat as in the Panel, with its
+  questions and permissions. A half-written message is kept as a draft.
+- **Hover a chamber for its mine tab:** open the Panel on that mine, or launch a new dwarf in it.
+- **As many chambers as fit show, up to four.** **+N** lists the rest, and the scroll wheel over
+  the strip cycles them.
+- **Drag the grip to any screen edge;** Veta snaps to it. The grip's menu holds **Open Panel**,
+  **Open Valle**, **New dwarf in…** and **Hide window**.
+- **With no sessions,** Veta shrinks to one closed mine entrance.
+
+### Valle
+
+<p align="center">
+  <img src="docs/readme/cards/valle-control-room.png" width="840" alt="Valle's Control room: the top bar with the Control room and Work front tabs, the ore total, 2 need you and the mode lever; the nav; two mine columns side by side, each with its tier, name, interior with its crew and roster; the pinned chats, with an asking dwarf's question card open and two more chats folded to one line; and the needs-you queue along the bottom with a question and a permission">
+</p>
+
+<p align="center">
+  <img src="docs/readme/cards/valle-work-front.png" width="840" alt="Valle's Work front: the same top bar with Work front selected; the mines list folded to a strip; one Silver mine large with its toolbar, crew, roster and + Dwarf; chat tabs with the split button, a working dwarf's conversation open with its composer and the History bar under it; and the needs-you queue">
+</p>
+
+- **Two presets in the top bar.** The **Control room** shows every mine with a crew as columns side
+  by side; the **Work front** shows one mine large with its chats as tabs.
+- **Dive in and climb out.** **⤢** or a double-click on a mine's art opens it in the Work front; the
+  Control room tab or Esc brings you back.
+- **Never miss a question.** **N need you ▸** jumps to the next dwarf waiting on you, and the
+  needs-you queue along the bottom lists every waiting question and permission across all mines,
+  oldest first.
+- **Pinned chats.** In the Control room the chat in focus is open and the others fold to one line;
+  in the Work front, **⫽** shows two chats side by side, and History opens as a drawer under them.
+- **Shape it your way.** Drag the splitter between the mines and the chats, add a column with
+  **Add a mine here**, and use **Reset preset** to put a preset back.
+- **▼ Panel** and **▼ Veta** take the chat in focus with you.
 
 ## How it works
 
