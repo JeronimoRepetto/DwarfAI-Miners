@@ -14,7 +14,7 @@ import {
 /*
  * 07 machine 32 (ISSUE-304; US-VALLE-006, US-VALLE-009.AC03; UC-058; 17 §1.1 diagram-conformance walk): which mines the
  * Control room mosaic shows and in what order, "Close this column", the dashed "Add a mine here" slot and its folder
- * flow. An input the machine does not list is refused. S32.15 (Reset preset) is ISSUE-309's.
+ * flow, and S32.15 (Reset preset recomputes the order; ISSUE-309). An input the machine does not list is refused.
  */
 
 const mine = (
@@ -222,6 +222,27 @@ describe('machine 32 diagram conformance', () => {
     })
   })
 
+  it('[US-VALLE-010.AC03, S32.15] Reset preset in the Control room recomputes the order from every mine with a crew in data order, written at once', () => {
+    // The person had closed one column and arranged the rest their own way (Iron Hills first, Erebor added).
+    const step = stepMosaic(idle([IRONHILLS, EREBOR]), { kind: 'reset-preset' }, FACTS)
+    expect(step).toEqual({
+      ok: true,
+      id: 'S32.15',
+      mosaic: idle([MORIA, KHAZAD, IRONHILLS]),
+      effects: [{ kind: 'write-order', order: [MORIA, KHAZAD, IRONHILLS] }]
+    })
+    // An emptied mosaic is recomputed too: it is not the person's order that survives a reset.
+    expect(stepMosaic(idle([]), { kind: 'reset-preset' }, FACTS)).toMatchObject({
+      ok: true,
+      id: 'S32.15',
+      mosaic: idle([MORIA, KHAZAD, IRONHILLS])
+    })
+    // The Work front keeps no mosaic of its own: the Control room's reset alone recomputes it.
+    expect(
+      stepMosaic(idle([EREBOR]), { kind: 'reset-preset' }, { ...FACTS, preset: 'front' })
+    ).toEqual({ ok: false, reason: 'not-listed' })
+  })
+
   it('[ADR-024] a transition not listed in 07 machine 32 is rejected', () => {
     const refused: readonly [Mosaic, MosaicInput][] = [
       // The slot's own inputs need its menu open, the folder's the picker open, the declare's a declare in flight.
@@ -238,7 +259,11 @@ describe('machine 32 diagram conformance', () => {
       [at('declaring', [MORIA]), { kind: 'reveal', mineId: EREBOR }],
       // A removed mine that has no column, and a reveal of a mine already shown, change nothing.
       [idle([MORIA]), { kind: 'mine-removed', mineId: EREBOR }],
-      [idle([MORIA]), { kind: 'reveal', mineId: MORIA }]
+      [idle([MORIA]), { kind: 'reveal', mineId: MORIA }],
+      // S32.15 is `idle` → `idle`: with the slot's menu or the folder flow open, nothing is recomputed.
+      [at('slot-menu', [MORIA]), { kind: 'reset-preset' }],
+      [at('choosing-folder', [MORIA]), { kind: 'reset-preset' }],
+      [at('declaring', [MORIA]), { kind: 'reset-preset' }]
     ]
     for (const [mosaic, input] of refused) {
       expect(stepMosaic(mosaic, input, FACTS), `${mosaic.state} ${input.kind}`).toEqual({
