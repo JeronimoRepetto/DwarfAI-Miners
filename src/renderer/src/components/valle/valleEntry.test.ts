@@ -63,9 +63,10 @@ describe('the Valle entry of the renderer (ADR-025 item 1; 05 §2.3; ISSUE-299)'
     // the design's own copy (`organisms/valle-bar`, `organisms/mine-rows`); the zones' contents are not yet.
     // AMENDED for ISSUE-303: the Work front's deck carries "⫽" (`organisms/chat-deck`), disabled with no pin.
     // AMENDED for ISSUE-301: the compact list has a row per mine, reading the mine's own name (data, not copy).
+    // AMENDED for ISSUE-310: this Work front has no pin, so the deck shows its guidance line (07 machine 38, S38.03).
     // AMENDED for ISSUE-309: the top bar holds the "⋯" preset menu (`organisms/valle-bar`), closed.
     expect(root.text().replace(/\s+/g, ' ').trim()).toBe(
-      'Control roomWork front ⋯ MODE ▼ Panel ▼ Veta Mines ⇤ moria⫽'
+      'Control roomWork front ⋯ MODE ▼ Panel ▼ Veta Mines ⇤ moria⫽No chats pinned. Click a dwarf in the mine to open one.'
     )
     root.unmount()
   })

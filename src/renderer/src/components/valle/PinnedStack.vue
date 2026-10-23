@@ -11,9 +11,13 @@
  * - Where keyboard focus goes after an unpin is machine 29's (`focusRequest`): the next line, else the one before it,
  *   else the stack itself (tabindex -1), never dropped (AC04).
  *
+ * With nothing pinned the guidance line takes the place of the lines (07 machine 38; US-VALLE-014; ISSUE-310): a pure read
+ * of the pins, nothing stored.
+ *
  * Presentational: the set, its focus and every decision are the Valle root's (`useVallePins`).
  */
-import { nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
+import { STACK_EMPTY_TEXT, stackState } from '../../lib/valle/emptyStates'
 import type { FocusRequest, PinKey, PinView } from '../../lib/valle/pins'
 
 const props = defineProps<{
@@ -24,6 +28,8 @@ const props = defineProps<{
 const emit = defineEmits<{ select: [key: PinKey]; unpin: [key: PinKey] }>()
 
 const root = ref<HTMLElement | null>(null)
+/** Machine 38: with nothing pinned the guidance line takes the place of the lines (S38.01). */
+const empty = computed(() => stackState({ pins: props.pins }) === 'stack-empty')
 
 watch(
   () => props.focusRequest,
@@ -123,6 +129,7 @@ function onAuxClick(event: MouseEvent, key: PinKey): void {
         </div>
       </template>
     </div>
+    <p v-if="empty" class="dm-cstack__empty">{{ STACK_EMPTY_TEXT }}</p>
   </section>
 </template>
 
@@ -130,7 +137,7 @@ function onAuxClick(event: MouseEvent, key: PinKey): void {
 /* `DS/docs/components.md` organisms/chat-stack, Geometry. */
 .dm-cstack {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 4px;
   min-width: 0;
   min-height: 0;
@@ -162,6 +169,13 @@ function onAuxClick(event: MouseEvent, key: PinKey): void {
   flex-direction: column;
   gap: 4px;
   min-height: 0;
+}
+.dm-cstack__empty {
+  padding: 12px;
+  font-family: var(--f-meta);
+  font-size: var(--fs-body, 14px);
+  line-height: 1.4;
+  color: var(--ink-faint);
 }
 .dm-cstack__open {
   display: flex;

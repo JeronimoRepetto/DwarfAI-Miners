@@ -670,5 +670,9 @@
   {
     "key": "molecules/mine-picker#first-run",
     "red": "the app focuses the search field when the picker opens (US-LAUNCH-007.AC01), so its brass edge and parchment ring show where the reference draws the field at rest. Not measured: this state was registered without a golden run (ISSUE-288)"
+  },
+  {
+    "key": "organisms/chat-stack#empty",
+    "red": "Not measured: registered without a golden run (ISSUE-310)"
   }
 ]

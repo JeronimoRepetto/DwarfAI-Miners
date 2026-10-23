@@ -22,9 +22,13 @@
  *   above stay where they are. The History bar at its foot, "History · opens under the chats", reports whether it is
  *   open (`aria-expanded`) and asks for it (`history`).
  *
+ * With no pin at all the guidance line replaces the tabs and panes and "⫽" stays disabled (07 machine 38, S30.03;
+ * US-VALLE-015; ISSUE-310): a pure read of the pins, nothing stored.
+ *
  * Presentational: the set, its selection and every decision are the Valle root's (`useVallePins`).
  */
 import { computed, nextTick, ref, shallowRef, watch } from 'vue'
+import { DECK_EMPTY_TEXT, deckState } from '../../lib/valle/emptyStates'
 import { arrowTarget, type FocusRequest, type PinKey, type PinView } from '../../lib/valle/pins'
 import type { SplitButton } from '../../lib/valle/split'
 import ActionButton from '../controls/ActionButton.vue'
@@ -58,6 +62,8 @@ const emit = defineEmits<{
 }>()
 
 const root = ref<HTMLElement | null>(null)
+/** Machine 38: with no pin at all (other mines' pins are tabs too, V-03) the guidance line replaces tabs and panes. */
+const empty = computed(() => deckState({ pins: props.pins }) === 'deck-empty')
 /** The tab keyboard focus is on (roving tabindex); the selected one when none was focused yet. */
 const rover = shallowRef<PinKey | null>(null)
 /** The strip's order while a tab is dragged, before the drop commits it. */
@@ -234,7 +240,7 @@ function onDragEnd(): void {
         size="sm"
         :title="split.button.title"
         :pressed="split.button.pressed"
-        :disabled="split.button.disabled"
+        :disabled="split.button.disabled || empty"
         @click="emit('split')"
       />
     </header>
@@ -252,6 +258,7 @@ function onDragEnd(): void {
       >
         <slot name="chat" :pin="pane" />
       </div>
+      <p v-if="empty" class="dm-cdeck__empty">{{ DECK_EMPTY_TEXT }}</p>
     </div>
     <slot name="drawer" />
     <button
@@ -281,6 +288,16 @@ function onDragEnd(): void {
 /* The drawer under the panes: it takes its row, the tabs and panes above stay in place (07 machine 36). */
 .dm-cdeck[data-drawer='open'] {
   grid-template-rows: auto minmax(160px, 1fr) minmax(0, 0.9fr) auto;
+}
+.dm-cdeck__empty {
+  align-self: center;
+  justify-self: center;
+  max-width: 36ch;
+  font-family: var(--f-meta);
+  font-size: var(--fs-body, 14px);
+  line-height: 1.4;
+  text-align: center;
+  color: var(--ink-faint);
 }
 .dm-cdeck__histbar {
   display: flex;

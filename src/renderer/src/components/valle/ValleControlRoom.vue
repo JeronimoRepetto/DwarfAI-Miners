@@ -13,13 +13,16 @@
  * - Each zone registers with the on-screen report (`VALLE_TRACK_ZONE`, S39.05): only a zone showing its mine counts.
  * - The scroller is the one whose sideways scroll a dive saves and a climb restores (S28.03, S28.12): `mosaic` exposes
  *   it.
+ * - With no column the mosaic is empty (07 machine 38, S38.05; ISSUE-310): only the add slot shows, and no text, since the
+ *   package has no copy for it (§24 I-34). A pure read of the order, nothing stored.
  * - The current mine (07 machine 35; ISSUE-307): the host names it; its zone carries `aria-current` and ", current" in
  *   its name, and its body the corner brackets (`CurrentMineMark`), inside the needs-you ring the zone hosts
  *   (`data-needs`; the ring itself is ISSUE-306's). A single click on a zone's painting or header, no dwarf and no
  *   control touched, reports the mine (S35.02); a double-click on the art still dives.
  */
 import type { MineId, ZoneContent } from '@dwarfai/contracts'
-import { inject, onMounted, onUnmounted, onUpdated, shallowRef } from 'vue'
+import { computed, inject, onMounted, onUnmounted, onUpdated, shallowRef } from 'vue'
+import { mosaicState } from '../../lib/valle/emptyStates'
 import type { SlotEntry } from '../../lib/valle/mosaic'
 import type { ZoneMenuEntry, ZoneMenuItemId } from '../../lib/valle/zone'
 import AddMineSlot from './AddMineSlot.vue'
@@ -87,6 +90,11 @@ function zoneClick(event: MouseEvent, mineId: MineId): void {
   emit('current', mineId)
 }
 
+/** Machine 38 `mosaic-empty`: with no column only the add slot shows, and no text of its own (07 §24 I-34). */
+const empty = computed(
+  () => mosaicState(props.columns.map((column) => column.mineId)) === 'mosaic-empty'
+)
+
 const mosaic = shallowRef<HTMLElement | null>(null)
 defineExpose({ mosaic })
 
@@ -122,7 +130,14 @@ onUnmounted(() => {
 
 <template>
   <div class="dm-valle__main" data-page="mines">
-    <div ref="mosaic" class="dm-vmines" role="region" aria-label="Mines" data-valle-mosaic>
+    <div
+      ref="mosaic"
+      class="dm-vmines"
+      role="region"
+      aria-label="Mines"
+      data-valle-mosaic
+      :data-empty="empty ? 'true' : 'false'"
+    >
       <section
         v-for="column in columns"
         :key="column.mineId"

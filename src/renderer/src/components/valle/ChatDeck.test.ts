@@ -2,6 +2,7 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
 import { NO_PINS, pinViews, stepPins, type PinInput, type PinSet } from '../../lib/valle/pins'
+import { SPLIT_OFF, splitButton } from '../../lib/valle/split'
 import { pinFacts, pinHarness } from '../../lib/valle/testing/pinHarness'
 import { BORIN, DAIN, EREBOR, MORIA, NALI } from '../../lib/veta/testing/vetaFixtures'
 import ChatDeck from './ChatDeck.vue'
@@ -43,8 +44,8 @@ const three = (): PinSet =>
     { kind: 'select', key: BORIN }
   )
 
-function mountDeck(initial: PinSet = three()) {
-  const harness = pinHarness(ChatDeck, initial, facts)
+function mountDeck(initial: PinSet = three(), extra?: (set: PinSet) => Record<string, unknown>) {
+  const harness = pinHarness(ChatDeck, initial, facts, extra)
   root = mount(harness.Harness, { attachTo: document.body })
   return { root, ...harness }
 }
@@ -224,5 +225,82 @@ describe('the split (ISSUE-303)', () => {
     const press = deck.get('button.dm-cdeck__split')
     expect(press.attributes('disabled')).toBeDefined()
     expect(press.attributes('title')).toBe('Split · needs a wider window')
+  })
+})
+
+const EMPTY = 'No chats pinned. Click a dwarf in the mine to open one.'
+
+/** The split as the Work front gives the deck: machine 30's button over the pins, with room to spare. */
+const withSplit = (set: PinSet): Record<string, unknown> => ({
+  split: {
+    panes: set.focus === null ? [] : [set.focus],
+    button: splitButton(SPLIT_OFF, {
+      pins: set.pins.map((pin) => ({
+        key: pin.key,
+        dwarfId: pin.kind === 'chat' ? pin.dwarfId : null,
+        needs: false
+      })),
+      focus: set.focus,
+      room: 10_000
+    })
+  }
+})
+
+describe('the chat deck empty state (ISSUE-310; 07 machine 38; US-VALLE-015)', () => {
+  it('[US-VALLE-015.AC01, S38.03] the Work front with nothing pinned shows No chats pinned. Click a dwarf in the mine to open one.', () => {
+    const { root } = mountDeck(NO_PINS)
+    expect(root.findAll('.dm-cdeck__empty').map((l) => l.text())).toEqual([EMPTY])
+    // In place of any tabs or panes.
+    expect(root.findAll('[role="tab"]')).toHaveLength(0)
+    expect(root.findAll('.dm-cdeck__pane')).toHaveLength(0)
+  })
+
+  it('[US-VALLE-015.AC02, S38.04] clicking a dwarf in the mine pins it as the first tab and replaces the empty state', async () => {
+    const { root, send } = mountDeck(NO_PINS)
+    expect(root.findAll('.dm-cdeck__empty')).toHaveLength(1)
+    send({ kind: 'click', dwarfId: BORIN, mineId: MORIA })
+    await flushPromises()
+    expect(root.findAll('.dm-cdeck__empty')).toHaveLength(0)
+    expect(root.findAll('[role="tab"]').map((t) => t.attributes('data-pin'))).toEqual([BORIN])
+    expect(selected(root)).toEqual([BORIN])
+    expect(root.findAll('.dm-cdeck__pane').map((p) => p.attributes('data-pane'))).toEqual([BORIN])
+    expect(root.text()).not.toContain(EMPTY)
+  })
+
+  it('[US-VALLE-015.AC03, S38.03] unpinning the only chat returns the deck to the empty state', async () => {
+    const { root } = mountDeck(setOf({ kind: 'click', dwarfId: BORIN, mineId: MORIA }))
+    expect(root.findAll('.dm-cdeck__empty')).toHaveLength(0)
+    await tab(root, BORIN).get('.dm-ctab__x').trigger('click')
+    await flushPromises()
+    expect(root.findAll('.dm-cdeck__empty').map((l) => l.text())).toEqual([EMPTY])
+    expect(root.findAll('[role="tab"]')).toHaveLength(0)
+    expect(root.findAll('.dm-cdeck__pane')).toHaveLength(0)
+  })
+
+  it('[US-VALLE-015.AC04, S30.03] with the deck empty ⫽ stays disabled', async () => {
+    const { root, send } = mountDeck(NO_PINS, withSplit)
+    const button = (): HTMLButtonElement =>
+      root.get('.dm-cdeck__split').element as HTMLButtonElement
+    expect(button().disabled).toBe(true)
+    expect(button().getAttribute('title')).toBe('Split · two chats side by side')
+    // Exactly as with fewer than two chats pinned: one chat does not enable it either.
+    send({ kind: 'click', dwarfId: BORIN, mineId: MORIA })
+    await flushPromises()
+    expect(button().disabled).toBe(true)
+    // The deck reads the pins itself: a button that claims to be enabled over an empty deck still shows disabled.
+    const faulty = mountDeck(NO_PINS, () => ({
+      split: {
+        panes: [],
+        button: { disabled: false, pressed: false, title: 'Split · two chats side by side' }
+      }
+    })).root
+    expect((faulty.get('.dm-cdeck__split').element as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('[S38.03] pins of other mines keep the deck populated', () => {
+    // The Work front shows MORIA; the only pin is a dwarf of EREBOR: it is a tab too, so the deck is not empty (V-03).
+    const { root } = mountDeck(setOf({ kind: 'click', dwarfId: DAIN, mineId: EREBOR }))
+    expect(root.findAll('.dm-cdeck__empty')).toHaveLength(0)
+    expect(root.findAll('[role="tab"]').map((t) => t.attributes('data-pin'))).toEqual([DAIN])
   })
 })

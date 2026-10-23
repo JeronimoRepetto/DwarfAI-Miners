@@ -6,6 +6,8 @@ import { pinFacts, pinHarness } from '../../lib/valle/testing/pinHarness'
 import { BORIN, DAIN, EREBOR, MORIA, NALI } from '../../lib/veta/testing/vetaFixtures'
 import PinnedStack from './PinnedStack.vue'
 
+const EMPTY = 'Click a dwarf, in any mine, to pin its chat here.'
+
 /*
  * The Control room's pinned chat stack (ISSUE-302; 07 machine 29; DS organisms/chat-stack; 17 §1.12): one line per pin,
  * the one in focus expanded, the head "Pinned chats" with its count. Mounted over a host that steps machine 29.
@@ -132,5 +134,40 @@ describe('the pinned chat stack (ISSUE-302)', () => {
       { kind: 'unpin', key: BORIN }
     ])
     expect(root.findAll('[data-pin]')).toHaveLength(0)
+  })
+})
+
+describe('the pinned chat stack empty state (ISSUE-310; 07 machine 38; US-VALLE-014)', () => {
+  it('[US-VALLE-014.AC01, S38.01] the Control room with nothing pinned shows Click a dwarf, in any mine, to pin its chat here.', () => {
+    const { root } = mountStack(NO_PINS)
+    const line = root.findAll('.dm-cstack__empty')
+    expect(line.map((l) => l.text())).toEqual([EMPTY])
+    // In place of the lines, with the head count empty.
+    expect(root.findAll('[data-pin]')).toHaveLength(0)
+    expect(root.get('.dm-cstack__count').text()).toBe('')
+    expect(root.get('section.dm-cstack').attributes('aria-label')).toBe('Pinned chats')
+  })
+
+  it('[US-VALLE-014.AC02, S38.02] clicking a dwarf in the mosaic pins and opens its chat and the stack shows that one line', async () => {
+    const { root, send } = mountStack(NO_PINS)
+    expect(root.findAll('.dm-cstack__empty')).toHaveLength(1)
+    send({ kind: 'click', dwarfId: BORIN, mineId: MORIA })
+    await flushPromises()
+    expect(root.findAll('.dm-cstack__empty')).toHaveLength(0)
+    expect(root.findAll('[data-pin]').map((l) => l.attributes('data-pin'))).toEqual([BORIN])
+    expect(expanded(root)).toEqual([BORIN])
+    // The head count from 0.
+    expect(root.get('.dm-cstack__count').text()).toBe('1')
+    expect(root.text()).not.toContain(EMPTY)
+  })
+
+  it('[US-VALLE-014.AC03, S38.01] unpinning the only chat returns the stack to the empty state', async () => {
+    const { root } = mountStack(setOf({ kind: 'click', dwarfId: BORIN, mineId: MORIA }))
+    expect(root.findAll('.dm-cstack__empty')).toHaveLength(0)
+    await root.get(`[data-pin="${BORIN}"] .dm-cstack__x`).trigger('click')
+    await flushPromises()
+    expect(root.findAll('.dm-cstack__empty').map((l) => l.text())).toEqual([EMPTY])
+    expect(root.findAll('[data-pin]')).toHaveLength(0)
+    expect(root.get('.dm-cstack__count').text()).toBe('')
   })
 })
