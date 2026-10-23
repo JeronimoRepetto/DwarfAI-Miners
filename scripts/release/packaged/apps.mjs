@@ -49,15 +49,18 @@ export function relativeTo(artifactDir, file) {
 // folders and the Host's data root, the app's environment pointed into it, and the end of the app and its Host.
 
 /**
- * A temp profile: userData, home folders and the Host's data root all inside one folder (`prefix` names it) that
- * removeProfile removes. On macOS the data root is a short folder under `/tmp`, since the Host's socket lives under
- * HOME and a path under the per-user temp folder is too long for it.
+ * A temp profile for an app of `platform`: userData, home folders and the Host's data root all inside one folder
+ * (`prefix` names it) that removeProfile removes. On a macOS host the data root is a short folder under `/tmp`, since
+ * the Host's socket lives under HOME and a path under the per-user temp folder is too long for it; a darwin app checked
+ * on another host (a test) keeps it inside the profile, as `/tmp` may not exist there.
  */
-export function createAppProfile(prefix, platform) {
+export function createAppProfile(prefix, platform, hostPlatform = process.platform) {
   const root = mkdtempSync(path.join(tmpdir(), `${prefix}-`))
   const userDataDir = path.join(root, 'userData')
   const dataRoot =
-    platform === 'darwin' ? mkdtempSync(`/tmp/${prefix.slice(-4)}-`) : path.join(root, 'data')
+    platform === 'darwin' && hostPlatform === 'darwin'
+      ? mkdtempSync(`/tmp/${prefix.slice(-4)}-`)
+      : path.join(root, 'data')
   const home = platform === 'darwin' ? dataRoot : path.join(root, 'home')
   for (const dir of [userDataDir, dataRoot, path.join(home, 'AppData', 'Roaming')]) {
     mkdirSync(dir, { recursive: true })

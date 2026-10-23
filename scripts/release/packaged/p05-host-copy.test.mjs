@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { createAppProfile, removeProfile } from './apps.mjs'
 import { writeAsar } from './asarFixture.mjs'
 import checkHostCopy, { copyDirOf, id } from './p05-host-copy.packaged.mjs'
 
@@ -214,6 +215,17 @@ describe('P-05 the Host runs from its versioned copy (ADR-027 items 1-2; 20 §2.
         'mac-arm64/DwarfAI-Miners.app — SP-03 (signed/notarized .app) not recorded'
       )
       expect(started, 'a blocked .app is never started').toEqual([])
+    }
+  })
+
+  it('[ADR-027] a macOS profile takes its short /tmp data root only on a macOS host, so a simulated darwin run stays under the temp folder', async () => {
+    const simulated = createAppProfile('dwarfai-p05', 'darwin', 'win32')
+    try {
+      const relative = path.relative(tmpdir(), simulated.dataRoot)
+      expect(relative.startsWith('..') || path.isAbsolute(relative), simulated.dataRoot).toBe(false)
+      expect(simulated.home, 'HOME is the data root on macOS').toBe(simulated.dataRoot)
+    } finally {
+      await removeProfile(simulated)
     }
   })
 
