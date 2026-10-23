@@ -1,4 +1,5 @@
 // layer: L7
+import { spawn } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -6,7 +7,11 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { writeAsar } from './asarFixture.mjs'
 import checkCsp, { id as cspId } from './p02-csp.packaged.mjs'
 import checkAdapters, { id as adaptersId } from './p04-pinned-adapters.packaged.mjs'
-import checkLogs, { id as logsId } from './p06-log-location.packaged.mjs'
+import checkLogs, {
+  id as logsId,
+  launchCommand,
+  runPackagedApp
+} from './p06-log-location.packaged.mjs'
 
 /**
  * The packaged checks P-02, P-04 and P-06 (`20` §2.3; ISSUE-271) over fixture artifact trees, one `mkdtemp` folder per
@@ -269,5 +274,53 @@ describe('P-06 log location (ADR-026 item 1; 20 §2.3)', () => {
     })
     expect(broken.ok).toBe(false)
     expect(broken.detail).toMatch(/the app exited with code 1/)
+  })
+})
+
+describe('P-06 starting the packaged app (ADR-026 item 1; 20 §2.3)', () => {
+  it('[ADR-026] P-06 starts a Linux app without a display under xvfb-run and any other start directly', () => {
+    const args = ['--background']
+    const start = (platform, env) =>
+      launchCommand({ executable: '/opt/app/dwarfai-miners', args, platform, env })
+
+    expect(start('linux', {})).toEqual({
+      command: 'xvfb-run',
+      args: ['--auto-servernum', '/opt/app/dwarfai-miners', '--background']
+    })
+    expect(start('linux', { DISPLAY: ':0' }).command).toBe('/opt/app/dwarfai-miners')
+    expect(start('win32', {}).command).toBe('/opt/app/dwarfai-miners')
+    expect(start('darwin', {}).command).toBe('/opt/app/dwarfai-miners')
+  })
+
+  it('[ADR-026] P-06 reports the exit code and the stderr tail of an app that exits before it logs', async () => {
+    const profile = {
+      root: tempDir(),
+      userDataDir: path.join(tempDir(), 'userData'),
+      dataRoot: tempDir(),
+      home: tempDir()
+    }
+    const crashing = () =>
+      spawn(
+        process.execPath,
+        ['-e', "console.error('Missing X server or $DISPLAY'); process.exit(3)"],
+        {
+          stdio: ['ignore', 'ignore', 'pipe']
+        }
+      )
+
+    const error = await runPackagedApp({
+      executable: 'unused',
+      profile,
+      platform: 'win32',
+      start: crashing
+    }).then(
+      () => null,
+      (rejection) => rejection
+    )
+
+    expect(error, 'the run fails').toBeInstanceOf(Error)
+    expect(error.message).toContain('exited before writing a log segment')
+    expect(error.message).toContain('exit code 3')
+    expect(error.message).toContain('Missing X server or $DISPLAY')
   })
 })

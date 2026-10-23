@@ -21,6 +21,7 @@ const SEGMENT = /^(?:host|ui|shim)-\d+\.jsonl$/
 const SEGMENT_WAIT_MS = 90_000
 const SETTLE_MS = 2_000
 const KILL_WAIT_MS = 10_000
+const STDERR_TAIL_CHARS = 2_000
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -187,28 +188,58 @@ async function endApp(child, userDataDir) {
   }
 }
 
-/** Starts the packed app under `profile` and returns once its first log segment is written; always ends the app. */
-async function runPackagedApp({ executable, profile, platform }) {
-  const args = [`--user-data-dir=${profile.userDataDir}`, '--background']
-  // The Chromium sandbox helper of an unpacked Linux build is not setuid in a CI checkout.
-  if (platform === 'linux') args.push('--no-sandbox')
-  const child = spawn(executable, args, {
-    env: appEnvironment(profile, platform),
-    stdio: 'ignore',
+/**
+ * The command that starts the app. A Linux runner with no display (a CI job, an SSH session) gives Electron nothing to
+ * draw on, even for a `--background` start with no window, so there the app starts under `xvfb-run`, as the E2E,
+ * OS and perf lanes do; with a display it starts directly, as it does on Windows and macOS.
+ */
+export function launchCommand({ executable, args, platform, env }) {
+  if (platform === 'linux' && !env.DISPLAY && !env.WAYLAND_DISPLAY) {
+    return { command: 'xvfb-run', args: ['--auto-servernum', executable, ...args] }
+  }
+  return { command: executable, args }
+}
+
+const spawnApp = ({ command, args, env, platform }) =>
+  spawn(command, args, {
+    env,
+    stdio: ['ignore', 'ignore', 'pipe'],
     detached: platform !== 'win32',
     windowsHide: true
   })
+
+/**
+ * Starts the packed app under `profile` and returns once its first log segment is written; always ends the app. A
+ * failure names the app's exit code (null while it still runs) and the tail of what it wrote to stderr.
+ */
+export async function runPackagedApp({ executable, profile, platform, start = spawnApp }) {
+  const args = [`--user-data-dir=${profile.userDataDir}`, '--background']
+  // The Chromium sandbox helper of an unpacked Linux build is not setuid in a CI checkout.
+  if (platform === 'linux') args.push('--no-sandbox')
+  const env = appEnvironment(profile, platform)
+  const child = start({ ...launchCommand({ executable, args, platform, env }), env, platform })
+  let stderr = ''
+  child.stderr?.on('data', (chunk) => {
+    stderr = (stderr + chunk.toString('utf8')).slice(-STDERR_TAIL_CHARS)
+  })
   let spawnError = null
   child.once('error', (error) => (spawnError = error))
+  const why = (message) => {
+    const tail = stderr.trim()
+    return new Error(
+      `${message}; exit code ${child.exitCode ?? child.signalCode ?? 'none (still running)'}; stderr: ` +
+        (tail === '' ? '(empty)' : tail)
+    )
+  }
   try {
     const deadline = Date.now() + SEGMENT_WAIT_MS
     for (;;) {
-      if (spawnError !== null) throw spawnError
+      if (spawnError !== null) throw why(`the app could not start: ${spawnError.message}`)
       if ((await segmentsUnder(profile.userDataDir)).length > 0) break
-      if (child.exitCode !== null)
-        throw new Error(`the app exited with code ${child.exitCode} before writing a log segment`)
+      if (child.exitCode !== null || child.signalCode !== null)
+        throw why('the app exited before writing a log segment')
       if (Date.now() >= deadline)
-        throw new Error(`the app wrote no log segment within ${SEGMENT_WAIT_MS} ms`)
+        throw why(`the app wrote no log segment within ${SEGMENT_WAIT_MS} ms`)
       await sleep(250)
     }
     // The Host and the shim write their first segments a moment after the UI's.
