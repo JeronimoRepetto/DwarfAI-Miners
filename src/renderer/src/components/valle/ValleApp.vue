@@ -1152,12 +1152,12 @@ onUnmounted(() => {
           </template>
         </ChatDeck>
       </aside>
-      <!-- The toast contract's host over the main zone alone (BR-23; 07 §24 I-38): never over the chat zone. -->
-      <div class="dm-valle__toasts" data-valle-toasts>
-        <ToastHost />
-      </div>
     </div>
     <NeedsYouQueue :entries="needsYou.entries.value" @press="(entry) => jumpNeed(entry)" />
+    <!-- The toast contract's host on Valle's widest free area, the needs-you row (US-VALLE-010.AC05; BR-23; VQA-12). -->
+    <div class="dm-valle__toasts" data-valle-toasts>
+      <ToastHost />
+    </div>
     <div class="dm-vghosts" aria-hidden="true"></div>
     <WorktreeDialog
       :question="mosaic.worktree.value"
@@ -1191,17 +1191,32 @@ onUnmounted(() => {
   min-height: 0;
 }
 /*
- * The area the general toast rule centres on (BR-23): the main zone, between the nav column and the splitter (nav 56 and
- * gap 6 on the left; the chat zone, its gap, the 12 px splitter and its gap on the right). The toast stands
- * 56 px above its bottom, so it never lies over the chat zone or a composer; the design's own Valle rule is open (07 §24
- * I-38). It takes no pointer.
+ * Where Valle's toasts stand (US-VALLE-010.AC05: "centred on the widest free area, never covering the mines, the chats or a
+ * composer"; BR-23; ISSUE-309 DR-05, the design's Valle rule still open, 07 §24 I-38). The body is the mines and the
+ * chats from edge to edge: the main zone is the mosaic's columns (or the Work front's mine) and the chat zone ends in a
+ * composer, so no part of it is free once the columns fill it (VQA-12). The window's always-present rows are the top bar
+ * and the needs-you row; the top bar's free span between the tabs and the ORE strip is narrower than a toast at 1024 px,
+ * while the needs-you row spans the whole window and holds no mine, chat or composer. So a toast is centred on that row,
+ * the window's full width, the first one centred in its 48 px; a second stacks 8 px above it (US-SHELL-012). It takes no
+ * pointer, so a needs-you entry beneath it is still pressed.
  */
 .dm-valle__toasts {
   position: absolute;
-  inset-block: 0;
-  inset-inline-start: 62px;
-  inset-inline-end: calc(var(--chat-w) + 24px);
+  inset-inline: 6px;
+  bottom: 6px;
+  z-index: var(--z-toast);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  height: calc(48px + 2 * var(--px));
+  padding-bottom: 9px;
   pointer-events: none;
+}
+.dm-valle__toasts :deep(.dm-toasts) {
+  position: relative;
+  left: auto;
+  bottom: auto;
+  transform: none;
 }
 /* The Panel nav's plate (`DS` organisms/nav, nav.css): wood, 56 px, its groups top and foot. */
 .dm-valle__nav {
