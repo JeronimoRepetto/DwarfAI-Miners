@@ -1,11 +1,12 @@
 // layer: L7
+import { spawn } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createAppProfile, removeProfile } from './apps.mjs'
 import { writeAsar } from './asarFixture.mjs'
-import checkHostCopy, { copyDirOf, id } from './p05-host-copy.packaged.mjs'
+import checkHostCopy, { copyDirOf, id, runPackagedHost } from './p05-host-copy.packaged.mjs'
 
 /**
  * The packaged check P-05 (`20` §2.3; ADR-027 items 1-2; ISSUE-270) over fixture artifact trees, one `mkdtemp` folder
@@ -15,7 +16,8 @@ import checkHostCopy, { copyDirOf, id } from './p05-host-copy.packaged.mjs'
  */
 
 const VERSION = '1.4.0'
-const WIN = { platform: 'win32', arch: 'x64' }
+// Not elevated: an elevated Windows check routes each start through the unelevated runner (its own case below).
+const WIN = { platform: 'win32', arch: 'x64', isElevated: () => false }
 const LINUX = { platform: 'linux', arch: 'x64' }
 const MAC = { platform: 'darwin', arch: 'arm64' }
 
@@ -163,6 +165,31 @@ describe('P-05 the Host runs from its versioned copy (ADR-027 items 1-2; 20 §2.
     ])
   })
 
+  it('[ADR-027, SP-03] an AppImage whose mounted start exits before the Host identity runs again extracted, and the line says why', async () => {
+    const attempts = []
+    const result = await checkHostCopy({
+      artifactDir: linuxArtifacts(),
+      ...LINUX,
+      extractDeb: debPayload,
+      run: async (input) => {
+        if (!input.executable.endsWith('.AppImage')) return hostFromCopy(input)
+        attempts.push(input.env?.APPIMAGE_EXTRACT_AND_RUN ?? 'mount')
+        if (input.env?.APPIMAGE_EXTRACT_AND_RUN !== '1') {
+          throw new Error(
+            'the app exited before its Host wrote host.identity; exit code 1; stdout: (empty); stderr: (empty)'
+          )
+        }
+        return hostFromCopy(input)
+      }
+    })
+
+    expect(result.ok, result.detail).toBe(true)
+    expect(attempts).toEqual(['mount', '1'])
+    expect(result.detail).toMatch(
+      /AppImage ok \(extract-and-run, after the mounted start failed: the app exited before its Host wrote host\.identity; exit code 1/
+    )
+  })
+
   it('[ADR-027, SP-03] an AppImage that cannot mount without FUSE runs extracted, and the line says so', async () => {
     const attempts = []
     const result = await checkHostCopy({
@@ -181,7 +208,9 @@ describe('P-05 the Host runs from its versioned copy (ADR-027 items 1-2; 20 §2.
 
     expect(result.ok, result.detail).toBe(true)
     expect(attempts).toEqual(['mount', '1'])
-    expect(result.detail).toMatch(/AppImage ok \(extract-and-run: no FUSE on this runner\)/)
+    expect(result.detail).toMatch(
+      /AppImage ok \(extract-and-run, after the mounted start failed: .*libfuse/
+    )
   })
 
   it('[ADR-027, SP-03] P-05 runs an unsigned .app for real and reports a signed or unreadable .app as blocked by SP-03, never green', async () => {
@@ -243,5 +272,146 @@ describe('P-05 the Host runs from its versioned copy (ADR-027 items 1-2; 20 §2.
     })
     expect(broken.ok).toBe(false)
     expect(broken.detail).toMatch(/win-unpacked.*no Host identity within 90000 ms/)
+  })
+})
+
+describe('P-05 starting the packaged app (ADR-027; ADR-002 D6)', () => {
+  /** A profile laid out as the app leaves it: a copy with its executable and a UI log segment. */
+  function startedProfile() {
+    const root = tempDir()
+    const profile = {
+      root,
+      userDataDir: path.join(root, 'userData'),
+      dataRoot: path.join(root, 'data'),
+      home: path.join(root, 'home')
+    }
+    put(
+      path.join(
+        copyDirOf({ platform: 'win32', dataRoot: profile.dataRoot, version: VERSION }),
+        'DwarfAI-Miners.exe'
+      )
+    )
+    put(
+      path.join(profile.userDataDir, 'logs', 'ui-000001.jsonl'),
+      '{"event":"versioned-copy","outcome":"ok"}\n{"event":"host.spawn","outcome":"failed","errCode":"HOST_EXITED_65"}\n'
+    )
+    return profile
+  }
+
+  const nodeChild = (source) => () =>
+    spawn(process.execPath, ['-e', source], { stdio: ['ignore', 'pipe', 'pipe'] })
+
+  it('[ADR-027] P-05 reports the stdout and stderr of an app that exits before its Host identity', async () => {
+    const error = await runPackagedHost({
+      executable: 'unused',
+      profile: startedProfile(),
+      platform: 'win32',
+      start: nodeChild("console.log('AppImages require FUSE to run.'); process.exit(1)")
+    }).then(
+      () => null,
+      (rejection) => rejection
+    )
+
+    expect(error?.message).toMatch(
+      /the app exited before its Host wrote host\.identity; exit code 1/
+    )
+    expect(error?.message).toMatch(/stdout: AppImages require FUSE to run\./)
+  })
+
+  it('[ADR-027] a Host that never writes its identity fails with the profile evidence: the copy, the run folder and the last log lines', async () => {
+    const error = await runPackagedHost({
+      executable: 'unused',
+      profile: startedProfile(),
+      platform: 'win32',
+      hostWaitMs: 300,
+      start: nodeChild('setTimeout(() => {}, 30000)')
+    }).then(
+      () => null,
+      (rejection) => rejection
+    )
+
+    expect(error?.message).toMatch(/no Host identity within 300 ms/)
+    expect(error?.message).toMatch(/host\/1\.4\.0\/ holds DwarfAI-Miners\.exe/)
+    expect(error?.message).toMatch(/host\/run\/: (missing|empty)/)
+    expect(error?.message).toMatch(/ui-000001\.jsonl: .*"errCode":"HOST_EXITED_65"/)
+  })
+
+  it('[ADR-002, ADR-027] on an elevated Windows runner each start runs as a standard user, since the Host refuses an elevated start', async () => {
+    const asked = []
+    let started = false
+    const elevated = await checkHostCopy({
+      artifactDir: windowsArtifacts(),
+      platform: 'win32',
+      arch: 'x64',
+      isElevated: () => true,
+      inCi: true,
+      run: async (input) => {
+        started = true
+        return hostFromCopy(input)
+      },
+      runUnelevated: async (target) => {
+        asked.push(target)
+        return {
+          code: 0,
+          output:
+            'run-unelevated: noise\r\nP-05-TARGET ' +
+            JSON.stringify({
+              ok: true,
+              line: 'win-unpacked ok: host/1.4.0/ at X, the Host runs X\\DwarfAI-Miners.exe'
+            }) +
+            '\r\n'
+        }
+      }
+    })
+
+    expect(started, 'no elevated start').toBe(false)
+    expect(asked.map((target) => [target.label, path.basename(target.executable)])).toEqual([
+      ['win-unpacked', 'DwarfAI-Miners.exe']
+    ])
+    expect(elevated.ok, elevated.detail).toBe(true)
+    expect(elevated.detail).toMatch(
+      /^win-unpacked ok \(as a standard user: the Host refuses an elevated start, ADR-002 D6\)/
+    )
+
+    const silent = await checkHostCopy({
+      artifactDir: windowsArtifacts(),
+      platform: 'win32',
+      arch: 'x64',
+      isElevated: () => true,
+      inCi: true,
+      run: hostFromCopy,
+      runUnelevated: async () => ({ code: 2, output: 'run-unelevated: the launcher did not start' })
+    })
+    expect(silent.ok).toBe(false)
+    expect(silent.detail).toMatch(
+      /win-unpacked FAIL: the standard-user start gave no result \(exit code 2\): run-unelevated: the launcher did not start/
+    )
+  })
+
+  it('[ADR-002, ADR-027] outside CI an elevated Windows check never creates the CI user: the target fails, naming the elevation', async () => {
+    let routed = false
+    let started = false
+    const result = await checkHostCopy({
+      artifactDir: windowsArtifacts(),
+      platform: 'win32',
+      arch: 'x64',
+      isElevated: () => true,
+      inCi: false,
+      run: async (input) => {
+        started = true
+        return hostFromCopy(input)
+      },
+      runUnelevated: async () => {
+        routed = true
+        return { code: 0, output: '' }
+      }
+    })
+
+    expect(routed, 'run-unelevated creates a local user: CI only').toBe(false)
+    expect(started, 'no elevated start').toBe(false)
+    expect(result.ok).toBe(false)
+    expect(result.detail).toMatch(
+      /win-unpacked FAIL: this check runs elevated and the Host refuses an elevated start \(ADR-002 D6\)/
+    )
   })
 })

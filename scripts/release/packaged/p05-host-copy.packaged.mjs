@@ -26,6 +26,7 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import {
   existsSync,
   mkdtempSync,
+  readFileSync,
   readdirSync,
   readlinkSync,
   realpathSync,
@@ -34,6 +35,8 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { integrityRid, isElevatedRid } from '../../ci/unelevated.mjs'
 import {
   appEnvironment,
   createAppProfile,
@@ -50,6 +53,15 @@ export const id = 'P-05'
 
 const HOST_WAIT_MS = 90_000
 const STDERR_TAIL_CHARS = 2_000
+const UNELEVATED_WAIT_MS = 300_000
+const LOG_TAIL_LINES = 3
+const LOG_LINE_CHARS = 400
+const SELF = fileURLToPath(import.meta.url)
+const REPO_ROOT = path.resolve(path.dirname(SELF), '..', '..', '..')
+const RUN_UNELEVATED = path.join(REPO_ROOT, 'scripts', 'ci', 'run-unelevated.mjs')
+/** The line a standard-user start prints with its result (`--one-target`), read back by the elevated check. */
+const TARGET_RESULT = 'P-05-TARGET '
+const UNELEVATED_NOTE = 'as a standard user: the Host refuses an elevated start, ADR-002 D6'
 /** Who records the signed and notarized `.app` half of SP-03 (its owner step 1). */
 const SP03 = { by: 'SP-03', owner: 'the owner (SP-03 owner step 1)' }
 /** The `.app` signature states SP-03 measured: ad-hoc (`pnpm package` with no identity writes it) or none. */
@@ -143,10 +155,49 @@ export function processExecutable(pid, platform) {
   ).trim()
 }
 
+/**
+ * What the profile holds after a start that did not reach the Host's identity: the copy root's version folders and
+ * their first entries, the Host's `host/run/` folder, and the last lines of each log segment in `<userData>/logs/`.
+ */
+export function profileEvidence(profile, platform) {
+  const names = (dir) => {
+    try {
+      return readdirSync(dir).sort()
+    } catch {
+      return null
+    }
+  }
+  const parts = []
+  const copyRoot = path.join(profile.dataRoot, ...(COPY_ROOT[platform] ?? COPY_ROOT.linux))
+  const versions = names(copyRoot)
+  if (versions === null) parts.push('host/: missing')
+  else if (versions.length === 0) parts.push('host/: empty')
+  for (const version of versions ?? []) {
+    const inside = names(path.join(copyRoot, version)) ?? []
+    parts.push(`host/${version}/ holds ${inside.slice(0, 6).join(', ') || 'nothing'}`)
+  }
+  const run = names(path.join(profile.userDataDir, 'host', 'run'))
+  parts.push(`host/run/: ${run === null ? 'missing' : run.length === 0 ? 'empty' : run.join(', ')}`)
+  const logsDir = path.join(profile.userDataDir, 'logs')
+  const segments = names(logsDir)
+  if (segments === null || segments.length === 0) parts.push('logs/: no segment')
+  for (const segment of segments ?? []) {
+    let lines = []
+    try {
+      lines = readFileSync(path.join(logsDir, segment), 'utf8').trim().split(/\r?\n/)
+    } catch {
+      // Unreadable: listed with no lines.
+    }
+    const tail = lines.slice(-LOG_TAIL_LINES).map((line) => line.slice(0, LOG_LINE_CHARS))
+    parts.push(`${segment}: ${tail.join(' | ') || '(empty)'}`)
+  }
+  return parts.join('; ')
+}
+
 const spawnApp = ({ command, args, env, platform }) =>
   spawn(command, args, {
     env,
-    stdio: ['ignore', 'ignore', 'pipe'],
+    stdio: ['ignore', 'pipe', 'pipe'],
     detached: platform !== 'win32',
     windowsHide: true
   })
@@ -161,6 +212,7 @@ export async function runPackagedHost({
   profile,
   platform,
   env: extraEnv = {},
+  hostWaitMs = HOST_WAIT_MS,
   start = spawnApp,
   executableOf = processExecutable
 }) {
@@ -169,19 +221,24 @@ export async function runPackagedHost({
   if (platform === 'linux') args.push('--no-sandbox')
   const env = { ...appEnvironment(profile, platform), ...extraEnv }
   const child = start({ ...launchCommand({ executable, args, platform, env }), env, platform })
-  let stderr = ''
-  child.stderr?.on('data', (chunk) => {
-    stderr = (stderr + chunk.toString('utf8')).slice(-STDERR_TAIL_CHARS)
-  })
+  // Both streams: an AppImage runtime writes its own errors to either, depending on the runtime.
+  const output = { stdout: '', stderr: '' }
+  for (const stream of ['stdout', 'stderr']) {
+    child[stream]?.on('data', (chunk) => {
+      output[stream] = (output[stream] + chunk.toString('utf8')).slice(-STDERR_TAIL_CHARS)
+    })
+  }
   let spawnError = null
   child.once('error', (error) => (spawnError = error))
+  const shown = (text) => (text.trim() === '' ? '(empty)' : text.trim())
   const why = (message) =>
     new Error(
-      `${message}; exit code ${child.exitCode ?? child.signalCode ?? 'none (still running)'}; stderr: ` +
-        (stderr.trim() === '' ? '(empty)' : stderr.trim())
+      `${message}; exit code ${child.exitCode ?? child.signalCode ?? 'none (still running)'}; ` +
+        `stdout: ${shown(output.stdout)}; stderr: ${shown(output.stderr)}; ` +
+        `profile: ${profileEvidence(profile, platform)}`
     )
   try {
-    const deadline = Date.now() + HOST_WAIT_MS
+    const deadline = Date.now() + hostWaitMs
     for (;;) {
       if (spawnError !== null) throw why(`the app could not start: ${spawnError.message}`)
       const pid = hostPidOf(profile.userDataDir)
@@ -189,7 +246,7 @@ export async function runPackagedHost({
       if (child.exitCode !== null || child.signalCode !== null) {
         throw why('the app exited before its Host wrote host.identity')
       }
-      if (Date.now() >= deadline) throw why(`no Host identity within ${HOST_WAIT_MS} ms`)
+      if (Date.now() >= deadline) throw why(`no Host identity within ${hostWaitMs} ms`)
       await sleep(250)
     }
   } finally {
@@ -244,26 +301,133 @@ async function checkTarget({ label, executable, version, platform, start }) {
   }
 }
 
-/** Runs an AppImage through its FUSE mount, and extracted when this runner has no FUSE. */
+/**
+ * Runs an AppImage through its FUSE mount; when that start fails before the Host's identity (no FUSE on the runner,
+ * an early exit, a timeout), once more with `APPIMAGE_EXTRACT_AND_RUN=1` under the same profile, the line naming why.
+ */
 function appImageStart(run) {
   return async (input) => {
+    let mounted
     try {
       return await run(input)
     } catch (error) {
-      if (!/fuse/i.test(messageOf(error))) throw error
+      mounted = messageOf(error)
+    }
+    try {
       const extracted = await run({ ...input, env: { APPIMAGE_EXTRACT_AND_RUN: '1' } })
-      return { ...extracted, note: 'extract-and-run: no FUSE on this runner' }
+      return {
+        ...extracted,
+        note: `extract-and-run, after the mounted start failed: ${mounted.slice(0, 600)}`
+      }
+    } catch (error) {
+      throw new Error(`mounted start: ${mounted}; extract-and-run start: ${messageOf(error)}`)
     }
   }
 }
 
-async function windowsTargets({ artifactDir, arch, run }) {
+/**
+ * Whether this process runs elevated (high integrity or above), read from System32's `whoami.exe` by its path: a
+ * `whoami` found on PATH may be another tool's (Git for Windows ships one that has no `/groups`). A level that cannot
+ * be read counts as not elevated here, so a start is never rerouted on a guess; an elevated Host start then fails with
+ * the refusal in its log lines.
+ */
+export function isElevatedProcess() {
+  const whoami = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'whoami.exe')
+  try {
+    const csv = execFileSync(whoami, ['/groups', '/fo', 'csv', '/nh'], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 30_000
+    })
+    const rid = integrityRid(csv)
+    return rid !== null && isElevatedRid(rid)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Runs one target as a standard local user through scripts/ci/run-unelevated.mjs (ISSUE-051), which reruns this
+ * file with `--one-target`; answers its exit code and merged output.
+ */
+export function runUnelevatedTarget({ label, executable }) {
+  const command = [
+    'node',
+    `"${SELF}"`,
+    '--one-target',
+    `"${path.resolve(executable)}"`,
+    '--label',
+    label
+  ]
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [RUN_UNELEVATED, '--', ...command], {
+      cwd: REPO_ROOT,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true
+    })
+    let output = ''
+    const collect = (chunk) => (output = (output + chunk.toString('utf8')).slice(-20_000))
+    child.stdout.on('data', collect)
+    child.stderr.on('data', collect)
+    const timer = setTimeout(() => child.kill(), UNELEVATED_WAIT_MS)
+    child.once('error', (error) => {
+      clearTimeout(timer)
+      resolve({ code: null, output: `${output}${error.message}` })
+    })
+    child.once('close', (code) => {
+      clearTimeout(timer)
+      resolve({ code, output })
+    })
+  })
+}
+
+/** A target's check through a standard-user start: its printed result, with the line saying how it ran. */
+function unelevatedCheck(runUnelevated) {
+  return async ({ label, executable }) => {
+    const { code, output } = await runUnelevated({ label, executable })
+    const lines = output.split(/\r?\n/).filter((line) => line.startsWith(TARGET_RESULT))
+    let result = null
+    try {
+      result = lines.length === 0 ? null : JSON.parse(lines.at(-1).slice(TARGET_RESULT.length))
+    } catch {
+      result = null
+    }
+    if (typeof result?.ok !== 'boolean' || typeof result?.line !== 'string') {
+      return {
+        ok: false,
+        line:
+          `${label} FAIL: the standard-user start gave no result (exit code ${code ?? 'none'}): ` +
+          output.trim().slice(-1_500)
+      }
+    }
+    return {
+      ok: result.ok,
+      line: result.line.replace(/^(\S+ (?:ok|FAIL))/, `$1 (${UNELEVATED_NOTE})`)
+    }
+  }
+}
+
+async function windowsTargets({ artifactDir, arch, run, isElevated, inCi, runUnelevated }) {
   const executable = await findExecutable({ artifactDir, platform: 'win32', arch })
   if (executable === null) return { targets: [], blocked: [] }
   const label = relativeTo(artifactDir, path.dirname(executable))
   const version = versionIn(path.join(path.dirname(executable), 'resources'))
   version.catch(() => {})
-  return { targets: [{ label, executable, version, start: run }], blocked: [] }
+  // The hosted Windows runner runs every step elevated, and the Host refuses an elevated start (ADR-002 D6). In CI
+  // the target runs as the standard CI user (run-unelevated.mjs creates it); elsewhere nothing creates a user, and the
+  // target fails naming the elevation.
+  let checkWith
+  if (await isElevated()) {
+    checkWith = inCi
+      ? unelevatedCheck(runUnelevated)
+      : async () => ({
+          ok: false,
+          line:
+            `${label} FAIL: this check runs elevated and the Host refuses an elevated start (ADR-002 D6); ` +
+            'run it from a standard user'
+        })
+  }
+  return { targets: [{ label, executable, version, start: run, checkWith }], blocked: [] }
 }
 
 async function linuxTargets({ artifactDir, arch, run, extractDeb, scratch }) {
@@ -351,7 +515,10 @@ export default async function check({
   platform = process.platform,
   arch = process.arch,
   extractDeb = extractDebPayload,
-  signatureOf = macSignature
+  signatureOf = macSignature,
+  isElevated = isElevatedProcess,
+  inCi = process.env.CI === 'true',
+  runUnelevated = runUnelevatedTarget
 }) {
   const scratchDirs = []
   const scratch = () => {
@@ -362,7 +529,7 @@ export default async function check({
   try {
     const { targets, blocked } =
       platform === 'win32'
-        ? await windowsTargets({ artifactDir, arch, run })
+        ? await windowsTargets({ artifactDir, arch, run, isElevated, inCi, runUnelevated })
         : platform === 'darwin'
           ? await macTargets({ artifactDir, arch, run, signatureOf })
           : await linuxTargets({ artifactDir, arch, run, extractDeb, scratch })
@@ -374,7 +541,7 @@ export default async function check({
       if (target.executable === null) {
         results.push({ ok: false, line: `${target.label} FAIL: no app executable` })
       } else {
-        results.push(await checkTarget({ ...target, platform }))
+        results.push(await (target.checkWith ?? checkTarget)({ ...target, platform }))
       }
     }
     const failed = results.some((result) => !result.ok)
@@ -384,4 +551,31 @@ export default async function check({
   } finally {
     for (const dir of scratchDirs) rmSync(dir, { recursive: true, force: true })
   }
+}
+
+/**
+ * `--one-target <executable> --label <label>`: checks that one Windows target in this process and prints its result as
+ * one `P-05-TARGET <json>` line; the elevated check runs it as a standard user (runUnelevatedTarget).
+ */
+async function oneTarget(argv) {
+  const at = (flag) => argv[argv.indexOf(flag) + 1]
+  const executable = at('--one-target')
+  const version = versionIn(path.join(path.dirname(executable), 'resources'))
+  version.catch(() => {})
+  const result = await checkTarget({
+    label: at('--label'),
+    executable,
+    version,
+    platform: process.platform,
+    start: runPackagedHost
+  })
+  console.log(`${TARGET_RESULT}${JSON.stringify(result)}`)
+}
+
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === SELF &&
+  process.argv.includes('--one-target')
+) {
+  await oneTarget(process.argv.slice(2))
 }
