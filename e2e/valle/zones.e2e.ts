@@ -79,11 +79,11 @@ test.describe('Valle zones and the mosaic (ISSUE-304)', () => {
 
     const valle = await showValle(app, window)
     await valleSettled(valle)
-    // A first visit: no mine has a crew, so the first mosaic is empty, written as such (07 S32.01).
-    await expect
-      .poll(() => readJson(path.join(prefs, ORDER_FILE)), { timeout: 10_000 })
-      .toEqual({ order: [] })
+    // A first visit: no mine has a crew, so the first mosaic is empty (07 S32.01).
+    // AMENDED for owner ruling 2026-10-23 (VQA-07) (was: the empty order written as such): the person has not arranged
+    // the order, so it is computed live and nothing is written; the first pick below is what arranges and writes it.
     await expect(valle.locator('[data-valle-column]')).toHaveCount(0)
+    expect(readJson(path.join(prefs, ORDER_FILE))).toBeNull()
 
     // The add slot lists the mines not shown, then "A new project…"; a picked mine joins the end (S32.04, S32.05).
     const slot = valle.locator('[data-valle-add]')
