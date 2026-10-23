@@ -21,6 +21,7 @@ import {
   stubOnlyPath,
   uuidv7
 } from '../cut-3a/claudeStreamWorld.ts'
+import { PRESENCE_DEBOUNCE_MS } from '../../src/ui-main/window/application/presenceTracker.ts'
 import { showValle, valleSettled } from '../support/valle.ts'
 import { declareMine } from '../support/veta.ts'
 
@@ -63,6 +64,57 @@ const shownOf = (app: ElectronApplication): Promise<Shown[]> =>
   app.evaluate(() => [
     ...((globalThis as unknown as { dwarfaiE2eShown?: Shown[] }).dwarfaiE2eShown ?? [])
   ])
+
+/**
+ * Valle's on-screen reports (A-44) as the main process receives them, observed beside the app's own handler, which still
+ * hands each one to UI main's presence tracker.
+ */
+async function watchValleReports(app: ElectronApplication): Promise<void> {
+  await app.evaluate(({ ipcMain }) => {
+    const reports: Array<{ at: number; mineIds: string[] }> = []
+    ;(globalThis as unknown as { dwarfaiE2eValleReports: typeof reports }).dwarfaiE2eValleReports =
+      reports
+    ipcMain.on('presence:visibleMines', (event, request: unknown) => {
+      if (!event.sender.getURL().includes('mode=valle')) return
+      const mineIds = (request as { mineIds?: string[] } | null)?.mineIds ?? []
+      reports.push({ at: Date.now(), mineIds: [...mineIds] })
+    })
+  })
+}
+
+/**
+ * Waits until Valle's last report holds `onScreen` and not `offScreen`, and has been held longer than UI main's settle
+ * (`PRESENCE_DEBOUNCE_MS`, ADR-024 item 7), so the tracker has sent it to the Host before any ask opens: level 3 is
+ * decided by the presence the Host holds when the ask opens (07 S17.01).
+ */
+async function valleReportSettled(
+  app: ElectronApplication,
+  onScreen: string,
+  offScreen: string
+): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        app.evaluate(
+          (_electron, [on, off, settle]) => {
+            const reports = (
+              globalThis as unknown as {
+                dwarfaiE2eValleReports?: Array<{ at: number; mineIds: string[] }>
+              }
+            ).dwarfaiE2eValleReports
+            const last = reports?.at(-1)
+            if (last === undefined) return 'no report yet'
+            if (!last.mineIds.includes(on) || last.mineIds.includes(off)) {
+              return 'reported ' + JSON.stringify(last.mineIds)
+            }
+            return Date.now() - last.at > settle ? 'settled' : 'settling'
+          },
+          [onScreen, offScreen, PRESENCE_DEBOUNCE_MS] as const
+        ),
+      { timeout: 15_000, message: 'Valle reports the mine on screen, and UI main settles it' }
+    )
+    .toBe('settled')
+}
 
 /** Forgets what was recorded so far: each launched dwarf's first turn ended with a turn-finished notification. */
 const forgetNotifications = (app: ElectronApplication): Promise<void> =>
@@ -128,6 +180,7 @@ test.describe('the needs-you queue and the on-screen rule in Valle (ISSUE-306)',
     await answerFirstRunStep(window)
     await expect.poll(() => anyWindowVisible(app), { timeout: 30_000 }).toBe(true)
     await recordNotifications(app)
+    await watchValleReports(app)
 
     // "System notifications" on (A-43).
     await window.evaluate('window.api.setNotificationsEnabled(true)')
@@ -164,6 +217,9 @@ test.describe('the needs-you queue and the on-screen rule in Valle (ISSUE-306)',
     })
     await expect.poll(() => visibleShare(valle, shownMine), { timeout: 15_000 }).toBe(1)
     await expect.poll(() => visibleShare(valle, hiddenMine), { timeout: 15_000 }).toBeLessThan(0.5)
+    // The layout alone is not what the Host knows: Valle's report and UI main's settle come first (S39.05; ADR-024
+    // item 7), or an ask opened sooner is decided against the presence held before Valle showed.
+    await valleReportSettled(app, shownMine, hiddenMine)
 
     // Only the asks' notifications count from here: the first turns' turn-finished ones were raised before Valle opened.
     await forgetNotifications(app)
