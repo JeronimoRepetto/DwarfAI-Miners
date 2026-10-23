@@ -1,6 +1,6 @@
 // layer: L7
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -134,5 +134,54 @@ describe('packaged-artifact check runner (20 §2.3)', () => {
     expect(result.code).toBe(1)
     expect(result.output).toMatch(/^P-03 FAIL: no packed app \(app\.asar\) in /m)
     expect(result.output).toMatch(/^P-08 ok: /m)
+  })
+
+  it('[ADR-027] in release mode a missing or blocked P id fails the run and each present id is reported', () => {
+    const checks = tempDir('packaged-checks-')
+    const artifacts = tempDir('packaged-artifacts-')
+    const required = path.join(tempDir('packaged-required-'), 'required.json')
+    writeFileSync(
+      required,
+      JSON.stringify([
+        { id: 'P-01', issue: 'ISSUE-269' },
+        { id: 'P-02', issue: 'ISSUE-271' },
+        { id: 'P-05', issue: 'ISSUE-270' }
+      ])
+    )
+    fakeCheck(checks, 'p01-fake.packaged.mjs', { id: 'P-01', ok: true, detail: 'fuses read back' })
+    // P-02 is present but blocked: its module throws instead of answering.
+    writeFileSync(
+      path.join(checks, 'p02-blocked.packaged.mjs'),
+      `export const id = 'P-02'\nexport default async function check() {\n  throw new Error('no display')\n}\n`
+    )
+
+    const missing = run([artifacts, '--checks', checks, '--release', '--required', required])
+
+    expect(missing.code).toBe(1)
+    expect(missing.output).toMatch(/^P-01 ok: fuses read back$/m)
+    expect(missing.output).toMatch(/^P-02 FAIL: threw no display$/m)
+    expect(missing.output).toMatch(
+      /^P-05 FAIL: missing, no p05-\*\.packaged\.mjs check; owned by ISSUE-270$/m
+    )
+    expect(missing.output).toMatch(/^P-02 .*owned by ISSUE-271$/m)
+
+    // Without the flag the runner runs what is present, so today's package job is unchanged.
+    const lenient = run([artifacts, '--checks', checks, '--required', required])
+    expect(lenient.output).not.toContain('P-05')
+
+    fakeCheck(checks, 'p02-blocked.packaged.mjs', { id: 'P-02', ok: true, detail: 'csp ok' })
+    fakeCheck(checks, 'p05-fake.packaged.mjs', { id: 'P-05', ok: true, detail: 'host copy' })
+    const complete = run([artifacts, '--checks', checks, '--release', '--required', required])
+    expect(complete.code).toBe(0)
+    expect(complete.output).toMatch(/^P-05 ok: host copy$/m)
+  })
+
+  it('[ADR-027] required.json names all nine P ids with the issue that owns each', () => {
+    const required = JSON.parse(readFileSync(path.join(here, 'required.json'), 'utf8'))
+
+    expect(required.map((entry) => entry.id)).toEqual(
+      Array.from({ length: 9 }, (_, index) => `P-0${index + 1}`)
+    )
+    for (const entry of required) expect(entry.issue).toMatch(/^ISSUE-\d+$/)
   })
 })
