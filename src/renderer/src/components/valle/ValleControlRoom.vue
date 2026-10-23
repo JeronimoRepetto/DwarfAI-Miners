@@ -60,6 +60,8 @@ const props = defineProps<{
   notice?: string | null
   /** A dive or a climb plays (machine 28): the current mark hides until it settles. */
   moving?: boolean
+  /** Reduced motion is on (NFR-A11Y-10; US-SHELL-011.AC05): a called zone's ring is not drawn, its outline stays. */
+  still?: boolean
 }>()
 const emit = defineEmits<{
   dive: [mineId: MineId]
@@ -160,7 +162,7 @@ onUnmounted(() => {
         <span
           :key="`ring-${column.called ?? 0}`"
           class="dm-vz__ring"
-          :class="{ 'is-called': (column.called ?? 0) > 0 }"
+          :class="{ 'is-called': !still && (column.called ?? 0) > 0 }"
           aria-hidden="true"
         ></span>
         <div class="dm-vz__head" @click="zoneClick($event, column.mineId)">
@@ -256,7 +258,8 @@ onUnmounted(() => {
 }
 /*
  * Attention level 1 (`DS` organisms/mine-zone): the heavy outline Veta uses, above the plates, never over the art's middle.
- * A call flashes it once; under reduced motion it does not flash (ISSUE-311 owns the reduced-motion stand-ins).
+ * A call flashes it once; under reduced motion the call ring is not drawn at all (ISSUE-311: the host's `still`, and this
+ * media rule).
  */
 .dm-vz__ring {
   position: absolute;

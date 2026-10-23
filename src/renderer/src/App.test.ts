@@ -8,6 +8,8 @@ import { EMPTY_BOARD, publishBoard, type TestBoard } from './testing/board'
 import type { DOMKeyframesDefinition } from 'motion-v'
 import { MotionConfig } from 'motion-v'
 import App from './App.vue'
+import PanelNav from './components/shell/PanelNav.vue'
+import { leverModes } from './lib/shell/builtDestinations'
 import type { MotionAnimate } from './lib/shell/boundedMotion'
 // AMENDED for #635 (PR3): the Map page is MapPage, `.dm-mappage` with `.dm-marker`s (was: MapView,
 // `.map-view` with `.mine-marker`s), in every test below that reads the map.
@@ -4725,21 +4727,33 @@ describe('App, hidden until built (ISSUE-267)', () => {
     // AMENDED for ISSUE-294 (was: no lever and no Mode at launch row, the build shipping the Panel alone): a release
     // build ships Veta now (ADR-034 item 2), so the unshipped mode is Valle (ISSUE-311). The nav draws no side of the
     // lever for it and the System group ends at Music and "▼ Veta"; General names no Valle.
+    // AMENDED for ISSUE-311 (was: this build's nav and General name no Valle): Valle ships now (ADR-034 item 2), so this
+    // build draws every side of the lever; the unshipped mode is Valle in a build of the Panel and Veta, whose nav is
+    // drawn from that list below.
     const nav = wrapper.get('.dm-nav')
-    expect(nav.find('.dm-slot[data-label="▲ Valle"]').exists()).toBe(false)
-    expect(nav.find('[aria-label="Mode"] [data-label="▲ Valle"]').exists()).toBe(false)
-    expect(nav.text()).not.toContain('Valle')
     expect(
       nav
         .get('.dm-nav__group[aria-label="System"]')
         .findAll('.dm-slot')
         .map((slot) => slot.attributes('data-label'))
+    ).toEqual(['Settings', 'Music', '▲ Valle', '▼ Veta'])
+    const earlier = mount(PanelNav, {
+      props: { page: 'map', modes: leverModes(['panel', 'veta']) }
+    })
+    expect(earlier.find('[aria-label="Mode"] [data-label="▲ Valle"]').exists()).toBe(false)
+    expect(earlier.text()).not.toContain('Valle')
+    expect(
+      earlier
+        .get('.dm-nav__group[aria-label="System"]')
+        .findAll('.dm-slot')
+        .map((slot) => slot.attributes('data-label'))
     ).toEqual(['Settings', 'Music', '▼ Veta'])
+    earlier.unmount()
 
-    // Settings › General: no Valle anywhere, the Mode at launch row included.
+    // Settings › General: this build names Valle as a Mode at launch option.
     await wrapper.find(NAV_SETTINGS).trigger('click')
     await openSection(wrapper, 'General')
-    expect(wrapper.get('.dm-settings__panel').text()).not.toContain('Valle')
+    expect(wrapper.get('.dm-settings__panel').text()).toContain('Valle')
 
     // The Add panel: Claude and Other, and no chip for the provider main did not offer.
     await wrapper.find(NAV_MAP).trigger('click')

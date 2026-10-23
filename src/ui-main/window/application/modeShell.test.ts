@@ -176,8 +176,10 @@ describe('the mode shell with a Veta window (ISSUE-285; ADR-025 items 1, 3)', ()
   // AMENDED for ISSUE-294 (was: this build's list, the Panel alone): a release build ships Veta now (ADR-034 item 2), so
   // a build without Veta is the list written here, and the title says so; this build's list is checked to be the Panel
   // and Veta, no Valle.
+  // AMENDED for ISSUE-311 (was: this build's list is the Panel and Veta, no Valle): Valle ships with ISSUE-311 (ADR-034
+  // item 2), so this build's list is every mode.
   it('[ADR-025, BR-19] a build that ships the Panel alone lets no move reach a Veta window', async () => {
-    expect(BUILT_MODES).toEqual(['panel', 'veta'])
+    expect(BUILT_MODES).toEqual(['panel', 'veta', 'valle'])
     const veta = new FakeModeWindow()
     const s = setup('hidden', false, {
       built: ['panel'],
@@ -375,5 +377,53 @@ describe('the mode shell says which mode windows it shows (ISSUE-306)', () => {
     expect(s.shell.shown('valle')).toBe(false)
     expect(heard.at(-1)).toBe(false)
     stop()
+  })
+})
+
+// APPENDED for ISSUE-311: a notification click while Valle is the mode (ADR-025 item 8; ADR-018 item 6; 07 S10.10,
+// S10.11, S39.06).
+describe('the mode shell reveals in Valle (ISSUE-311)', () => {
+  it('[S10.10, S10.11, S39.06] a notification click while Valle is shown, or hidden, reveals in Valle and never switches the mode', async () => {
+    const valle = new FakeModeWindow()
+    const part = { window: () => valle, bounds: () => ({ x: 0, y: 0, width: 1200, height: 800 }) }
+    const s = setup('hidden', false, { built: ['panel', 'veta', 'valle'], valle: part })
+    s.shell.panel.toggleVisible()
+    s.answer()
+    await Promise.resolve()
+    const valleRun = (): string =>
+      (valle.calls.filter((c) => c.member === 'send').at(-1) as { payload: ModeTransition }).payload
+        .transitionId
+    const moved = s.shell.coordinator.moveToMode({ mode: 'valle' })
+    s.answer()
+    s.shell.coordinator.transitionDone('valle', { transitionId: valleRun() })
+    await moved
+    const runs = s.transitions().length + valle.calls.filter((c) => c.member === 'send').length
+
+    // Shown: the reveal runs in Valle (S10.10), no run is started, and the raise reaches the Valle window.
+    expect(await s.shell.coordinator.revealDwarfChat({ mineId: MINE, dwarfId: DWARF })).toBe(
+      'chat-open'
+    )
+    expect(s.reveals).toEqual([{ mineId: MINE, dwarfId: DWARF, existing: 'valle' }])
+    expect(s.shell.coordinator.mode()).toBe('valle')
+    expect(s.transitions().length + valle.calls.filter((c) => c.member === 'send').length).toBe(
+      runs
+    )
+    const focusedBefore = valle.calls.filter((c) => c.member === 'focus').length
+    await s.windows()!.raise('valle')
+    expect(valle.calls.filter((c) => c.member === 'focus').length).toBe(focusedBefore + 1)
+    expect(s.calls.filter((call) => call === 'raise')).toHaveLength(1)
+
+    // Hidden: Valle, its own mode, is the window that exists, restored before the reveal (S10.11).
+    s.shell.panel.toggleVisible()
+    s.shell.coordinator.transitionDone('valle', { transitionId: valleRun() })
+    await Promise.resolve()
+    expect(s.shell.coordinator.mode()).toBe('hidden')
+    const revealed = s.shell.coordinator.revealDwarfChat({ mineId: MINE, dwarfId: DWARF })
+    await Promise.resolve()
+    await Promise.resolve()
+    s.shell.coordinator.transitionDone('valle', { transitionId: valleRun() })
+    expect(await revealed).toBe('chat-open')
+    expect(s.reveals.at(-1)).toEqual({ mineId: MINE, dwarfId: DWARF, existing: 'valle' })
+    expect(s.shell.coordinator.mode()).toBe('valle')
   })
 })

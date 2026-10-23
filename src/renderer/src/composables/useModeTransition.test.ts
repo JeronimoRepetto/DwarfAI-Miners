@@ -450,3 +450,36 @@ describe('useModeTransition — a run into the Panel naming a mine (ISSUE-295)',
     expect(opened).toEqual([])
   })
 })
+
+// APPENDED for ISSUE-311: the Valle window's root mounts once its stores were read (07 S39.03), which may be after the
+// first run into it arrived; the run's carried chat still lands there (S29.23).
+describe('useModeTransition — a carried chat heard before the window opens it (ISSUE-311)', () => {
+  const LATE = '018f3a2e-7c4b-7d1e-9a5b-2f6c8d0e1a04' as DwarfId
+
+  it('[S29.23, S27.05] a carried chat heard before the window could open it is opened once it can, and its draft and view restored there', async () => {
+    const { push, clock, transition, done } = setup({
+      reduced: true,
+      session: { drafts: { [LATE]: 'carried words' }, chatViews: { [LATE]: VIEW } }
+    })
+    push({ from: 'panel', to: 'valle', role: 'target', chat: { dwarfId: LATE, mineId: MINE } })
+    await settled()
+    clock.advance(16)
+    // The run itself never waits on the window's root: it answers.
+    expect(done).toEqual(['t-1'])
+
+    const opened: DwarfId[] = []
+    const restored: string[] = []
+    transition.onArrival((chat) => {
+      opened.push(chat.dwarfId)
+    })
+    expect(opened).toEqual([LATE])
+    transition.register({
+      open: () => LATE,
+      draft: () => '',
+      view: () => VIEW,
+      restore: (state) => restored.push(`${state.draft} ${JSON.stringify(state.view)}`)
+    })
+    await settled()
+    expect(restored).toEqual([`carried words ${JSON.stringify(VIEW)}`])
+  })
+})

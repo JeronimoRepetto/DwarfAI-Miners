@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import type {
   HostFrame,
+  ModeTransition,
   MoveToModeParams,
   UiPreferenceWrite,
   UiSessionPatch
@@ -8,6 +9,7 @@ import type {
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createFakeWindowApi } from '../../../../contracts/ipc/testing/fakeWindowApi'
+import { modeTransitionPart } from '../../composables/useModeTransition'
 import type { ValleBodyObserver } from '../../composables/useValleSplit'
 import { VALLE_STORE_DEFAULTS, type ValleStores } from '../../composables/useValleStores'
 import type { ValleClock } from '../../lib/valle/flip'
@@ -31,6 +33,7 @@ import HistoryPanel from '../history/HistoryPanel.vue'
 import AddPanel from '../launch/AddPanel.vue'
 import DwarfMessagePanel from '../message/DwarfMessagePanel.vue'
 import markSource from './CurrentMineMark.vue?raw'
+import counterSource from './NeedsYouCounter.vue?raw'
 import ValleApp from './ValleApp.vue'
 import { valleBridgeOf } from './valleEntry'
 
@@ -1465,5 +1468,301 @@ describe('the needs-you counter and queue in the Valle root (ISSUE-306)', () => 
     expect(root.find(`[data-valle-front-mine="${MORIA}"]`).exists()).toBe(true)
     expect(root.get('.dm-ctab.is-focus-pane').attributes('data-pin')).toBe(BORIN)
     expect(writes.filter((write) => write.key === 'vallePreset')).toHaveLength(presetWrites)
+  })
+})
+
+// APPENDED for ISSUE-311: Valle's part in a mode run (07 machine 9, S28.21, S29.23), the reveal of a notification click
+// (S39.06, S39.07) and the reduced-motion stand-ins (US-SHELL-011).
+describe('Valle in the mode lever, the reveal and reduced motion (ISSUE-311)', () => {
+  const BOTH = [
+    { dwarfId: BORIN, mineId: MORIA, order: 0 },
+    { dwarfId: DAIN, mineId: EREBOR, order: 1 }
+  ]
+  /** Borin in Moria and Dain in Erebor, both present. */
+  const twoDwarfs = (): Partial<Window['api']> => ({
+    getHostSnapshot: () =>
+      Promise.resolve(
+        snapshotPage(10, {
+          minesEverKnown: true,
+          mines: [mineWire(MORIA), mineWire(EREBOR)],
+          dwarfs: [dwarfWire(BORIN, MORIA), dwarfWire(DAIN, EREBOR)]
+        })
+      ) as never
+  })
+  const composer = (root: VueWrapper, dwarfId: string) =>
+    root.get(`[data-valle-chat="${dwarfId}"] .dm-composer textarea`)
+
+  it('[S29.23, S39.03] on the first entry, a chat carried by a run heard before the root mounted lands pinned and focused, with its draft', async () => {
+    // The Valle window's part hears the run first (main.ts starts it before the stores are read); the root mounts after.
+    modeTransitionPart().dispose()
+    const ran: string[] = []
+    let heard: ((t: ModeTransition) => void) | null = null
+    const early = createFakeWindowApi({
+      onModeTransition: (h) => {
+        heard = h as (t: ModeTransition) => void
+        return () => (heard = null)
+      },
+      modeTransitionDone: (p) => void ran.push((p as { transitionId: string }).transitionId),
+      getUiSession: () =>
+        Promise.resolve({
+          drafts: { [DAIN]: 'carried words' },
+          chatViews: {},
+          askPicks: {},
+          openChat: {},
+          currentMine: {},
+          valle: {}
+        }) as never
+    })
+    Object.defineProperty(window, 'api', { configurable: true, writable: true, value: early })
+    try {
+      modeTransitionPart()
+      heard!({
+        transitionId: 'run-first',
+        from: 'panel',
+        to: 'valle',
+        t0: Date.now(),
+        role: 'target',
+        chat: { dwarfId: DAIN, mineId: EREBOR }
+      })
+      await flushPromises()
+      // The Host's facts take longer to read than the shell motion lasts: the chat lands once they are read.
+      const slow = twoDwarfs().getHostSnapshot!
+      const { root } = mountValle({ preset: 'control', pins: [] }, undefined, {
+        getHostSnapshot: (params) =>
+          new Promise((resolve) => setTimeout(() => resolve(slow(params)), 500)) as never,
+        onModeTransition: early.onModeTransition,
+        modeTransitionDone: early.modeTransitionDone,
+        getUiSession: early.getUiSession
+      })
+      await vi.waitFor(
+        () => expect(root.find('.dm-cstack__open').attributes('data-pin')).toBe(DAIN),
+        { timeout: 3_000 }
+      )
+      await vi.waitFor(
+        () =>
+          expect((composer(root, DAIN).element as HTMLTextAreaElement).value).toBe('carried words'),
+        { timeout: 3_000 }
+      )
+    } finally {
+      modeTransitionPart().dispose()
+    }
+  })
+
+  it("[US-SHELL-001.AC05] in Valle the nav draws no mode lever and no app mark, and Valle's top bar carries ▼ Panel and ▼ Veta", async () => {
+    const { root, moves } = mountValle({ preset: 'control' })
+    await flushPromises()
+    const nav = root.get('nav.dm-valle__nav')
+    // The nav holds its page slots alone: no lever, no MODE label, no app mark, not even a disabled one.
+    expect(nav.findAll('.dm-slot').map((slot) => slot.attributes('data-label'))).toEqual([
+      'Map',
+      'Mines',
+      'Settings'
+    ])
+    expect(nav.find('[aria-label="Mode"]').exists()).toBe(false)
+    expect(nav.find('.dm-nav__mark').exists()).toBe(false)
+    expect(nav.text()).not.toContain('MODE')
+    expect(root.findAll('.dm-nav__mark, .dm-nav__lever')).toHaveLength(0)
+    // The top bar carries the mode controls: "▼ Panel" and "▼ Veta", each a move through the ModeCoordinator.
+    const bar = root.get('header.dm-vbar [aria-label="Mode"]')
+    expect(bar.findAll('button').map((button) => button.text())).toEqual(['▼ Panel', '▼ Veta'])
+    await bar.get('[data-lever="veta"]').trigger('click')
+    await flushPromises()
+    expect(moves).toEqual([{ mode: 'veta' }])
+  })
+
+  it('[S9.01, S28.21] ▼ Panel from Valle hands the chat in focus over with its draft, never another pin’s', async () => {
+    // The Valle window's part of every run, over this case's `window.api`, as main.ts starts it.
+    modeTransitionPart().dispose()
+    let heard: ((t: ModeTransition) => void) | null = null
+    try {
+      const { root, moves, patches } = mountValle({ preset: 'control', pins: BOTH }, undefined, {
+        ...twoDwarfs(),
+        onModeTransition: (h) => {
+          heard = h as (t: ModeTransition) => void
+          return () => (heard = null)
+        }
+      })
+      modeTransitionPart()
+      await flushPromises()
+      await composer(root, BORIN).setValue('leaving words')
+      await root.get(`.dm-cstack [data-pin="${DAIN}"]`).trigger('click')
+      await flushPromises()
+      await composer(root, DAIN).setValue('dain words')
+      await root.get(`.dm-cstack [data-pin="${BORIN}"]`).trigger('click')
+      await flushPromises()
+
+      await root.get('[data-lever="panel"]').trigger('click')
+      await flushPromises()
+      expect(moves).toEqual([{ mode: 'panel', mineId: MORIA, dwarfId: BORIN }])
+      heard!({
+        transitionId: 'run-out',
+        from: 'valle',
+        to: 'panel',
+        t0: Date.now(),
+        role: 'source',
+        chat: { dwarfId: BORIN, mineId: MORIA }
+      })
+      // The chat in focus hands its draft and its view over before t0 (S9.01); Dain's, folded in the stack, does not.
+      expect(patches.filter((patch) => patch.kind === 'draft')).toEqual([
+        { kind: 'draft', dwarfId: BORIN, text: 'leaving words' }
+      ])
+      expect(patches.filter((patch) => patch.kind === 'chat-view').map((p) => p.dwarfId)).toEqual([
+        BORIN
+      ])
+    } finally {
+      modeTransitionPart().dispose()
+    }
+  })
+})
+
+// APPENDED for ISSUE-311: the reveal wired to the Valle root (A-N16; 07 S39.06, S39.07, S10.10).
+describe('the reveal of a notification click in the Valle root (ISSUE-311)', () => {
+  it('[S39.06, S10.10] a notification click while Valle is shown pins the dwarf’s chat with its column added, its mine current, and changes neither the preset nor the mode', async () => {
+    let reveal: ((t: { mineId: string; dwarfId: string | null }) => void) | null = null
+    const { root, writes, moves } = mountValle(
+      { preset: 'control', mosaicOrder: [MORIA], pins: [] },
+      undefined,
+      {
+        getHostSnapshot: () =>
+          Promise.resolve(
+            snapshotPage(10, {
+              minesEverKnown: true,
+              mines: [mineWire(MORIA), mineWire(EREBOR)],
+              dwarfs: [dwarfWire(BORIN, MORIA), dwarfWire(DAIN, EREBOR)]
+            })
+          ) as never,
+        onRevealDwarfChat: (listener) => {
+          reveal = listener as typeof reveal
+          return () => (reveal = null)
+        }
+      }
+    )
+    await flushPromises()
+    // A page over the main zone gives way to the mines first (S28.20).
+    await root.get('[data-slot="settings"]').trigger('click')
+    expect(reveal, 'the Valle window hears A-N16').not.toBeNull()
+    reveal!({ mineId: EREBOR, dwarfId: DAIN })
+    await flushPromises()
+    const valle = root.get('[data-valle-root]')
+    expect(valle.attributes('data-page')).toBe('mines')
+    expect(writes).toContainEqual({ key: 'valleMosaicOrder', value: [MORIA, EREBOR] })
+    expect(root.get('.dm-cstack__open').attributes('data-pin')).toBe(DAIN)
+    expect(root.get(`[data-valle-column="${EREBOR}"]`).attributes('data-current')).toBe('true')
+    // Never the preset, never the mode (S10.10; ADR-025 item 8).
+    expect(valle.attributes('data-preset')).toBe('control')
+    expect(writes.filter((write) => write.key === 'vallePreset')).toEqual([])
+    expect(moves).toEqual([])
+
+    // A dwarf that left: the mine alone, no chat (S39.07).
+    reveal!({ mineId: MORIA, dwarfId: null })
+    await flushPromises()
+    expect(root.get('.dm-cstack__open').attributes('data-pin')).toBe(DAIN)
+    expect(root.get(`[data-valle-column="${MORIA}"]`).attributes('data-current')).toBe('true')
+  })
+})
+
+// APPENDED for ISSUE-311: the reduced-motion stand-ins in Valle (US-SHELL-011 rows 5 and 6; NFR-A11Y-10; `DS/docs/
+// motion.md` Reduced motion), read from a fake `matchMedia` (17 §1.12).
+describe('the reduced-motion stand-ins in the Valle root (ISSUE-311)', () => {
+  const realMatchMedia = window.matchMedia
+  const reduceMotion = (): void => {
+    window.matchMedia = ((query: string) => ({
+      matches: query.includes('reduce'),
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {}
+    })) as unknown as typeof window.matchMedia
+  }
+  afterEach(() => {
+    window.matchMedia = realMatchMedia
+  })
+  /** MORIA's BORIN and EREBOR's DAIN both wait on the person; the Host's queue: DAIN first. */
+  const waiting = () => {
+    const page = snapshotPage(10, {
+      minesEverKnown: true,
+      mines: [mineWire(MORIA), mineWire(EREBOR)],
+      dwarfs: [
+        dwarfWire(BORIN, MORIA, { needsYou: true, status: 'asking', askedAt: 2 }),
+        dwarfWire(DAIN, EREBOR, { needsYou: true, status: 'asking', askedAt: 1 })
+      ]
+    })
+    if (!page.ok) throw new Error('fixture')
+    page.value.chunks.push({
+      section: 'asks',
+      data: {
+        asks: [],
+        needsYou: [
+          { dwarfId: DAIN, mineId: EREBOR, askedAt: 1 },
+          { dwarfId: BORIN, mineId: MORIA, askedAt: 2 }
+        ]
+      }
+    } as never)
+    return page
+  }
+
+  it("[US-SHELL-011.AC05, NFR-A11Y-10] the need-you mark stops moving and a called zone's ring is not drawn", async () => {
+    reduceMotion()
+    const { root } = mountValle({ preset: 'control', mosaicOrder: [MORIA], pins: [] }, undefined, {
+      getHostSnapshot: () => Promise.resolve(waiting()) as never
+    })
+    await flushPromises()
+    const counter = root.get('[data-needs-counter]')
+    // The "?" is still drawn, and held still: the bob is off (`.dm-vbar__q`'s animation, as the design's own rule).
+    expect(counter.find('.dm-vbar__q').exists()).toBe(true)
+    expect(counter.attributes('data-still')).toBe('true')
+    expect(counterSource).toMatch(
+      /\.dm-vbar__needs\[data-still='true'\] \.dm-vbar__q \{\s*animation: none;\s*\}/
+    )
+    // A jump calls EREBOR's zone: its needs-you outline stays, the call ring is not drawn at all.
+    await counter.trigger('click')
+    await flushPromises()
+    const zone = root.get(`[data-valle-column="${EREBOR}"]`)
+    expect(zone.attributes('data-needs')).toBe('true')
+    expect(zone.find('.dm-vz__ring').exists()).toBe(true)
+    expect(root.findAll('.dm-vz__ring.is-called')).toHaveLength(0)
+  })
+
+  it('[US-SHELL-011.AC06, NFR-TIM-02] a scroll to a zone jumps instead of animating', async () => {
+    reduceMotion()
+    const scrolls: ScrollToOptions[] = []
+    const patches: UiSessionPatch[] = []
+    let reveal: ((t: { mineId: string; dwarfId: string | null }) => void) | null = null
+    const { root } = mountValle(
+      { preset: 'control', mosaicOrder: [MORIA, EREBOR], pins: [] },
+      undefined,
+      {
+        ...{
+          getHostSnapshot: () =>
+            Promise.resolve(
+              snapshotPage(10, {
+                minesEverKnown: true,
+                mines: [mineWire(MORIA), mineWire(EREBOR)],
+                dwarfs: [dwarfWire(BORIN, MORIA), dwarfWire(DAIN, EREBOR)]
+              })
+            ) as never
+        },
+        patchUiSession: (patch) => void patches.push(patch as UiSessionPatch),
+        onRevealDwarfChat: (listener) => {
+          reveal = listener as typeof reveal
+          return () => (reveal = null)
+        }
+      }
+    )
+    await flushPromises()
+    // jsdom lays nothing out: the mosaic is given a 600 px viewport, EREBOR's zone [600, 900] past its right edge.
+    const mosaic = root.get('[data-valle-mosaic]').element as HTMLElement
+    Object.defineProperty(mosaic, 'clientWidth', { configurable: true, value: 600 })
+    mosaic.getBoundingClientRect = () => ({ left: 0, width: 600 }) as DOMRect
+    mosaic.scrollTo = ((options: ScrollToOptions) => void scrolls.push(options)) as never
+    const zone = root.get(`[data-valle-column="${EREBOR}"]`).element as HTMLElement
+    zone.getBoundingClientRect = () => ({ left: 600, width: 300 }) as DOMRect
+
+    reveal!({ mineId: EREBOR, dwarfId: DAIN })
+    await flushPromises()
+    // The scroll lands at once: no smooth scroll under reduced motion; the saved scroll follows it.
+    expect(scrolls).toEqual([{ left: 300, behavior: 'auto' }])
+    expect(patches).toContainEqual({ kind: 'valle', patch: { mosaicScrollLeft: 300 } })
   })
 })

@@ -23,6 +23,8 @@ const props = defineProps<{
   dock: MessageDock
   /** The name of the mine an Add pin is aimed at. */
   mineName: string
+  /** The chat in focus: the one "▼ Panel" / "▼ Veta" carry, whose draft and view travel with the run (ISSUE-311). */
+  inFocus?: boolean
 }>()
 const emit = defineEmits<{ close: []; history: [] }>()
 
@@ -42,6 +44,7 @@ function draft(dwarfId: string, text: string): void {
     :dock="dock"
     :dwarf-id="pin.key"
     hosted-in="valle"
+    :in-focus="inFocus"
     :read-only="pin.readOnly"
     :data-valle-chat="pin.key"
     @draft="draft"

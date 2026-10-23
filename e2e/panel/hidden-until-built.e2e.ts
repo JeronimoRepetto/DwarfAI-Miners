@@ -37,6 +37,10 @@ import { seedClaudeStubSession } from '../cut-1/claudeStubWorld.ts'
  * when unset, as the lane builds it; docs/e2e.md) and holds in both: a release build draws "▼ Veta" alone and never a
  * Valle side or option, the E2E build both sides.
  *
+ * AMENDED for ISSUE-311 (was: a release build draws "▼ Veta" alone): Valle ships now (ADR-034 item 2), so both profiles
+ * list every mode and either build draws "▲ Valle" and "▼ Veta" and offers Valle at launch; the case still reads the
+ * list of the profile under test, so it needs no other change.
+ *
  * The Antigravity launch gate itself is the Host catalog's (EPIC-09, out of this issue's scope); the stub kit has no
  * Antigravity CLI, so this case proves the Panel's half: the row is exactly what main offers (detected and launchable)
  * and Other, and nothing else.

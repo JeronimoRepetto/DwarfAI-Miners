@@ -72,6 +72,15 @@
  *   preset shown, never changing it: in the Control room the mine's column added and scrolled to (S32.14), the dwarf's
  *   chat pinned and expanded (S29.19), its mine current (S35.01) and its zone's ring called; in the Work front a swap to
  *   its mine (S28.15), then its tab. The footer is the window's third row and never moves.
+ * - The mode lever's part (07 machine 9, S28.21, S29.23; ISSUE-311): a chat carried in by a mode run is pinned and
+ *   focused once the Host's facts are read, and the run restores its draft and view into it; the chat in focus alone
+ *   registers its hand-off (`inFocus`), so "▼ Panel" / "▼ Veta" carry its draft and scroll.
+ * - The reveal of a notification click (`useValleReveal`, A-N16; 07 S39.06, S39.07; ADR-025 item 8; ISSUE-311): in the
+ *   preset shown, never changing it or the mode; a page gives way, the column is added and scrolled into view (the
+ *   scroll saved for the session), the chat pinned and focused, the mine made current; in the Work front a swap and the
+ *   tab. Every scroll to a zone is the reveal's: smooth, a jump under reduced motion.
+ * - Reduced motion (US-SHELL-011.AC05, AC06; NFR-A11Y-10): read once as the window renders; the counter's "?" stops
+ *   bobbing, a called zone's ring is not drawn, a scroll to a zone jumps.
  *
  * The bridge is the composition root's (`valleBridgeOf(window.api)`, R13); the observer is the browser's own unless a
  * test hands one.
@@ -88,6 +97,7 @@ import { useValleMosaic, type ValleZoneKey } from '../../composables/useValleMos
 import { useValleNeedsYou } from '../../composables/useValleNeedsYou'
 import { useMapPage } from '../../composables/useMapPage'
 import { useMines } from '../../composables/useMines'
+import { modeTransitionPart, type CarriedChat } from '../../composables/useModeTransition'
 import { useMinesPage } from '../../composables/useMinesPage'
 import { useVallePins } from '../../composables/useVallePins'
 import { useVallePreset } from '../../composables/useVallePreset'
@@ -98,6 +108,7 @@ import {
   type ValleBodyObserver
 } from '../../composables/useValleSplit'
 import { useValleResetPreset } from '../../composables/useValleResetPreset'
+import { useValleReveal } from '../../composables/useValleReveal'
 import { useValleSplitter } from '../../composables/useValleSplitter'
 import { useValleStores, type ValleStores } from '../../composables/useValleStores'
 import { useToasts } from '../../composables/useToasts'
@@ -182,6 +193,8 @@ const room = shallowRef<{ mosaic: HTMLElement | null } | null>(null)
 const reduced = (): boolean =>
   typeof window.matchMedia === 'function' &&
   window.matchMedia('(prefers-reduced-motion: reduce)').matches
+/** The reduced-motion stand-ins (US-SHELL-011.AC05; NFR-A11Y-10): read once, as the window renders. */
+const still = reduced()
 // The bounded runner plays each part (`DS/docs/motion.md`, Rules: never `animation.finished` alone).
 const parts = createVetaMotion()
 const stage = createValleStage({
@@ -236,6 +249,8 @@ const gated = (): boolean =>
 const shown = shallowRef(document.visibilityState === 'visible')
 const visibilityChanged = (): void => {
   shown.value = document.visibilityState === 'visible'
+  // A reveal heard while hidden plays once the window is shown again (S10.11).
+  if (shown.value) valleReveal.shownChanged()
   // A hidden window freezes timelines: the run resolves at once (S28.22); the history drawer closes at once (S36.04).
   if (!shown.value) historyDrawer.send({ kind: 'hidden' })
   if (!shown.value) preset.send({ kind: 'hidden' })
@@ -291,6 +306,11 @@ const held = computed(() => String(model.held.value))
 
 /** Whether the Host's facts were read once: the pins and the mosaic order restore against them (S29.02, S32.02). */
 const factsRead = shallowRef(false)
+/** Settles once the first read of the Host's facts did, read or not. */
+let settleFacts: () => void = () => {}
+const factsSettled = new Promise<void>((resolve) => {
+  settleFacts = resolve
+})
 /** S35.01 from the pins: a focused chat's mine, handed to the current mine once it is composed below. */
 let focusChat = (mineId: MineId): void => {
   void mineId
@@ -314,12 +334,9 @@ const mosaic = useValleMosaic({
   dive: (mineId) => preset.send({ kind: 'dive', mineId }),
   swap: (mineId) => preset.send({ kind: 'pick', mineId }),
   showToast: (text) => showToast(text),
+  // Every scroll to a zone goes through the reveal's (ISSUE-311): smooth, a jump under reduced motion, the scroll saved.
   scrollTo: (mineId) => {
-    void nextTick(() => {
-      const column = room.value?.mosaic?.querySelector(`[data-valle-column="${mineId}"]`)
-      if (column instanceof HTMLElement && typeof column.scrollIntoView === 'function')
-        column.scrollIntoView({ block: 'nearest', inline: 'nearest' })
-    })
+    void nextTick(() => valleReveal.scrollIntoView(mineId))
   }
 })
 const columns = computed(() =>
@@ -401,6 +418,33 @@ const chat = computed((): { mineId: string; dwarfId: DwarfId } | null => {
   return pin?.kind === 'chat' ? { mineId: pin.mineId, dwarfId: pin.dwarfId } : null
 })
 
+/**
+ * A chat carried into Valle by a mode run (07 S29.23, machine 9; ISSUE-311): pinned when absent and focused, its mine
+ * made current, once the Host's facts are read and the pins restored; the run then restores its draft and view into
+ * that chat, the one in focus. A dwarf no longer present is not pinned. Answers once it landed, or once the first read
+ * of the Host's facts settled without them, so the hand-off waits for the chat's panel from then.
+ */
+function carriedIn(chat: CarriedChat): Promise<void> | void {
+  const land = (): void => {
+    split.sendPin({
+      kind: 'carried',
+      dwarfId: chat.dwarfId,
+      mineId: chat.mineId,
+      present: model.dwarfs.value.some((dwarf) => dwarf.id === chat.dwarfId)
+    })
+  }
+  if (factsRead.value) {
+    land()
+    return
+  }
+  // The pins restore once the facts are read (a watcher of their own): the carried chat lands after them.
+  return factsSettled.then(async () => {
+    await nextTick()
+    if (factsRead.value) land()
+  })
+}
+const stopArrival = modeTransitionPart().onArrival(carriedIn)
+
 /** The current mine (07 machine 35): marked, written for the Valle host and heard (ISSUE-307). */
 const currentMine = useCurrentMine({
   bridge: props.bridge,
@@ -457,6 +501,56 @@ const needsYou = useValleNeedsYou({
     swap: (mineId, dwarfId) => preset.send({ kind: 'pick', mineId, dwarfId })
   }
 })
+/** The mosaic's scroller, read from the drawn Control room. */
+const mosaicEl = (): HTMLElement | null => room.value?.mosaic ?? null
+/**
+ * The reveal of a notification click while Valle is the mode (A-N16; 07 S39.06, S39.07; ADR-025 item 8; ISSUE-311):
+ * each part through the composable that owns it, the preset only read, the mode never moved.
+ */
+const valleReveal = useValleReveal({
+  view: () => ({ preset: view.value.preset, page: view.value.page, frontMine: frontMine.value }),
+  present: (dwarfId) => model.dwarfs.value.some((dwarf) => dwarf.id === dwarfId),
+  shown: () => shown.value,
+  reduced,
+  parts: {
+    leavePage: () => preset.send({ kind: 'escape', layerOpen: false }),
+    column: (mineId) => mosaic.reveal(mineId),
+    pin: (dwarfId, mineId) => {
+      split.sendPin({ kind: 'jump', dwarfId, mineId })
+    },
+    current: (mineId) => currentMine.send({ kind: 'chat', mineId }),
+    swap: (mineId, dwarfId) => preset.send({ kind: 'pick', mineId, dwarfId })
+  },
+  scroller: {
+    viewport: () => {
+      const element = mosaicEl()
+      return element === null
+        ? null
+        : { scrollLeft: element.scrollLeft, width: element.clientWidth }
+    },
+    zone: (mineId) => {
+      const element = mosaicEl()
+      const column = element?.querySelector(`[data-valle-column="${mineId}"]`)
+      if (element === null || !(column instanceof HTMLElement)) return null
+      const box = column.getBoundingClientRect()
+      return {
+        left: box.left - element.getBoundingClientRect().left + element.scrollLeft,
+        width: box.width
+      }
+    },
+    scrollTo: (left, behavior) => {
+      const element = mosaicEl()
+      if (element === null) return
+      if (typeof element.scrollTo === 'function') element.scrollTo({ left, behavior })
+      else element.scrollLeft = left
+    }
+  },
+  patchUiSession: (patch) => props.bridge.patchUiSession(patch)
+})
+const stopReveal = props.bridge.onRevealDwarfChat((target) => {
+  valleReveal.reveal(target)
+})
+
 // Valle's Settings page writes the Sound preferences alone: the engine adopts them when the page closes.
 watch(
   () => view.value.page,
@@ -641,6 +735,7 @@ onMounted(() => {
   if (rootEl.value !== null) removeGate = createInputGate(rootEl.value, gated)
   void model.start().then((read) => {
     if (read) factsRead.value = true
+    settleFacts()
   })
   // The hosted pages' board and remembered projects (ISSUE-304).
   void board.start({ announce: false }).then(() => mapPage.loaded())
@@ -659,6 +754,8 @@ onMounted(() => {
 })
 onUnmounted(() => {
   unmounted = true
+  stopArrival()
+  stopReveal()
   stopCues?.()
   stopAudio?.()
   currentMine.stop()
@@ -699,7 +796,7 @@ onUnmounted(() => {
       @menu-dismiss="resetPreset.dismiss()"
     >
       <template #counter>
-        <NeedsYouCounter :view="needsYou.counter.value" @press="needsYou.press()" />
+        <NeedsYouCounter :view="needsYou.counter.value" :still="still" @press="needsYou.press()" />
       </template>
     </ValleTopBar>
     <div ref="body" class="dm-valle__body" :style="{ '--chat-w': chatWidth }">
@@ -761,6 +858,7 @@ onUnmounted(() => {
         :slot-entries="mosaic.slot.value"
         :notice="mosaic.notice.value"
         :moving="gated()"
+        :still="still"
         @menu="(mineId) => toggleMenu({ preset: 'control', mineId })"
         @menu-pick="(id) => mosaic.pickMenu(id)"
         @menu-dismiss="mosaic.dismiss()"
@@ -813,6 +911,7 @@ onUnmounted(() => {
               :pin="pin"
               :dock="chats.dock"
               :mine-name="nameOf(pin.mineId)"
+              :in-focus="pin.key === pins.set.value.focus"
               @close="split.sendPin({ kind: 'unpin', key: pin.key })"
               @history="chatHistory(pin.mineId)"
             />
@@ -838,6 +937,7 @@ onUnmounted(() => {
               :pin="pin"
               :dock="chats.dock"
               :mine-name="nameOf(pin.mineId)"
+              :in-focus="pin.key === pins.set.value.focus"
               @close="split.sendPin({ kind: 'unpin', key: pin.key })"
               @history="chatHistory(pin.mineId)"
             />

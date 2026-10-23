@@ -9,6 +9,7 @@ import {
   modeAtLaunchOptions,
   offeredProviders
 } from './builtDestinations'
+import { gripMenuEntries } from '../veta/gripMenu'
 
 /*
  * What a Panel build may show (ADR-034 item 2; BR-19; 21 §1 item 8): a control whose destination
@@ -31,16 +32,25 @@ const PANEL_ONLY = ['panel'] as const
 describe('the modes a Panel build shows (ADR-034 item 2)', () => {
   // AMENDED for ISSUE-294 (was: this build's own list, the Panel alone): a release build ships Veta now (ADR-034 item 2),
   // so a Panel-only build is the list written here; this build's list is checked to hold no Valle.
+  // AMENDED for ISSUE-311 (was: this build's list holds no Valle): Valle ships with ISSUE-311 (ADR-034 item 2), so the
+  // Panel-only list written here is the whole case.
   it('[ADR-034, BR-19] with only the Panel shipped there is no mode lever and no Mode at launch option', () => {
-    expect(SHIPPED_MODES).not.toContain('valle')
     expect(leverModes(PANEL_ONLY)).toEqual([])
     expect(modeAtLaunchOptions(PANEL_ONLY)).toEqual([])
   })
 
-  it('[ADR-034, BR-19] a release build ships the Panel and Veta: the lever is ▼ Veta alone and Mode at launch lists Last used, Panel and Veta', () => {
-    expect(SHIPPED_MODES).toEqual(['panel', 'veta'])
-    expect(leverModes(SHIPPED_MODES)).toEqual(['veta'])
-    expect(modeAtLaunchOptions(SHIPPED_MODES)).toEqual(['last-used', 'panel', 'veta'])
+  // AMENDED for ISSUE-311 (was: a release build ships the Panel and Veta, the lever ▼ Veta alone): once Valle ships every
+  // mode is shown (ADR-034 item 2; BR-19).
+  it('[BR-19, ADR-034] with Valle built the lever, the grip menu and Mode at launch list every mode', () => {
+    expect(SHIPPED_MODES).toEqual(['panel', 'veta', 'valle'])
+    // The Panel's lever: "▲ Valle" above "▼ Veta", as the design draws it.
+    expect(leverModes(SHIPPED_MODES)).toEqual(['valle', 'veta'])
+    // Veta's grip menu: "Open Panel" and "Open Valle", then its own rows.
+    expect(
+      gripMenuEntries(SHIPPED_MODES).flatMap((entry) => (entry.kind === 'item' ? [entry.id] : []))
+    ).toEqual(['open-panel', 'open-valle', 'new-dwarf', 'hide'])
+    // Settings › General: Last used, then every mode.
+    expect(modeAtLaunchOptions(SHIPPED_MODES)).toEqual(['last-used', 'panel', 'veta', 'valle'])
   })
 
   it('[ADR-034] between Veta and Valle the lever and Mode at launch show only the modes that exist', () => {
@@ -57,11 +67,14 @@ describe('the modes a Panel build shows (ADR-034 item 2)', () => {
 
   // AMENDED for ISSUE-294 (was: over this build's list, the Panel alone): the unshipped modes are those of a Panel-only
   // list written here, and Valle, which no release build ships yet, over this build's list.
+  // AMENDED for ISSUE-311 (was: Valle over this build's list): Valle ships now, so it is unshipped in the Panel-and-Veta
+  // list written here, and kept over this build's list.
   it('[ADR-034] a stored lastMode or modeAtLaunch naming an unshipped mode resolves to Panel', () => {
     expect(launchMode({ modeAtLaunch: 'veta' }, PANEL_ONLY)).toBe('panel')
-    expect(launchMode({ modeAtLaunch: 'valle' }, SHIPPED_MODES)).toBe('panel')
+    expect(launchMode({ modeAtLaunch: 'valle' }, ['panel', 'veta'])).toBe('panel')
     expect(launchMode({ modeAtLaunch: 'last-used', lastMode: 'veta' }, PANEL_ONLY)).toBe('panel')
-    expect(launchMode({ lastMode: 'valle' }, SHIPPED_MODES)).toBe('panel')
+    expect(launchMode({ lastMode: 'valle' }, ['panel', 'veta'])).toBe('panel')
+    expect(launchMode({ lastMode: 'valle' }, SHIPPED_MODES)).toBe('valle')
     expect(launchMode({}, SHIPPED_MODES)).toBe('panel')
     // A shipped mode is kept, so the rule resolves only what is not built.
     expect(launchMode({ modeAtLaunch: 'veta' }, ['panel', 'veta'])).toBe('veta')

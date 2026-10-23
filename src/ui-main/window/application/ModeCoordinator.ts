@@ -133,6 +133,11 @@ export interface ModeCoordinator {
    */
   restore(): Promise<IpcResult<void>>
   /**
+   * The mode `restore()` shows from hidden (S10.09, S10.11; ISSUE-311): `lastMode`, or "Mode at launch" for the first
+   * open after a launch or a tray-only start. A notification click on a hidden window reveals in it.
+   */
+  restoreMode(): AppMode
+  /**
    * "Mode at launch" resolved (S10.01, S10.12, S10.13; ADR-034 item 2): the pinned mode, or `lastMode` with "Last
    * used"; a stored mode this build does not ship is the Panel.
    */
@@ -531,8 +536,11 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
     // in "Mode at launch" (S10.01, S10.13); after that, back from hidden is `lastMode` (S10.09).
     const fromTray = ladder.state === 'tray-only'
     const open = fromTray ? { open: { reveal: false } } : {}
-    const mode = firstOpen || fromTray ? launchMode() : lastShown()
-    return request({ mode, answers: [], ...open })
+    return request({ mode: restoreMode(), answers: [], ...open })
+  }
+
+  function restoreMode(): AppMode {
+    return firstOpen || ladder.state === 'tray-only' ? launchMode() : lastShown()
   }
 
   return {
@@ -565,6 +573,7 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
     },
     hide,
     restore,
+    restoreMode,
     launchMode,
     toggle() {
       // During a run the press asks for the opposite of where the run is going (S27.08 when it is going to a mode).

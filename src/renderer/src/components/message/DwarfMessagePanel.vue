@@ -210,11 +210,17 @@ const props = defineProps<{
    * The mode window hosting this chat (ISSUE-293; BR-21: one component in every mode). In Veta the header offers
    * "▢ Open in the Panel" (screens/message.md, Header: "only when the chat rose from Veta"; US-MSG-010.AC02, AC03),
    * and the mine-history request stays hidden until the Panel can be opened on the history (BR-19; 07 S24.13 waits on
-   * `ModeTransition.slot`). In Valle's pins and panes (TVC) "▢ Open in the Panel" does not show and the panel registers
-   * no mode-transition hand-off, Valle's part in a run being ISSUE-311's; AMENDED for ISSUE-308 (was: no Mine history
-   * either), its Mine history shows, the host placing the history (07 S31.11, S36.01). The Panel by default.
+   * `ModeTransition.slot`). In Valle's pins and panes (TVC) "▢ Open in the Panel" does not show; AMENDED for ISSUE-311
+   * (was: and the panel registers no mode-transition hand-off), it registers its hand-off while it is the chat in focus
+   * (`inFocus`), the one a run carries (07 machine 9, S28.21); AMENDED for ISSUE-308 (was: no Mine history either), its
+   * Mine history shows, the host placing the history (07 S31.11, S36.01). The Panel by default.
    */
   hostedIn?: 'panel' | 'veta' | 'valle'
+  /**
+   * In Valle, whether this chat is the one in focus (ISSUE-311): only that chat's draft and view travel with a mode run
+   * (07 machine 9; S28.21), a split's other pane keeping its own. Read only where `hostedIn` is `valle`.
+   */
+  inFocus?: boolean
   /**
    * Where the log opens instead of its latest message: a chat view carried into this window (ISSUE-293; ADR-024 item 3;
    * INV-114), read on the frame the panel opens on. Absent, the log opens on its latest message.
@@ -810,9 +816,18 @@ const handoff: ChatHandoff = {
     })
   }
 }
-// Valle's part in a run is ISSUE-311's: hosted there, the panel starts none in the Valle window.
-const stopHandoff = props.hostedIn === 'valle' ? () => {} : modeTransitionPart().register(handoff)
-onUnmounted(stopHandoff)
+// In Valle the chat in focus alone takes part in a run (ISSUE-311): it registers while it is in focus, so a split's other
+// pane never hands its draft over in the focused chat's place.
+let stopHandoff = (): void => {}
+watch(
+  () => props.hostedIn !== 'valle' || props.inFocus === true,
+  (registers) => {
+    stopHandoff()
+    stopHandoff = registers ? modeTransitionPart().register(handoff) : () => {}
+  },
+  { immediate: true }
+)
+onUnmounted(() => stopHandoff())
 
 /*
  * The row list growing on its own — a re-read landing, or the poll finding new activity. Two

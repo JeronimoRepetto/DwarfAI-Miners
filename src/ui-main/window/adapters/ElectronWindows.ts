@@ -370,7 +370,8 @@ export class ElectronWindows implements WindowFactory {
     )
     this.valleWindow = {
       window,
-      mode: this.manage(window, modeEntry(this.deps.appEntry, 'valle'))
+      // Built on its first entry, whose run is sent at once (S39.01, S27.05): its pushes wait for its page (ISSUE-311).
+      mode: this.manage(window, modeEntry(this.deps.appEntry, 'valle'), { holdUntilLoaded: true })
     }
     return this.valleWindow.mode
   }
@@ -381,19 +382,38 @@ export class ElectronWindows implements WindowFactory {
     return built === undefined || built.isDestroyed() ? null : built.webContents.id
   }
 
-  /** Registers, watches and loads a new window from `entry`, and answers its `ModeWindow` members. */
-  private manage(window: ManagedBrowserWindow, entry: string): PanelWindow {
+  /**
+   * Registers, watches and loads a new window from `entry`, and answers its `ModeWindow` members. With
+   * `holdUntilLoaded`, a push sent before the page first loaded is held and sent, in order, once it has: a page that
+   * has not run yet hears nothing (the Valle window's first run, ISSUE-311).
+   */
+  private manage(
+    window: ManagedBrowserWindow,
+    entry: string,
+    options: { holdUntilLoaded?: boolean } = {}
+  ): PanelWindow {
     const id = window.webContents.id
     this.deps.registry.register(id)
     window.once('closed', () => this.deps.registry.drop(id))
     watchRenderer(window, { ...this.deps, appEntry: entry })
+    let held: [string, unknown][] | null = options.holdUntilLoaded === true ? [] : null
+    if (held !== null) {
+      window.webContents.on('did-finish-load', () => {
+        const waiting = held ?? []
+        held = null
+        for (const [push, payload] of waiting) window.webContents.send(push, payload)
+      })
+    }
     void window.webContents.loadURL(entry)
     return {
       placeAt: (bounds) => window.setBounds(bounds),
       showInactive: () => window.showInactive(),
       hide: () => window.hide(),
       focus: () => window.focus(),
-      send: (push, payload) => window.webContents.send(push, payload)
+      send: (push, payload) => {
+        if (held !== null) held.push([push, payload])
+        else window.webContents.send(push, payload)
+      }
     }
   }
 }
