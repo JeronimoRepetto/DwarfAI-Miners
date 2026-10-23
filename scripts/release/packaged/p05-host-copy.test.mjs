@@ -51,6 +51,30 @@ function windowsArtifacts() {
   return artifactDir
 }
 
+function linuxArtifacts() {
+  const artifactDir = tempDir()
+  packedApp(artifactDir, 'linux-unpacked', 'dwarfai-miners')
+  put(path.join(artifactDir, `DwarfAI-Miners-${VERSION}-x86_64.AppImage`))
+  put(path.join(artifactDir, `dwarfai-miners_${VERSION}_amd64.deb`))
+  return artifactDir
+}
+
+/** Stands for `dpkg-deb -x`: the deb's payload, the app under `opt/DwarfAI-Miners/`. */
+async function debPayload(_deb, intoDir) {
+  packedApp(intoDir, path.join('opt', 'DwarfAI-Miners'), 'dwarfai-miners')
+}
+
+/** A macOS artifact folder: `mac-arm64/DwarfAI-Miners.app` with its executable and `Contents/Resources/app.asar`. */
+function macArtifacts() {
+  const artifactDir = tempDir()
+  const contents = path.join(artifactDir, 'mac-arm64', 'DwarfAI-Miners.app', 'Contents')
+  put(path.join(contents, 'MacOS', 'DwarfAI-Miners'), 'the executable')
+  writeAsar(path.join(contents, 'Resources', 'app.asar'), {
+    'package.json': JSON.stringify({ name: 'dwarfai-miners', version: VERSION })
+  })
+  return artifactDir
+}
+
 /** A start that made `host/<version>/` at the documented path and runs the Host from inside it. */
 const hostFromCopy = async ({ executable, profile, platform }) => {
   const copyDir = copyDirOf({ platform, dataRoot: profile.dataRoot, version: VERSION })
@@ -113,39 +137,84 @@ describe('P-05 the Host runs from its versioned copy (ADR-027 items 1-2; 20 §2.
     expect(noCopy.detail).toMatch(/win-unpacked.*no host\/1\.4\.0\//)
   })
 
-  it('[ADR-027, SP-03] P-05 reports the AppImage and the .app as blocked by SP-03, never green', async () => {
-    const linuxDir = tempDir()
-    packedApp(linuxDir, 'linux-unpacked', 'dwarfai-miners')
-    put(path.join(linuxDir, `DwarfAI-Miners-${VERSION}-x86_64.AppImage`))
-    put(path.join(linuxDir, `dwarfai-miners_${VERSION}_amd64.deb`))
+  it('[ADR-027, SP-03] on Linux P-05 runs the unpacked app, the deb payload and the AppImage for real', async () => {
+    const linuxDir = linuxArtifacts()
     const started = []
     const linux = await checkHostCopy({
       artifactDir: linuxDir,
       ...LINUX,
+      extractDeb: debPayload,
       run: async (input) => {
-        started.push(input.executable)
+        started.push(path.basename(input.executable))
         return hostFromCopy(input)
       }
     })
-    expect(linux.ok).toBe(false)
-    expect(linux.detail).toMatch(/linux-unpacked ok/)
-    expect(linux.detail).toMatch(/AppImage blocked by SP-03/)
-    expect(started.map((file) => path.basename(file))).toEqual(['dwarfai-miners'])
 
-    const macDir = tempDir()
-    put(path.join(macDir, 'mac-arm64', 'DwarfAI-Miners.app', 'Contents', 'MacOS', 'DwarfAI-Miners'))
-    let macStarted = false
-    const mac = await checkHostCopy({
-      artifactDir: macDir,
-      ...MAC,
+    expect(linux.ok, linux.detail).toBe(true)
+    expect(linux.blocked).toBeUndefined()
+    expect(linux.detail).toMatch(/linux-unpacked ok/)
+    expect(linux.detail).toMatch(/dwarfai-miners_1\.4\.0_amd64\.deb ok/)
+    expect(linux.detail).toMatch(/DwarfAI-Miners-1\.4\.0-x86_64\.AppImage ok/)
+    expect(started).toEqual([
+      'dwarfai-miners',
+      'dwarfai-miners',
+      `DwarfAI-Miners-${VERSION}-x86_64.AppImage`
+    ])
+  })
+
+  it('[ADR-027, SP-03] an AppImage that cannot mount without FUSE runs extracted, and the line says so', async () => {
+    const attempts = []
+    const result = await checkHostCopy({
+      artifactDir: linuxArtifacts(),
+      ...LINUX,
+      extractDeb: debPayload,
       run: async (input) => {
-        macStarted = true
+        if (!input.executable.endsWith('.AppImage')) return hostFromCopy(input)
+        attempts.push(input.env?.APPIMAGE_EXTRACT_AND_RUN ?? 'mount')
+        if (input.env?.APPIMAGE_EXTRACT_AND_RUN !== '1') {
+          throw new Error('the app exited; stderr: dlopen(): error loading libfuse.so.2')
+        }
         return hostFromCopy(input)
       }
     })
-    expect(mac.ok).toBe(false)
-    expect(mac.detail).toMatch(/DwarfAI-Miners\.app blocked by SP-03/)
-    expect(macStarted, 'a blocked target is not reported from a run').toBe(false)
+
+    expect(result.ok, result.detail).toBe(true)
+    expect(attempts).toEqual(['mount', '1'])
+    expect(result.detail).toMatch(/AppImage ok \(extract-and-run: no FUSE on this runner\)/)
+  })
+
+  it('[ADR-027, SP-03] P-05 runs an unsigned .app for real and reports a signed or unreadable .app as blocked by SP-03, never green', async () => {
+    const started = []
+    const run = async (input) => {
+      started.push(path.basename(input.executable))
+      return hostFromCopy(input)
+    }
+
+    const unsigned = await checkHostCopy({
+      artifactDir: macArtifacts(),
+      ...MAC,
+      signatureOf: () => 'adhoc',
+      run
+    })
+    expect(unsigned.ok, unsigned.detail).toBe(true)
+    expect(unsigned.detail).toMatch(/mac-arm64\/DwarfAI-Miners\.app ok/)
+    expect(started).toEqual(['DwarfAI-Miners'])
+
+    for (const signature of ['signed', 'unknown']) {
+      started.length = 0
+      const blocked = await checkHostCopy({
+        artifactDir: macArtifacts(),
+        ...MAC,
+        signatureOf: () => signature,
+        run
+      })
+      expect(blocked.ok, signature).toBe(false)
+      expect(blocked.blocked).toMatchObject({ by: 'SP-03' })
+      expect(blocked.detail).toBe(
+        'mac-arm64/DwarfAI-Miners.app — SP-03 (signed/notarized .app) not recorded'
+      )
+      expect(started, 'a blocked .app is never started').toEqual([])
+    }
   })
 
   it('[ADR-027] P-05 fails a folder with no packed app or an app whose Host never started', async () => {
