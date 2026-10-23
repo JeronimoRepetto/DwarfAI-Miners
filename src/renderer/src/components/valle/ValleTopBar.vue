@@ -3,7 +3,8 @@
  * Valle's top bar (`organisms/valle-bar`; 07 S28.06, S28.11, S28.21; US-VALLE-001.AC01, .AC05; ISSUE-300): the preset
  * tabs, a tablist whose ← and → move between the presets as a click does, and the mode lever, "▼ Panel" and "▼ Veta",
  * which leave Valle for that mode carrying the chat in focus, as the Panel's lever does (US-SHELL-001), and the "⋯" preset
- * menu holding "Reset preset" (`ValleTopBarMenu`, 07 machine 37; ISSUE-309). The needs-you counter is its issue's (slot).
+ * menu holding "Reset preset" (`ValleTopBarMenu`, 07 machine 37; ISSUE-309). The needs-you counter fills the `counter` slot
+ * (`NeedsYouCounter`, 07 machine 34; ISSUE-306).
  * The top bar never moves (07 machine 28, VA3).
  */
 import type { DwarfId, MineId, MoveToModeParams } from '@dwarfai/contracts'

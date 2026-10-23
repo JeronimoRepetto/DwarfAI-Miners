@@ -192,3 +192,108 @@ describe('what the Valle pins hear of the Host (ISSUE-302)', () => {
     model.stop()
   })
 })
+
+// APPENDED for ISSUE-306: the Host's needs-you queue, read from the snapshot and patched in place (07 machine 34).
+describe("the Host's needs-you queue in the Valle read model (ISSUE-306)", () => {
+  const ask = (
+    id: string,
+    dwarfId: string,
+    kind: 'question' | 'permission',
+    openedAt: number,
+    channel: 'driver' | 'none' = 'driver'
+  ) =>
+    ({
+      id,
+      dwarfId,
+      kind,
+      channel,
+      providerRequestId: `request-${id}`,
+      payload:
+        kind === 'question'
+          ? { steps: [{ text: 'Which one?', options: ['a', 'b'], allowsFreeText: true }] }
+          : { toolName: 'Bash', requestText: 'run a command' },
+      currentStep: 0,
+      state: 'open',
+      reannounce: false,
+      openedAt
+    }) as const
+  const ASK = (n: number): string =>
+    `01920000-0000-7000-8000-00000000e${String(n).padStart(3, '0')}`
+
+  it('[S34.01, S34.02, S34.03, S34.04, ADR-033] the window reads the Host’s needs-you queue as it comes and patches it in place from the asks’ frames', async () => {
+    const page = snapshotPage(10, {
+      minesEverKnown: true,
+      mines: [mineWire(MORIA), mineWire(EREBOR)],
+      dwarfs: [dwarfWire(BORIN, MORIA), dwarfWire(DAIN, EREBOR), dwarfWire(NALI, MORIA)]
+    })
+    if (!page.ok) throw new Error('fixture')
+    // The Host's order is taken as it comes, even where `askedAt` would say otherwise: never re-sorted here.
+    const hostQueue = [
+      { dwarfId: DAIN, mineId: EREBOR, askedAt: 9 },
+      { dwarfId: BORIN, mineId: MORIA, askedAt: 5 }
+    ]
+    const host = scriptedHost([
+      {
+        ...page,
+        value: {
+          ...page.value,
+          chunks: [
+            ...page.value.chunks,
+            {
+              section: 'asks',
+              data: {
+                asks: [ask(ASK(1), BORIN, 'permission', 5), ask(ASK(2), DAIN, 'question', 9)],
+                needsYou: hostQueue
+              }
+            }
+          ]
+        }
+      }
+    ])
+    const model = createValleReadModel(host.bridge)
+    host.connection({ state: 'connected' })
+    expect(await model.start()).toBe(true)
+    const order = (): string[] => model.needsYou.value.map((entry) => entry.dwarfId)
+    expect(model.needsYou.value).toEqual(hostQueue)
+    const [dain, borin] = model.needsYou.value
+
+    // S34.02: NALI starts asking, an observed ask with no card (PO #76): appended, the others the same entries.
+    host.push([
+      frame(11, 'ask.opened', { ask: ask(ASK(3), NALI, 'question', 12, 'none') as never })
+    ])
+    expect(order()).toEqual([DAIN, BORIN, NALI])
+    expect(model.needsYou.value[0]).toBe(dain)
+    expect(model.needsYou.value[1]).toBe(borin)
+    expect(model.needsYou.value[2]).toEqual({ dwarfId: NALI, mineId: MORIA, askedAt: 12 })
+    // An auto-denied ask never enters.
+    host.push([
+      frame(12, 'ask.opened', {
+        ask: { ...ask(ASK(4), DAIN, 'question', 13), state: 'auto-denied' } as never
+      })
+    ])
+    expect(order()).toEqual([DAIN, BORIN, NALI])
+    // BORIN asks again: still one entry.
+    host.push([frame(13, 'ask.opened', { ask: ask(ASK(5), BORIN, 'question', 14) as never })])
+    expect(order()).toEqual([DAIN, BORIN, NALI])
+
+    // S34.04: BORIN's first ask closes, its next is current: its one entry moves where the Host's order puts it.
+    host.push([
+      frame(14, 'ask.closed', { askId: ASK(1) as never, dwarfId: BORIN, reason: 'answered-in-app' })
+    ])
+    expect(order()).toEqual([DAIN, NALI, BORIN])
+    expect(model.askOf(BORIN)).toBe('question')
+    // S34.03: DAIN's ask answered elsewhere, NALI departs: their entries leave, the gap closes.
+    const kept = model.needsYou.value.find((entry) => entry.dwarfId === BORIN)
+    host.push([
+      frame(15, 'ask.closed', {
+        askId: ASK(2) as never,
+        dwarfId: DAIN,
+        reason: 'answered-elsewhere'
+      }),
+      frame(16, 'dwarf.departed', { dwarfId: NALI, mineId: MORIA, cause: 'stopped' })
+    ])
+    expect(order()).toEqual([BORIN])
+    expect(model.needsYou.value[0]).toBe(kept)
+    model.stop()
+  })
+})

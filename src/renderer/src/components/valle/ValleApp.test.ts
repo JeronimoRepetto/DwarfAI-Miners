@@ -1363,3 +1363,107 @@ describe('Reset preset in the Valle root (ISSUE-309)', () => {
     expect(root.get('[data-valle-root]').attributes('data-preset')).toBe('control')
   })
 })
+
+// APPENDED for ISSUE-306: the needs-you counter and queue in the Valle root (07 machine 34; UC-059).
+describe('the needs-you counter and queue in the Valle root (ISSUE-306)', () => {
+  const ask = (id: string, dwarfId: string, kind: 'question' | 'permission', openedAt: number) => ({
+    id,
+    dwarfId,
+    kind,
+    channel: 'driver',
+    providerRequestId: `request-${id}`,
+    payload:
+      kind === 'question'
+        ? { steps: [{ text: 'Which one?', options: ['a', 'b'], allowsFreeText: true }] }
+        : { toolName: 'Bash', requestText: 'run a command' },
+    currentStep: 0,
+    state: 'open',
+    reannounce: false,
+    openedAt
+  })
+  /** MORIA's BORIN asks for a permission, EREBOR's DAIN has a question; the Host's queue: DAIN first. */
+  const snapshot = () => {
+    const page = snapshotPage(10, {
+      minesEverKnown: true,
+      mines: [mineWire(MORIA), mineWire(EREBOR)],
+      dwarfs: [
+        dwarfWire(BORIN, MORIA, { needsYou: true, status: 'asking', askedAt: 2 }),
+        dwarfWire(DAIN, EREBOR, { needsYou: true, status: 'asking', askedAt: 1 })
+      ]
+    })
+    if (!page.ok) throw new Error('fixture')
+    return {
+      ...page,
+      value: {
+        ...page.value,
+        chunks: [
+          ...page.value.chunks,
+          {
+            section: 'asks',
+            data: {
+              asks: [
+                ask('01920000-0000-7000-8000-00000000e001', DAIN, 'question', 1),
+                ask('01920000-0000-7000-8000-00000000e002', BORIN, 'permission', 2)
+              ],
+              needsYou: [
+                { dwarfId: DAIN, mineId: EREBOR, askedAt: 1 },
+                { dwarfId: BORIN, mineId: MORIA, askedAt: 2 }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+  const labels = (root: VueWrapper): string[] =>
+    root.findAll('.dm-vq__entry').map((entry) => entry.attributes('aria-label') ?? '')
+
+  it('[US-VALLE-004.AC01, US-VALLE-004.AC06, US-VALLE-012.AC02, S34.05, S34.06, S34.07] in the Valle root the counter and an entry pin and focus the dwarf’s chat, add its column or swap to its mine, and never write the preset', async () => {
+    const { root, writes, clock } = mountValle(
+      { preset: 'control', mosaicOrder: [MORIA], pins: [], lastFrontMineId: EREBOR },
+      undefined,
+      { getHostSnapshot: () => Promise.resolve(snapshot()) as never }
+    )
+    await flushPromises()
+    const valle = root.get('[data-valle-root]')
+    const counter = root.get('[data-needs-counter]')
+    expect(counter.text()).toContain('2 need you')
+    expect(counter.attributes('aria-label')).toBe('2 waiting on you. Jump to the next one')
+    const both = ['dain has a question in erebor', 'borin asks for a permission in moria']
+    expect(labels(root)).toEqual(both)
+
+    // The Control room: the oldest, DAIN, whose mine is not in the mosaic.
+    await counter.trigger('click')
+    await flushPromises()
+    expect(writes).toContainEqual({ key: 'valleMosaicOrder', value: [MORIA, EREBOR] })
+    expect(root.get('.dm-cstack__open').attributes('data-pin')).toBe(DAIN)
+    const zone = root.get(`[data-valle-column="${EREBOR}"]`)
+    expect(zone.attributes('data-current')).toBe('true')
+    expect(zone.attributes('data-needs')).toBe('true')
+    expect(zone.find('.dm-vz__ring.is-called').exists()).toBe(true)
+    expect(root.get(`[data-valle-column="${MORIA}"]`).find('.dm-vz__ring.is-called').exists()).toBe(
+      false
+    )
+    expect(valle.attributes('data-preset')).toBe('control')
+    expect(writes.filter((write) => write.key === 'vallePreset')).toEqual([])
+
+    // The Work front, on EREBOR: the same count and the same queue (AC06).
+    await root.get('[data-preset-tab="front"]').trigger('click')
+    clock.advance(400)
+    await flushPromises()
+    expect(valle.attributes('data-motion')).toBe('none')
+    expect(root.get('[data-needs-counter]').text()).toContain('2 need you')
+    expect(labels(root)).toEqual(both)
+    const presetWrites = writes.filter((write) => write.key === 'vallePreset').length
+
+    // BORIN's entry: a swap to MORIA, then BORIN's tab; the preset stays the Work front.
+    await root.get(`.dm-vq__entry[data-id="${BORIN}"]`).trigger('click')
+    clock.advance(400)
+    await flushPromises()
+    expect(valle.attributes('data-preset')).toBe('front')
+    expect(writes).toContainEqual({ key: 'valleLastFrontMineId', value: MORIA })
+    expect(root.find(`[data-valle-front-mine="${MORIA}"]`).exists()).toBe(true)
+    expect(root.get('.dm-ctab.is-focus-pane').attributes('data-pin')).toBe(BORIN)
+    expect(writes.filter((write) => write.key === 'vallePreset')).toHaveLength(presetWrites)
+  })
+})
