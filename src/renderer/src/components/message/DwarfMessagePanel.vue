@@ -68,7 +68,7 @@ import {
   type MessageId
 } from '@dwarfai/contracts'
 import { captureChatView, restoredScrollTop } from '../../lib/chat/chatViewState'
-import { modeTransitionPart } from '../../composables/useModeTransition'
+import { modeTransitionPart, type ChatHandoff } from '../../composables/useModeTransition'
 import { hostMessageIdOf } from '../../composables/useDwarfMessaging'
 import { messageBoxesOf } from './messageBoxes'
 import type { AskAnswer } from '../../lib/question/questionAnswer'
@@ -210,9 +210,10 @@ const props = defineProps<{
    * The mode window hosting this chat (ISSUE-293; BR-21: one component in every mode). In Veta the header offers
    * "▢ Open in the Panel" (screens/message.md, Header: "only when the chat rose from Veta"; US-MSG-010.AC02, AC03),
    * and the mine-history request stays hidden until the Panel can be opened on the history (BR-19; 07 S24.13 waits on
-   * `ModeTransition.slot`). The Panel by default.
+   * `ModeTransition.slot`). In Valle's pins and panes (TVC) neither tool shows: Valle's history drawer is ISSUE-308's,
+   * and the panel registers no mode-transition hand-off, Valle's part in a run being ISSUE-311's. The Panel by default.
    */
-  hostedIn?: 'panel' | 'veta'
+  hostedIn?: 'panel' | 'veta' | 'valle'
   /**
    * Where the log opens instead of its latest message: a chat view carried into this window (ISSUE-293; ADR-024 item 3;
    * INV-114), read on the frame the panel opens on. Absent, the log opens on its latest message.
@@ -775,7 +776,7 @@ onMounted(showLatest)
  */
 const composerField = (): HTMLTextAreaElement | null =>
   composerRef.value?.querySelector('textarea') ?? null
-const stopHandoff = modeTransitionPart().register({
+const handoff: ChatHandoff = {
   open: () => props.dwarf.id as DwarfId,
   // S9.02 (ISSUE-293): a composition in progress ends at the switch. Taking the focus from the composer commits it,
   // so what it held is in the draft the flush reads; the IME state itself never travels.
@@ -807,7 +808,9 @@ const stopHandoff = modeTransitionPart().register({
       }
     })
   }
-})
+}
+// Valle's part in a run is ISSUE-311's: hosted there, the panel starts none in the Valle window.
+const stopHandoff = props.hostedIn === 'valle' ? () => {} : modeTransitionPart().register(handoff)
 onUnmounted(stopHandoff)
 
 /*
@@ -942,18 +945,20 @@ const { setName, resetName: resetDwarfName } = useDwarfRename()
 const offersReset = computed(() => props.dwarf.customName !== undefined)
 /** Hosted in Veta: the hand-off tool shows, and the mine-history request is not offered yet (BR-19). */
 const inVeta = computed(() => props.hostedIn === 'veta')
+/** Hosted in Veta or Valle: the mine-history request is not offered yet (BR-19). */
+const offersHistory = computed(() => props.hostedIn !== 'veta' && props.hostedIn !== 'valle')
 const menu = computed(() => {
   const entries = messagePanelMenu(
     props.stopDisabled === true ? 'stopping' : null,
     offersReset.value
   )
-  return inVeta.value ? entries.filter((_, i) => i !== MENU_HISTORY) : entries
+  return offersHistory.value ? entries : entries.filter((_, i) => i !== MENU_HISTORY)
 })
 const stopAsked = ref(false)
 
 function onMenu(index: number): void {
-  // In Veta the menu lacks its Mine history row: a pick past it names the row one further down.
-  const row = inVeta.value && index >= MENU_HISTORY ? index + 1 : index
+  // In Veta and Valle the menu lacks its Mine history row: a pick past it names the row one further down.
+  const row = !offersHistory.value && index >= MENU_HISTORY ? index + 1 : index
   const picked = messagePanelMenuAction(row, offersReset.value)
   if (picked === 'console') emit('open-console')
   else if (picked === 'history') emit('history')
@@ -1161,7 +1166,7 @@ async function resetName(): Promise<void> {
           @click="emit('open-in-panel')"
         />
         <ActionButton
-          v-else
+          v-else-if="offersHistory"
           icon="history"
           size="sm"
           title="Mine history"

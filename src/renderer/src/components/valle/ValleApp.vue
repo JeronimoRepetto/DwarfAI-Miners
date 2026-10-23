@@ -19,7 +19,8 @@
  *   or the start-up pins on a first visit (S29.01); drawn as the Control room's stack (`PinnedStack`) or the Work
  *   front's tabs (`ChatDeck`) in the one chat zone, which never moves. Every change is written at once (A-N21 `pins`,
  *   A-N18 for the session's fields); the chat in focus is the one "▼ Panel" / "▼ Veta" carry. The chats themselves
- *   (the MessagePanel and the Add panel inside a pin) are hosted in the stack's and the deck's `chat` slot.
+ *   (the MessagePanel and the Add panel inside a pin) are hosted in the stack's and the deck's `chat` slot, fed by the
+ *   window's one message dock (`useValleChats`; a package gap resolved in development, EPIC-20 task TVC).
  * - The split (`useValleSplit`, 07 machine 30; ISSUE-303): "⫽" in the Work front's deck shows two chats side by side,
  *   never three; the room beside the mine is measured by one `ResizeObserver` on the body (never polled), and below
  *   640 px the split steps back to the focused pane and comes back by itself. The wish is written with the Work front
@@ -55,6 +56,7 @@
 import type { DwarfId, MineId } from '@dwarfai/contracts'
 import { computed, nextTick, onMounted, onUnmounted, provide, shallowRef, watch } from 'vue'
 import { useValleArrivalToast } from '../../composables/useValleArrivalToast'
+import { useValleChats } from '../../composables/useValleChats'
 import { useValleMosaic, type ValleZoneKey } from '../../composables/useValleMosaic'
 import { useMapPage } from '../../composables/useMapPage'
 import { useMines } from '../../composables/useMines'
@@ -83,6 +85,7 @@ import { createValleReadModel } from '../../lib/valle/valleReadModel'
 import WorktreeDialog from '../browse/WorktreeDialog.vue'
 import ToastHost from '../overlay/ToastHost.vue'
 import ChatDeck from './ChatDeck.vue'
+import ValleChat from './ValleChat.vue'
 import NavSlot from '../shell/NavSlot.vue'
 import ValleControlRoom from './ValleControlRoom.vue'
 import ValleNavPageView from './ValleNavPage.vue'
@@ -116,7 +119,12 @@ const minesPage = useMinesPage({
   open: (mineId) => openMine(mineId as MineId),
   mines: () => board.state.mines
 })
-provide(VALLE_PAGES, { board: board.state, map: mapPage, mines: minesPage })
+provide(VALLE_PAGES, {
+  board: board.state,
+  map: mapPage,
+  mines: minesPage,
+  failed: () => chats.failed.value
+})
 watch(
   () => board.state.mines,
   () => mapPage.loaded()
@@ -304,6 +312,22 @@ const split = useValleSplit({
   observe: props.bodyObserver ?? browserBodyObserver
 })
 const deckSplit = computed(() => ({ panes: split.panes.value, button: split.button.value }))
+
+/*
+ * The chats inside the pins (TVC): the Panel's own MessagePanel and Add panel in the stack's expanded line and in each
+ * pane, fed by the window's one message dock. The pins on screen are the Control room's expanded line, or the Work
+ * front's pane or panes.
+ */
+const chats = useValleChats({
+  pins: () => pins.set.value,
+  send: (input) => split.sendPin(input),
+  shown: () =>
+    view.value.preset === 'front'
+      ? split.panes.value
+      : pins.set.value.focus === null
+        ? []
+        : [pins.set.value.focus]
+})
 
 /** The chat in focus, carried by "▼ Panel" / "▼ Veta" (S28.21, machine 9): the focused chat pin's. */
 const chat = computed((): { mineId: string; dwarfId: DwarfId } | null => {
@@ -525,7 +549,16 @@ onUnmounted(() => {
           :focus-request="pins.focusRequest.value"
           @select="(key) => split.sendPin({ kind: 'select', key })"
           @unpin="(key) => split.sendPin({ kind: 'unpin', key })"
-        />
+        >
+          <template #chat="{ pin }">
+            <ValleChat
+              :pin="pin"
+              :dock="chats.dock"
+              :mine-name="nameOf(pin.mineId)"
+              @close="split.sendPin({ kind: 'unpin', key: pin.key })"
+            />
+          </template>
+        </PinnedStack>
         <ChatDeck
           v-else
           :pins="pins.views.value"
@@ -538,7 +571,16 @@ onUnmounted(() => {
           @drop="(order) => split.sendPin({ kind: 'drop', order })"
           @drag-cancel="split.sendPin({ kind: 'drag-cancel' })"
           @split="split.press()"
-        />
+        >
+          <template #chat="{ pin }">
+            <ValleChat
+              :pin="pin"
+              :dock="chats.dock"
+              :mine-name="nameOf(pin.mineId)"
+              @close="split.sendPin({ kind: 'unpin', key: pin.key })"
+            />
+          </template>
+        </ChatDeck>
       </aside>
     </div>
     <div class="dm-vghosts" aria-hidden="true"></div>

@@ -2,7 +2,8 @@
 /*
  * The window risen above the Veta strip (`.dm-vwin`, DS/docs/screens/veta.md V3 and Layout; 07 machine 24; UC-048,
  * UC-066; ISSUE-290): the Panel's own MessagePanel on one dwarf, or the Panel's own Add panel aimed at a mine (BR-21:
- * the same components in every mode, fed by the same `useMessageDock`), anchored by its stepped pointer to the dwarf or
+ * the same components in every mode, fed by the same `useMessageDock`, bound once in `DockedMessagePanel` and
+ * `DockedAddPanel`, which Valle's pins host too), anchored by its stepped pointer to the dwarf or
  * button that opened it. It never moves and cannot be dragged, detached or resized: its place is `risenGeometry`'s,
  * 14 px from the strip, measured from the island's anchored end like the window around it.
  *
@@ -23,8 +24,8 @@ import { captureChatView, restoredScrollTop } from '../../lib/chat/chatViewState
 import { prefersReducedMotion } from '../../lib/scene/sceneMotion'
 import { WATCHDOG_MARGIN_MS } from '../../lib/shell/motionTiming'
 import { RISEN, type RisenGeometry, type RisenWindow } from '../../lib/veta/risenWindow'
-import AddPanel from '../launch/AddPanel.vue'
-import DwarfMessagePanel from '../message/DwarfMessagePanel.vue'
+import DockedAddPanel from '../message/DockedAddPanel.vue'
+import DockedMessagePanel from '../message/DockedMessagePanel.vue'
 import { messageBoxesOf } from '../message/messageBoxes'
 
 type MessageDock = ReturnType<typeof useMessageDock>
@@ -202,70 +203,21 @@ defineExpose({ play, focusContent, captureView, restoreView })
     @transitionend="ended"
   >
     <span class="veta-risen__ptr" aria-hidden="true" />
-    <DwarfMessagePanel
+    <DockedMessagePanel
       v-if="chatOpen && dock.selectedDwarf.value"
       :key="dock.selectedDwarf.value.id"
-      :dwarf="dock.selectedDwarf.value"
-      :route-gone="dock.selectedRouteGone.value"
-      :feed="dock.drawnFeed.value"
-      :paging-note="dock.pagingNote.value ?? undefined"
-      :draft="dock.drafts.value[dock.selectedDwarf.value.id]"
-      :send-state="dock.messageStateFor(dock.selectedDwarf.value.id)"
-      :echoes="dock.sentEchoes[dock.selectedDwarf.value.id]"
-      :echo-attachments="dock.sentEchoAttachments[dock.selectedDwarf.value.id]"
-      :stop-disabled="dock.stopDisabled(dock.selectedDwarf.value.id)"
-      :answer-state="dock.questionState.byDwarfId[dock.selectedDwarf.value.id]"
+      :dock="dock"
+      :dwarf-id="dock.selectedDwarf.value.id"
       hosted-in="veta"
       :open-at="openAt"
       @open-in-panel="emit('open-in-panel')"
-      @draft="emit('draft', dock.selectedDwarf.value.id, $event)"
-      @send="dock.sendText(dock.selectedDwarf.value, $event)"
-      @retry="dock.retryMessage(dock.selectedDwarf.value, $event)"
-      @copy="dock.copyMessage"
-      @stop="dock.stopDwarf(dock.selectedDwarf.value)"
-      @answer="dock.answerQuestion(dock.selectedDwarf.value, $event)"
-      @answer-text="dock.answerQuestionInWords(dock.selectedDwarf.value, $event)"
-      @decide="dock.decidePermission(dock.selectedDwarf.value, $event)"
-      @open-console="dock.activate(dock.selectedDwarf.value)"
-      @open-path="dock.openPath"
-      @open-link="dock.openLink"
-      @page-back="dock.pageBack"
+      @draft="(dwarfId, text) => emit('draft', dwarfId, text)"
       @close="emit('close')"
     />
-    <AddPanel
+    <DockedAddPanel
       v-else-if="addOpen"
+      :dock="dock"
       :mine-name="addMineName"
-      :chips="dock.launch.chips.value"
-      :phase="dock.launch.phase.value"
-      :enabled="dock.launch.enabled.value"
-      :command="dock.launch.state.value.command"
-      :prompt="dock.launch.state.value.prompt"
-      :refusal="dock.launch.refusal.value"
-      :error="dock.launch.state.value.error"
-      :model-picker="dock.launch.modelPicker.value"
-      :effort-picker="dock.launch.effortPicker.value"
-      :permissions-visible="dock.launch.permissionsVisible.value"
-      :jev="dock.launch.jev.value"
-      :model="dock.launch.state.value.model"
-      :effort="dock.launch.state.value.effort"
-      :permission-mode="dock.launch.state.value.permissionMode"
-      :failure="dock.launch.state.value.failure"
-      :integration-notice="dock.launch.integrationNotice.value"
-      :jev-accepted="dock.launch.jevAccepted.value"
-      @enable-integration="dock.launch.enableIntegration"
-      @choose="dock.launch.choose"
-      @command="dock.launch.setCommand"
-      @commit="dock.launch.commit"
-      @prompt="dock.launch.setPrompt"
-      @model="dock.launch.setModel"
-      @effort="dock.launch.setEffort"
-      @permission-mode="dock.launch.setPermissionMode"
-      @toggle-jev="dock.launch.toggleJevEnabled"
-      @toggle-jev-auto="dock.launch.toggleJevAutoAccept"
-      @dismiss-jev="dock.launch.dismissJevDecision"
-      @submit="dock.launch.submit"
-      @retry="dock.launch.retry"
-      @pick-manually="dock.launch.pickManually"
       @close="emit('close')"
     />
   </div>

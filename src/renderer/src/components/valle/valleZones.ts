@@ -11,6 +11,7 @@ import type { useMines } from '../../composables/useMines'
 import type { MapPage } from '../../composables/useMapPage'
 import type { MinesPage } from '../../composables/useMinesPage'
 import type { VallePresence } from '../../composables/useVallePresence'
+import type { FailedSend } from '../../types'
 
 /** The Valle root's `track`, injected by the zones it draws. */
 export const VALLE_TRACK_ZONE: InjectionKey<VallePresence['track']> = Symbol('valle-track-zone')
@@ -21,6 +22,8 @@ export interface VallePages {
   readonly board: ReturnType<typeof useMines>['state']
   readonly map: MapPage
   readonly mines: MinesPage
+  /** The failed sends a hosted history marks: the chats' own record of the send (TVC; the Panel's, #635). */
+  failed(): Record<string, FailedSend[]>
 }
 
 /** The Valle root's pages, injected by the pages a zone or a nav page hosts. */
