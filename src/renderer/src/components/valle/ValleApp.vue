@@ -67,6 +67,11 @@
  *   preset's one writer with the other preset copied, the splitter at rest (S33.10), the Control room's mosaic
  *   recomputed (S32.15) or the Work front's split turned off (S30.11), the zones' content FLIPping to the default layout
  *   and the toast through the window's one queue (BR-23). Pins are never touched. Esc closes its menu first (NFR-A11Y-02).
+ * - The needs-you counter and queue (`useValleNeedsYou`, 07 machine 34; ISSUE-306): the top bar's "Need you ▸" and the
+ *   footer's row, read from the Host's queue the read model holds and patched in place by its frames. A press jumps in the
+ *   preset shown, never changing it: in the Control room the mine's column added and scrolled to (S32.14), the dwarf's
+ *   chat pinned and expanded (S29.19), its mine current (S35.01) and its zone's ring called; in the Work front a swap to
+ *   its mine (S28.15), then its tab. The footer is the window's third row and never moves.
  *
  * The bridge is the composition root's (`valleBridgeOf(window.api)`, R13); the observer is the browser's own unless a
  * test hands one.
@@ -80,6 +85,7 @@ import { useValleArrivalToast } from '../../composables/useValleArrivalToast'
 import { useValleChats } from '../../composables/useValleChats'
 import { useValleHistoryDrawer } from '../../composables/useValleHistoryDrawer'
 import { useValleMosaic, type ValleZoneKey } from '../../composables/useValleMosaic'
+import { useValleNeedsYou } from '../../composables/useValleNeedsYou'
 import { useMapPage } from '../../composables/useMapPage'
 import { useMines } from '../../composables/useMines'
 import { useMinesPage } from '../../composables/useMinesPage'
@@ -110,6 +116,8 @@ import { createValleReadModel } from '../../lib/valle/valleReadModel'
 import WorktreeDialog from '../browse/WorktreeDialog.vue'
 import ToastHost from '../overlay/ToastHost.vue'
 import ChatDeck from './ChatDeck.vue'
+import NeedsYouCounter from './NeedsYouCounter.vue'
+import NeedsYouQueue from './NeedsYouQueue.vue'
 import HistoryDrawer from './HistoryDrawer.vue'
 import ValleChat from './ValleChat.vue'
 import NavSlot from '../shell/NavSlot.vue'
@@ -416,12 +424,16 @@ watch(
   },
   { immediate: true }
 )
-/** The columns with the current mine marked and the mines needing the person (the ring's host, ISSUE-306). */
+/**
+ * The columns with the current mine marked, the mines needing the person wearing the needs-you ring, and the one a
+ * needs-you jump called (ISSUE-306).
+ */
 const zoneColumns = computed(() =>
   columns.value.map((column) => ({
     ...column,
     current: column.mineId === currentMine.current.value,
-    needs: model.dwarfs.value.some((dwarf) => dwarf.mineId === column.mineId && dwarf.needsYou)
+    needs: model.dwarfs.value.some((dwarf) => dwarf.mineId === column.mineId && dwarf.needsYou),
+    called: needsYou.called.value?.mineId === column.mineId ? needsYou.called.value.seq : 0
   }))
 )
 /** A pin selected: its chat focused, and in the Control room its mine made current even when already in focus (S35.01). */
@@ -430,6 +442,21 @@ function selectPin(key: PinKey): void {
   const pin = pins.set.value.pins.find((p) => p.key === key)
   if (pin?.kind === 'chat') currentMine.send({ kind: 'chat', mineId: pin.mineId })
 }
+/** The needs-you counter and queue (07 machine 34; ISSUE-306). */
+const needsYou = useValleNeedsYou({
+  model,
+  preset: () => view.value.preset,
+  frontMine: () => frontMine.value,
+  // Each part through the composable that owns it, one writer per key; the preset is only read.
+  jump: {
+    reveal: (mineId) => mosaic.reveal(mineId),
+    pin: (dwarfId, mineId) => {
+      split.sendPin({ kind: 'jump', dwarfId, mineId })
+    },
+    current: (mineId) => currentMine.send({ kind: 'chat', mineId }),
+    swap: (mineId, dwarfId) => preset.send({ kind: 'pick', mineId, dwarfId })
+  }
+})
 // Valle's Settings page writes the Sound preferences alone: the engine adopts them when the page closes.
 watch(
   () => view.value.page,
@@ -670,7 +697,11 @@ onUnmounted(() => {
       @menu="resetPreset.toggle()"
       @reset="resetPreset.reset()"
       @menu-dismiss="resetPreset.dismiss()"
-    />
+    >
+      <template #counter>
+        <NeedsYouCounter :view="needsYou.counter.value" @press="needsYou.press()" />
+      </template>
+    </ValleTopBar>
     <div ref="body" class="dm-valle__body" :style="{ '--chat-w': chatWidth }">
       <nav class="dm-valle__nav" aria-label="Valle">
         <NavSlot
@@ -827,6 +858,10 @@ onUnmounted(() => {
         <ToastHost />
       </div>
     </div>
+    <NeedsYouQueue
+      :entries="needsYou.entries.value"
+      @press="(entry) => needsYou.pressEntry(entry)"
+    />
     <div class="dm-vghosts" aria-hidden="true"></div>
     <WorktreeDialog
       :question="mosaic.worktree.value"
@@ -841,7 +876,7 @@ onUnmounted(() => {
 .valle {
   position: relative;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   width: 100vw;
   height: 100vh;
   overflow: hidden;

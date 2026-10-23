@@ -17,8 +17,12 @@
  *   package has no copy for it (§24 I-34). A pure read of the order, nothing stored.
  * - The current mine (07 machine 35; ISSUE-307): the host names it; its zone carries `aria-current` and ", current" in
  *   its name, and its body the corner brackets (`CurrentMineMark`), inside the needs-you ring the zone hosts
- *   (`data-needs`; the ring itself is ISSUE-306's). A single click on a zone's painting or header, no dwarf and no
+ *   (`data-needs`). A single click on a zone's painting or header, no dwarf and no
  *   control touched, reports the mine (S35.02); a double-click on the art still dives.
+ * - The needs-you ring (07 machine 34; `DS` organisms/mine-zone `.dm-vz__ring`; ISSUE-306): the heavy brass outline a zone
+ *   wears while a dwarf of its mine waits on the person, drawn above the plates and never over the art's middle, the
+ *   brackets nested inside it and never merged with them. A needs-you jump to the mine calls it (S34.05): the ring
+ *   flashes once, restarted by each call (`called`, the jump's number).
  */
 import type { MineId, ZoneContent } from '@dwarfai/contracts'
 import { computed, inject, onMounted, onUnmounted, onUpdated, shallowRef } from 'vue'
@@ -45,6 +49,8 @@ const props = defineProps<{
     current?: boolean
     /** A dwarf of this mine waits on the person: the zone hosts the needs-you ring. */
     needs?: boolean
+    /** The number of the needs-you jump that called this zone (S34.05), 0 when none: each call flashes the ring. */
+    called?: number
   }[]
   /** The zone menu open on a column, with its entries, or `null`. */
   menu?: { mineId: MineId; entries: readonly ZoneMenuEntry[] } | null
@@ -151,6 +157,12 @@ onUnmounted(() => {
         :aria-label="`Mine ${column.name}${column.current ? ', current' : ''}`"
       >
         <div class="dm-vz__bg" aria-hidden="true"></div>
+        <span
+          :key="`ring-${column.called ?? 0}`"
+          class="dm-vz__ring"
+          :class="{ 'is-called': (column.called ?? 0) > 0 }"
+          aria-hidden="true"
+        ></span>
         <div class="dm-vz__head" @click="zoneClick($event, column.mineId)">
           <ZoneHeader
             :name="column.name"
@@ -241,6 +253,54 @@ onUnmounted(() => {
   position: absolute;
   inset: 0;
   pointer-events: none;
+}
+/*
+ * Attention level 1 (`DS` organisms/mine-zone): the heavy outline Veta uses, above the plates, never over the art's middle.
+ * A call flashes it once; under reduced motion it does not flash (ISSUE-311 owns the reduced-motion stand-ins).
+ */
+.dm-vz__ring {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  opacity: 0;
+  pointer-events: none;
+  box-shadow:
+    inset 0 0 0 4px var(--brass),
+    inset 0 0 0 6px var(--rock-lo);
+}
+.dm-vz[data-needs='true'] > .dm-vz__ring {
+  opacity: 1;
+}
+.dm-vz__ring::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  box-shadow: inset 0 0 0 8px var(--parch-hi);
+}
+.dm-vz__ring.is-called::after {
+  animation: dm-vz-call 1200ms steps(1, end) both;
+}
+@keyframes dm-vz-call {
+  0% {
+    opacity: 1;
+  }
+  25% {
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+  }
+  75%,
+  100% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dm-vz__ring.is-called::after {
+    animation: none;
+    opacity: 0;
+  }
 }
 .dm-vz__head {
   position: relative;

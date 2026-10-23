@@ -121,3 +121,30 @@ describe('Valle on screen (07 S39.04, S39.05; ISSUE-299)', () => {
     w.scope.stop()
   })
 })
+
+// APPENDED for ISSUE-306: a mine the Control room's mosaic scrolled out of view is not on screen, so level 3 may fire
+// for it (UC-064; the level-3 decision itself is the Host's, ADR-018 item 2).
+describe('a mosaic mine scrolled out of the viewport (ISSUE-306)', () => {
+  it('[US-SHELL-010.AC08, S39.05, BR-02] a mosaic mine scrolled out of the viewport is not reported on screen', async () => {
+    const w = world()
+    const a = w.zone(A, 'mine')
+    const b = w.zone(B, 'mine')
+    const c = w.zone(C, 'mine')
+    // The mosaic shows A and B; C, the last column, lies beyond the viewport's right edge.
+    w.observer().fire([
+      [a.element, 1],
+      [b.element, 1],
+      [c.element, 0]
+    ])
+    await w.settle()
+    expect(w.reports.at(-1)).toEqual([A, B])
+    // Scrolled sideways until C is in view and A is out: A is no longer on screen.
+    w.observer().fire([
+      [a.element, 0],
+      [c.element, 1]
+    ])
+    await w.settle()
+    expect(w.reports.at(-1)).toEqual([B, C])
+    w.scope.stop()
+  })
+})
