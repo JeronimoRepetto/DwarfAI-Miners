@@ -1,0 +1,492 @@
+{
+  "name": "showcase",
+  "about": "The demo's showcase: one mine per dwarf universe, plus one mine named like a software project. Edit names, prompts and replies here; scenario.mjs and its tests check the shape. Every dwarf runs on a stub CLI.",
+  "launchEveryMs": 1500,
+  "removeFolderAtMs": 8000,
+  "holdIdleMs": 25000,
+  "holdEveryMs": 5000,
+  "sleepers": ["bombur", "sleepy"],
+  "mines": [
+    {
+      "key": "moria",
+      "name": "Moria",
+      "tier": "uranium",
+      "enterable": true,
+      "crew": [
+        {
+          "key": "balin",
+          "name": "Balin",
+          "provider": "claude",
+          "behavior": "permission",
+          "asks": true,
+          "prompt": "Reopen the east gate wiring and log every door that still sticks.",
+          "reply": "The east gate wiring is back and the door log is written. Two doors still stick; both are marked in the log."
+        },
+        {
+          "key": "oin",
+          "name": "Óin",
+          "provider": "claude",
+          "behavior": "survey",
+          "prompt": "Map the lower halls and list every tunnel that still needs shoring.",
+          "reply": "Seven tunnels in the lower halls still need shoring. They are listed in `docs/halls.md` with their depth, and the survey test now fails if a new one is left unmarked."
+        },
+        {
+          "key": "ori",
+          "name": "Ori",
+          "provider": "codex",
+          "behavior": "question",
+          "asks": true,
+          "prompt": "Move the chronicle entries into the record keeper's database.",
+          "reply": "Going with {answer}. The migration is written and the chronicle reads its entries from the database now."
+        },
+        {
+          "key": "gimli",
+          "name": "Gimli",
+          "provider": "claude",
+          "behavior": "refactor",
+          "prompt": "Refactor the cart scheduler so two carts never share a rail.",
+          "reply": "Done. A rail is now reserved before a cart leaves and released when it arrives. **12 tests** pass, including one with two carts racing for the same rail."
+        },
+        {
+          "key": "gloin",
+          "name": "Glóin",
+          "provider": "codex",
+          "behavior": "profile",
+          "prompt": "Profile the mithril sorter and find the slowest stage.",
+          "reply": "The weighing stage is the slowest: it reads the scale once per nugget. Batching the reads cut the sorter from 41 ms to 9 ms per cart on the bench."
+        },
+        {
+          "key": "dwalin",
+          "name": "Dwalin",
+          "provider": "claude",
+          "behavior": "tests",
+          "prompt": "Write tests for the guard rotation timer.",
+          "reply": "Added nine tests for the guard rotation: shift changes, a missed handover, and the midnight rollover that used to skip a watch."
+        }
+      ]
+    },
+    {
+      "key": "heighho",
+      "name": "Heigh-Ho Mine",
+      "tier": "silver",
+      "enterable": true,
+      "crew": [
+        {
+          "key": "doc",
+          "name": "Doc",
+          "provider": "claude",
+          "behavior": "docs",
+          "prompt": "Document the gem sorting steps for the new hands.",
+          "reply": "Wrote `docs/sorting.md`: the five sorting steps, what each sieve does, and the two gems that must never share a basket."
+        },
+        {
+          "key": "grumpy",
+          "name": "Grumpy",
+          "provider": "codex",
+          "behavior": "question-roster",
+          "asks": true,
+          "prompt": "Rework the shift roster so nobody digs two nights in a row.",
+          "reply": "Going with {answer}. The roster is reworked and nobody digs two nights in a row now."
+        },
+        {
+          "key": "happy",
+          "name": "Happy",
+          "provider": "claude",
+          "behavior": "tune",
+          "prompt": "Tune the pickaxe swing timings in the work song.",
+          "reply": "The swing timings follow the song now: one swing per beat, a rest on every fourth."
+        },
+        {
+          "key": "sleepy",
+          "name": "Sleepy",
+          "provider": "claude",
+          "behavior": "nap",
+          "prompt": "Rename the lantern helper to something clearer.",
+          "reply": "Renamed `lampThing` to `lanternHelper` in three files."
+        },
+        {
+          "key": "bashful",
+          "name": "Bashful",
+          "provider": "codex",
+          "behavior": "check",
+          "prompt": "Check the ore carts for loose wheels.",
+          "reply": "Two carts had a loose wheel; both are tightened and noted in `reports/carts.md`."
+        },
+        {
+          "key": "sneezy",
+          "name": "Sneezy",
+          "provider": "claude",
+          "behavior": "tests",
+          "prompt": "Add tests for the dust filter alarm.",
+          "reply": "Added six tests for the dust filter alarm, including the one that rang every time someone sneezed."
+        },
+        {
+          "key": "dopey",
+          "name": "Dopey",
+          "provider": "claude",
+          "behavior": "map",
+          "prompt": "Add markers for every lantern to the mine map.",
+          "reply": "Every lantern has a marker on the map, and the legend explains the three lantern colours."
+        }
+      ]
+    },
+    {
+      "key": "nidavellir",
+      "name": "Nidavellir",
+      "tier": "silver",
+      "enterable": true,
+      "crew": [
+        {
+          "key": "brokkr",
+          "name": "Brokkr",
+          "provider": "claude",
+          "behavior": "survey",
+          "prompt": "Keep the bellows log and flag every gap in the airflow.",
+          "reply": "The bellows log is complete. Three gaps in the airflow, all under two seconds, are flagged in `logs/bellows.md`."
+        },
+        {
+          "key": "eitri",
+          "name": "Eitri",
+          "provider": "codex",
+          "behavior": "tune",
+          "prompt": "Tune the forge heat curve for the hammer casting.",
+          "reply": "The heat curve is tuned: the casting holds its temperature within five degrees from start to quench."
+        },
+        {
+          "key": "dvalin",
+          "name": "Dvalin",
+          "provider": "claude",
+          "behavior": "profile",
+          "prompt": "Profile the rune stamping press and find the slowest stage.",
+          "reply": "The alignment stage is the slowest. Caching the die positions cut each stamp from 120 ms to 35 ms."
+        }
+      ]
+    },
+    {
+      "key": "boatmurdered",
+      "name": "Boatmurdered",
+      "tier": "copper",
+      "enterable": true,
+      "crew": [
+        {
+          "key": "urist",
+          "name": "Urist McMiner",
+          "provider": "claude",
+          "behavior": "check",
+          "prompt": "Check the floodgates before the next magma test.",
+          "reply": "All four floodgates close in under a second. The magma test can go ahead; the checklist is in `reports/floodgates.md`."
+        },
+        {
+          "key": "mason",
+          "name": "Urist McMason",
+          "provider": "codex",
+          "behavior": "docs",
+          "prompt": "Write down how the elephant fences are built.",
+          "reply": "Wrote `docs/fences.md`: the materials, the post spacing, and why the fence needs a second gate."
+        }
+      ]
+    },
+    {
+      "key": "karak",
+      "name": "Karak Eight Peaks",
+      "tier": "bronze",
+      "enterable": true,
+      "crew": [
+        {
+          "key": "gotrek",
+          "name": "Gotrek",
+          "provider": "claude",
+          "behavior": "tests",
+          "prompt": "Add tests for the axe sharpening schedule.",
+          "reply": "Added seven tests for the sharpening schedule, including the weekly whetstone swap."
+        },
+        {
+          "key": "belegar",
+          "name": "Belegar",
+          "provider": "codex",
+          "behavior": "map",
+          "prompt": "Map the eight peaks' tunnels that are still held.",
+          "reply": "Five of the eight peaks' tunnels are still held. The map marks them and the three that need reinforcing."
+        }
+      ]
+    },
+    {
+      "key": "erebor",
+      "name": "Erebor",
+      "tier": "gold",
+      "enterable": true,
+      "crew": [
+        {
+          "key": "thorin",
+          "name": "Thorin",
+          "provider": "claude",
+          "behavior": "map",
+          "prompt": "Index the treasury and flag every item without an owner.",
+          "reply": "The treasury index is rebuilt. 214 items had no owner; they are flagged in `reports/treasury.md`."
+        },
+        {
+          "key": "fili",
+          "name": "Fíli",
+          "provider": "codex",
+          "behavior": "tune",
+          "prompt": "Tune the forge cooldown table for the new anvils.",
+          "reply": "The cooldown table is tuned for the new anvils: iron cools in 4 strikes, steel in 7. The anvil bench is 18% faster."
+        },
+        {
+          "key": "kili",
+          "name": "Kíli",
+          "provider": "claude",
+          "behavior": "check",
+          "prompt": "Check the front gate sensors after last night's storm.",
+          "reply": "All gate sensors answer. One reads high after the storm; I recalibrated it and noted it in `reports/gate.md`."
+        },
+        {
+          "key": "bombur",
+          "name": "Bombur",
+          "provider": "claude",
+          "behavior": "nap",
+          "prompt": "Fix the typo in the kitchen rota.",
+          "reply": "Fixed: \"breakfats\" became \"breakfast\" in two places of the kitchen rota."
+        }
+      ]
+    },
+    {
+      "key": "ledger",
+      "name": "ore-ledger",
+      "tier": "copper",
+      "enterable": true,
+      "crew": [
+        {
+          "key": "ledger",
+          "name": null,
+          "provider": "claude",
+          "behavior": "refactor",
+          "prompt": "Make the ledger refuse to credit ore while the tier is still a guess.",
+          "reply": "Done. The ledger reads the measured tier only, so a mine that has never been walked credits nothing. Added a regression test."
+        }
+      ]
+    }
+  ],
+  "late": [
+    {
+      "key": "bofur",
+      "name": "Bofur",
+      "provider": "claude",
+      "behavior": "report",
+      "mine": "erebor",
+      "atMs": 75000,
+      "prompt": "Brew a fresh status report for the mountain's kitchens.",
+      "reply": "The kitchens are fine: 14 ovens on, 2 cooling down, none smoking. The report is in `reports/kitchens.md`."
+    }
+  ],
+  "followUps": [
+    "Good. Now look for anything else on that list that needs a second pass.",
+    "Run the whole suite once more and tidy what you touched.",
+    "Thanks. Pick the next small thing from the backlog and do it."
+  ],
+  "followUpReplies": [
+    "Two items needed a second pass; both are done and the notes are up to date.",
+    "All green, and the files I touched are tidied.",
+    "Took the next backlog item: the lamp brightness is now read from the config, with a test."
+  ],
+  "behaviors": {
+    "survey": {
+      "steps": [
+        ["Read", "src/halls/survey.ts"],
+        ["Grep", "needsShoring"],
+        ["Read", "src/halls/shoring.ts"],
+        ["Bash", "pnpm vitest run halls"],
+        ["Edit", "src/halls/shoring.ts"],
+        ["Read", "docs/halls.md"],
+        ["Bash", "pnpm vitest run halls"],
+        ["Edit", "docs/halls.md"]
+      ],
+      "stepMs": 11000,
+      "tokens": 540000
+    },
+    "refactor": {
+      "steps": [
+        ["Read", "src/core/scheduler.ts"],
+        ["Grep", "reserve"],
+        ["Edit", "src/core/scheduler.ts"],
+        ["Bash", "pnpm vitest run core"]
+      ],
+      "stepMs": 9000,
+      "tokens": 420000
+    },
+    "profile": {
+      "steps": [
+        ["Bash", "node bench/run.mjs"],
+        ["Read", "src/forge/stages.ts"],
+        ["Grep", "stage"],
+        ["Bash", "node bench/run.mjs --stage slowest"],
+        ["Edit", "src/forge/stages.ts"],
+        ["Bash", "node bench/run.mjs"]
+      ],
+      "stepMs": 13000,
+      "tokens": 660000
+    },
+    "tests": {
+      "steps": [
+        ["Read", "src/core/timer.ts"],
+        ["Edit", "src/core/timer.test.ts"],
+        ["Bash", "pnpm vitest run timer"],
+        ["Edit", "src/core/timer.test.ts"],
+        ["Bash", "pnpm vitest run timer"],
+        ["Edit", "src/core/timer.test.ts"],
+        ["Bash", "pnpm vitest run timer"]
+      ],
+      "stepMs": 12000,
+      "tokens": 480000
+    },
+    "permission": {
+      "steps": [
+        ["Read", "src/gates/wiring.ts"],
+        ["Grep", "doorState"],
+        ["Read", "src/gates/doors.ts"],
+        ["Bash", "pnpm vitest run gates"]
+      ],
+      "stepMs": 10000,
+      "ask": {
+        "kind": "permission",
+        "tool": "Write",
+        "target": "src/gates/doorLog.ts"
+      },
+      "replyDenied": "I left `src/gates/doorLog.ts` as it was. Tell me where the door log should live instead.",
+      "tokens": 510000
+    },
+    "question": {
+      "steps": [
+        ["Read", "src/records/entries.ts"],
+        ["Read", "src/records/schema.sql"],
+        ["Edit", "migrations/0007-entries.sql"]
+      ],
+      "stepMs": 9000,
+      "ask": {
+        "kind": "question",
+        "questions": [
+          {
+            "id": "target",
+            "header": "Storage",
+            "question": "Which store should the chronicle move to?",
+            "options": ["Postgres 16", "SQLite", "Keep both for one release"]
+          },
+          {
+            "id": "seal",
+            "header": "Sealing",
+            "question": "Seal each entry on the first count, or wait for a second one?",
+            "options": ["Seal on the first", "Wait for a second count"]
+          }
+        ]
+      },
+      "tokens": 420000
+    },
+    "nap": {
+      "steps": [
+        ["Grep", "typo"],
+        ["Edit", "docs/rota.md"]
+      ],
+      "stepMs": 4000,
+      "tokens": 120000
+    },
+    "tune": {
+      "steps": [
+        ["Read", "src/forge/table.ts"],
+        ["Bash", "node bench/forge.mjs"],
+        ["Edit", "src/forge/table.ts"],
+        ["Bash", "node bench/forge.mjs"],
+        ["Edit", "src/forge/table.ts"],
+        ["Bash", "pnpm vitest run forge"]
+      ],
+      "stepMs": 12000,
+      "tokens": 570000
+    },
+    "docs": {
+      "steps": [
+        ["Read", "src/core/steps.ts"],
+        ["Read", "docs/index.md"],
+        ["Edit", "docs/steps.md"],
+        ["Read", "src/core/rules.ts"],
+        ["Edit", "docs/steps.md"]
+      ],
+      "stepMs": 14000,
+      "tokens": 360000
+    },
+    "map": {
+      "steps": [
+        ["Read", "src/maps/tunnels.ts"],
+        ["Grep", "markerAt"],
+        ["Edit", "src/maps/tunnels.ts"],
+        ["Bash", "pnpm vitest run maps"],
+        ["Edit", "src/maps/legend.ts"],
+        ["Bash", "pnpm vitest run maps"]
+      ],
+      "stepMs": 12000,
+      "tokens": 450000
+    },
+    "check": {
+      "steps": [
+        ["Bash", "node tools/inspect.mjs"],
+        ["Read", "reports/latest.json"],
+        ["Grep", "loose"],
+        ["Bash", "node tools/inspect.mjs --section north"],
+        ["Edit", "reports/inspection.md"]
+      ],
+      "stepMs": 15000,
+      "tokens": 390000
+    },
+    "report": {
+      "steps": [
+        ["Bash", "node tools/status.mjs"],
+        ["Read", "src/kitchens/line.ts"],
+        ["Edit", "reports/kitchens.md"],
+        ["Bash", "node tools/status.mjs --check"],
+        ["Edit", "reports/kitchens.md"]
+      ],
+      "stepMs": 12000,
+      "tokens": 330000
+    },
+    "follow-up": {
+      "steps": [
+        ["Read", "docs/notes.md"],
+        ["Grep", "TODO"],
+        ["Edit", "docs/notes.md"],
+        ["Bash", "pnpm vitest run"]
+      ],
+      "stepMs": 13000,
+      "tokens": 360000
+    },
+    "question-roster": {
+      "steps": [
+        ["Read", "src/roster/shifts.ts"],
+        ["Grep", "nightShift"],
+        ["Edit", "src/roster/shifts.ts"]
+      ],
+      "stepMs": 9000,
+      "ask": {
+        "kind": "question",
+        "questions": [
+          {
+            "id": "rest",
+            "header": "Rest night",
+            "question": "Which night should everyone rest?",
+            "options": ["Friday", "Saturday", "Sunday"]
+          },
+          {
+            "id": "late",
+            "header": "Late shift",
+            "question": "Should Sleepy keep the late shift?",
+            "options": ["Yes", "No, rotate it"]
+          }
+        ]
+      },
+      "tokens": 420000
+    }
+  },
+  "fallback": {
+    "steps": [["Read", "README.md"]],
+    "stepMs": 3000,
+    "tokens": 90000,
+    "reply": "Noted. I will keep that in mind."
+  }
+}
