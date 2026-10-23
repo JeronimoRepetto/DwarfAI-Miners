@@ -17,6 +17,10 @@
  *   reporting `aria-pressed`, disabled and titled as machine 30 says. With both panes shown both tabs read as selected;
  *   only the focused pane's tab carries the brass edge (`is-focus-pane`), and its pane the brass outline (`is-focus`),
  *   which shows only in a split (AC07). A press in the other pane selects its chat (S30.09).
+ * - The mine's history opens as a drawer under the panes (07 machine 36; US-VALLE-011; ISSUE-308), drawn in the
+ *   `drawer` slot; the deck then gives it the row the design gives it (`data-drawer="open"`) and the tabs and panes
+ *   above stay where they are. The History bar at its foot, "History · opens under the chats", reports whether it is
+ *   open (`aria-expanded`) and asks for it (`history`).
  *
  * Presentational: the set, its selection and every decision are the Valle root's (`useVallePins`).
  */
@@ -24,6 +28,7 @@ import { computed, nextTick, ref, shallowRef, watch } from 'vue'
 import { arrowTarget, type FocusRequest, type PinKey, type PinView } from '../../lib/valle/pins'
 import type { SplitButton } from '../../lib/valle/split'
 import ActionButton from '../controls/ActionButton.vue'
+import PixelIcon from '../icon/PixelIcon.vue'
 
 /** The split as the Work front shows it: the panes, first then second, and "⫽". */
 export interface DeckSplit {
@@ -38,6 +43,8 @@ const props = defineProps<{
   focusRequest: FocusRequest | null
   /** Machine 30's panes and "⫽"; absent, the selected tab's pane alone and no "⫽". */
   split?: DeckSplit | null
+  /** The history drawer (machine 36): whether it is drawn; absent, no History bar. */
+  history?: { readonly open: boolean } | null
 }>()
 const emit = defineEmits<{
   select: [key: PinKey]
@@ -46,6 +53,8 @@ const emit = defineEmits<{
   drop: [order: readonly PinKey[]]
   'drag-cancel': []
   split: []
+  /** The History bar pressed. */
+  history: []
 }>()
 
 const root = ref<HTMLElement | null>(null)
@@ -165,7 +174,13 @@ function onDragEnd(): void {
 </script>
 
 <template>
-  <section ref="root" class="dm-cdeck" aria-label="Chats" tabindex="-1">
+  <section
+    ref="root"
+    class="dm-cdeck"
+    aria-label="Chats"
+    tabindex="-1"
+    :data-drawer="history?.open ? 'open' : undefined"
+  >
     <header class="dm-cdeck__head m-mat">
       <div
         class="dm-cdeck__tabs"
@@ -238,6 +253,18 @@ function onDragEnd(): void {
         <slot name="chat" :pin="pane" />
       </div>
     </div>
+    <slot name="drawer" />
+    <button
+      v-if="history"
+      type="button"
+      class="dm-cdeck__histbar m-mat"
+      :aria-expanded="history.open ? 'true' : 'false'"
+      @click="emit('history')"
+    >
+      <PixelIcon name="history" />
+      <span>History</span>
+      <span class="dm-cdeck__histhint">opens under the chats</span>
+    </button>
   </section>
 </template>
 
@@ -245,11 +272,44 @@ function onDragEnd(): void {
 /* `DS/docs/components.md` organisms/chat-deck and molecules/chat-tab, Geometry. */
 .dm-cdeck {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
   gap: 4px;
   min-width: 0;
   min-height: 0;
   height: 100%;
+}
+/* The drawer under the panes: it takes its row, the tabs and panes above stay in place (07 machine 36). */
+.dm-cdeck[data-drawer='open'] {
+  grid-template-rows: auto minmax(160px, 1fr) minmax(0, 0.9fr) auto;
+}
+.dm-cdeck__histbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  margin: var(--px, 2px);
+  padding: 0 10px;
+  font-family: var(--f-label);
+  font-size: var(--fs-section, 16px);
+  line-height: 1;
+  color: var(--ink-soft);
+  --mat-fill: var(--wood-lo);
+  --mat-hi: var(--wood);
+  --mat-lo: var(--rock-lo);
+}
+.dm-cdeck__histbar:hover {
+  color: var(--ink);
+  --mat-edge: var(--brass-lo);
+}
+.dm-cdeck__histbar[aria-expanded='true'] {
+  color: var(--parchment);
+  --mat-edge: var(--brass-lo);
+}
+.dm-cdeck__histhint {
+  font-family: var(--f-meta);
+  font-size: var(--fs-meta, 12px);
+  line-height: 1;
+  color: var(--ink-faint);
 }
 .dm-cdeck__head {
   display: flex;

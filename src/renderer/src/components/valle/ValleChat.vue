@@ -8,6 +8,8 @@
  *
  * - The panel's own close (its ×, or Esc inside it) unpins it, as × on its line or tab does (S18.04, S29.10, S29.18).
  * - Esc inside it stops there: it never also leaves the Work front or a page beneath (NFR-A11Y-02).
+ * - Its "Mine history" asks the host for its mine's history (`history`): the Control room shows it in the mine's zone
+ *   (07 S31.11), the Work front opens the drawer under the chats (S36.01; ISSUE-308).
  */
 import type { PinView } from '../../lib/valle/pins'
 import type { useMessageDock } from '../../composables/useMessageDock'
@@ -22,7 +24,7 @@ const props = defineProps<{
   /** The name of the mine an Add pin is aimed at. */
   mineName: string
 }>()
-const emit = defineEmits<{ close: [] }>()
+const emit = defineEmits<{ close: []; history: [] }>()
 
 function hold(event: KeyboardEvent): void {
   event.preventDefault()
@@ -44,6 +46,7 @@ function draft(dwarfId: string, text: string): void {
     :data-valle-chat="pin.key"
     @draft="draft"
     @close="emit('close')"
+    @history="emit('history')"
     @keydown.escape="hold"
   />
   <DockedAddPanel

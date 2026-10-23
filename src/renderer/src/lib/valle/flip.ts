@@ -7,7 +7,8 @@
  *   by their corner, the painting by its centre, keeping its size. Only `transform` and `opacity` ever animate.
  * - Frozen copies: what leaves (the other columns and the stack on a dive, the list and the deck on a climb, the old
  *   mine on a swap) is cloned into `.dm-vghosts` over the stage at its own place, plays its exit, and is removed when the
- *   run ends. The columns' copies are clipped to the mosaic.
+ *   run ends. The columns' copies are clipped to the mosaic. The deck's copy on a climb leaves without the history
+ *   drawer, which closes at once (S28.11, S36.04; ISSUE-308).
  * - A mine outside the mosaic rises from 8 px below on a dive and sinks 8 px fading on the climb; the mosaic's saved
  *   scroll comes back at 0 ms of the climb, before the column is measured.
  * - The run (`startValleRun`): it ends on the first of its own duration on the frame clock, a watchdog at that duration
@@ -279,6 +280,14 @@ export function createValleStage(deps: ValleStageDeps): ValleStage {
     return made
   }
 
+  /** The deck's frozen copy with the history drawer closed: it never leaves with the deck (S28.11, S36.04). */
+  function withoutDrawer(copy: HTMLElement): HTMLElement {
+    for (const drawer of copy.querySelectorAll('[data-valle-drawer]')) drawer.remove()
+    copy.removeAttribute('data-drawer')
+    copy.querySelector('.dm-cdeck__histbar')?.setAttribute('aria-expanded', 'false')
+    return copy
+  }
+
   /** `box` placed relative to `origin`. */
   function place(element: HTMLElement, box: ValleBox, origin: ValleBox): void {
     Object.assign(element.style, {
@@ -413,7 +422,9 @@ export function createValleStage(deps: ValleStageDeps): ValleStage {
     const list = live(root, '.dm-mrows')[0]
     if (list !== undefined) leaving.push([copyOf(list, ghosts, origin), -VALLE_MOTION.list, 0])
     const deck = live(root, '.dm-cdeck')[0]
-    if (deck !== undefined) leaving.push([copyOf(deck, ghosts, origin), 0, VALLE_MOTION.deck])
+    if (deck !== undefined) {
+      leaving.push([withoutDrawer(copyOf(deck, ghosts, origin)), 0, VALLE_MOTION.deck])
+    }
     if (!motion.inMosaic && front !== undefined) {
       leaving.push([copyOf(front, ghosts, origin), 0, VALLE_MOTION.rise])
     }

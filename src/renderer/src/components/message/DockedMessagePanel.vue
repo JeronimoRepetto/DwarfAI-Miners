@@ -35,6 +35,8 @@ const emit = defineEmits<{
   close: []
   /** "▢ Open in the Panel" in the chat header (S24.12). */
   'open-in-panel': []
+  /** "Mine history" in the chat header or its ⋯ menu: the host shows the mine's history (07 S31.11, S36.01). */
+  history: []
 }>()
 
 const chat = computed(() => props.dock.conversationOf(props.dwarfId))
@@ -67,6 +69,7 @@ function live(act: (dwarf: Dwarf) => void): void {
     :hosted-in="hostedIn"
     :open-at="openAt"
     @open-in-panel="emit('open-in-panel')"
+    @history="emit('history')"
     @draft="emit('draft', dwarfId, $event)"
     @send="(payload) => live((d) => dock.sendText(d, payload))"
     @retry="(echoId) => live((d) => dock.retryMessage(d, echoId))"

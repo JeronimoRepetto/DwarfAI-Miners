@@ -10,6 +10,8 @@
  *   "⋯" of its zone menu (07 machine 31; ISSUE-304: no mines list and no "Close this column" here), the art, the parts
  *   the dive's FLIP moves into place (`flip.ts`). Its other tools (ambience, history) and the art itself are later
  *   issues' (`art` slot), and so is what the zone shows instead of its mine (`content` slot).
+ * - "Mine history · opens under the chats" in the mine's toolbar asks for the history drawer under the chats (07 S36.01;
+ *   US-VALLE-011; ISSUE-308), reporting whether it is open (`aria-expanded`); the drawer itself is the deck's.
  * - The zone registers with the on-screen report (`VALLE_TRACK_ZONE`, S39.05): it counts only while showing its mine.
  * - The current mine (07 machine 35; US-VALLE-013.AC05, .AC11; ISSUE-307): the one mine shown is always current, its
  *   zone with `aria-current`, ", current" in its name and the corner brackets in its body; its list line wears the gold
@@ -20,6 +22,7 @@ import type { MineId, ZoneContent } from '@dwarfai/contracts'
 import { computed, inject, onUnmounted, shallowRef, watch } from 'vue'
 import { VALLE_LIST_FOLDED_WIDTH, VALLE_LIST_WIDTH } from '../../lib/valle/preset'
 import type { ZoneMenuEntry, ZoneMenuItemId } from '../../lib/valle/zone'
+import ActionButton from '../controls/ActionButton.vue'
 import CurrentMineMark from './CurrentMineMark.vue'
 import ZoneHeader from './ZoneHeader.vue'
 import ZoneMenu from './ZoneMenu.vue'
@@ -37,6 +40,8 @@ const props = defineProps<{
   menu?: readonly ZoneMenuEntry[] | null
   /** A dive or a climb plays (machine 28): the current mark hides until it settles. */
   moving?: boolean
+  /** The history drawer under the chats is drawn (07 machine 36). */
+  historyOpen?: boolean
 }>()
 const emit = defineEmits<{
   fold: []
@@ -47,6 +52,8 @@ const emit = defineEmits<{
   'menu-dismiss': []
   /** S35.02: a single click on the mine's painting or header. */
   current: [mineId: MineId]
+  /** S36.01: "Mine history" in the mine's toolbar. */
+  history: [mineId: MineId]
 }>()
 
 /** A dwarf's sprite, or a control in the header or the art: its press is its own, never a click on the painting. */
@@ -146,7 +153,18 @@ const listWidth = computed(
             :content="shows"
             :menu-open="(menu ?? null) !== null"
             @menu="emit('menu')"
-          />
+          >
+            <template #tools>
+              <ActionButton
+                icon="history"
+                size="sm"
+                title="Mine history · opens under the chats"
+                :aria-expanded="historyOpen === true ? 'true' : 'false'"
+                data-valle-history
+                @click="emit('history', mine.mineId)"
+              />
+            </template>
+          </ZoneHeader>
           <ZoneMenu
             v-if="menu"
             :entries="menu"
