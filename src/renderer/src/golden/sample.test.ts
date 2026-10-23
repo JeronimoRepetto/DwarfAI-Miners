@@ -481,6 +481,32 @@ describe('adaptSample projects', () => {
     expect(never).not.toHaveProperty('weightBytes')
   })
 
+  // AMENDMENT-26 (owner-approved 2026-10-23): the card reads its progress and its measuring state off the board mine
+  // (`MineWire.score`, `MineWire.state`), so the sample's board mines carry them as the Host would.
+  it('[US-MINES-008.AC01, US-MINES-008.AC02, US-MINES-008.AC03, US-MINES-008.AC04] gives each board mine the score the Host would carry and marks the measuring ones', () => {
+    const sample = adaptSample(
+      dm({
+        mines: [
+          { ...shaft, score: 212 },
+          { ...shaft, id: 'top', tier: 'uranium', score: 150_000 },
+          { ...shaft, id: 'x', state: 'measuring', score: 40 },
+          { ...shaft, id: 'y', state: 'measuring', score: 0, measured: false },
+          { ...shaft, id: 'z', state: 'unrecorded', score: 9 }
+        ]
+      })
+    )
+    const [measured, top, again, never, unrecorded] = sample.mines
+    // The next floor is the Host's default threshold after the mine's tier (Silver from 1 500 KB).
+    expect(measured!.score).toEqual({ kb: 212, nextTierKb: 1_500 })
+    expect(measured).not.toHaveProperty('measuring')
+    expect(top!.score).toEqual({ kb: 150_000, nextTierKb: null })
+    // Measured before and measured again: it keeps its score while it shows Measuring….
+    expect(again).toMatchObject({ measuring: true, score: { kb: 40, nextTierKb: 1_500 } })
+    expect(never).toMatchObject({ measuring: true })
+    expect(never).not.toHaveProperty('score')
+    expect(unrecorded).not.toHaveProperty('score')
+  })
+
   it('carries the ore the ledger holds, none for a mine not recorded yet, and a missing folder', () => {
     const sample = adaptSample(
       dm({

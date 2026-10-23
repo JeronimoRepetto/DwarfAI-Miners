@@ -19,6 +19,7 @@ import {
   MATERIALS,
   MATERIAL_TOKENS_PER_UNIT,
   MINE_TIERS,
+  TIER_WEIGHT_THRESHOLDS_KB,
   type Dwarf,
   type TurnOutcome,
   type TurnOutcomeKind,
@@ -260,18 +261,40 @@ function mapSite(site: unknown): Pick<Mine, 'mapSite'> {
   return point ? { mapSite: point.id } : fail('site', site)
 }
 
+/*
+ * The score the Host would carry on this mine's `MineWire` (AMENDMENT-26, owner-approved 2026-10-23): the sample's
+ * score in KB and the floor of the tier after its own under the Host's default thresholds, `null` at Uranium. None for
+ * a mine no walk has read (`measured: false`) or one not recorded yet; a mine measured again keeps its last score.
+ */
+function scoreOf(row: Row, tier: MineTier): Pick<Mine, 'score'> {
+  if (row.state === 'unrecorded' || row.measured === false) return {}
+  const { copperKb, silverKb, goldKb, uraniumKb } = TIER_WEIGHT_THRESHOLDS_KB
+  const floors: Record<MineTier, number | null> = {
+    bronze: copperKb,
+    copper: silverKb,
+    silver: goldKb,
+    gold: uraniumKb,
+    uranium: null
+  }
+  return { score: { kb: Number(row.score ?? 0), nextTierKb: floors[tier] } }
+}
+
 function mine(row: Row): Mine {
+  const tier = oneOf<MineTier>('tier', row.tier, MINE_TIERS)
   return {
     id: String(row.id),
     path: String(row.id),
     name: String(row.name),
-    tier: oneOf<MineTier>('tier', row.tier, MINE_TIERS),
+    tier,
     dwarfs: [],
     tokensObserved: 0,
     materials: materials(row.ore),
     updatedAt: 0,
     unrecorded: row.state === 'unrecorded' ? true : undefined,
-    ...mapSite(row.site)
+    ...mapSite(row.site),
+    // The card's progress and Measuring state come off the board mine, as the Host's MineWire gives them.
+    ...scoreOf(row, tier),
+    ...(row.state === 'measuring' ? { measuring: true } : {})
   }
 }
 
