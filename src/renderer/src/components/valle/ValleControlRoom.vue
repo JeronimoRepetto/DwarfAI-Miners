@@ -49,6 +49,8 @@ const props = defineProps<{
   slotEntries?: readonly SlotEntry[] | null
   /** Why the last "A new project…" added nothing, or `null`. */
   notice?: string | null
+  /** A dive or a climb plays (machine 28): the current mark hides until it settles. */
+  moving?: boolean
 }>()
 const emit = defineEmits<{
   dive: [mineId: MineId]
@@ -168,11 +170,19 @@ onUnmounted(() => {
           @dblclick="artDoubleClick($event, column)"
         >
           <slot name="art" :mine-id="column.mineId" />
-          <CurrentMineMark :current="column.current === true" size="zone" />
+          <CurrentMineMark
+            :current="column.current === true"
+            size="zone"
+            :moving="moving === true"
+          />
         </div>
         <div v-else class="dm-vz__well" :data-zone-content="column.content">
           <slot name="content" :mine-id="column.mineId" :content="column.content" />
-          <CurrentMineMark :current="column.current === true" size="zone" />
+          <CurrentMineMark
+            :current="column.current === true"
+            size="zone"
+            :moving="moving === true"
+          />
         </div>
       </section>
       <AddMineSlot

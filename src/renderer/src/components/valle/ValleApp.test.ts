@@ -30,6 +30,7 @@ import { DEFAULT_AUDIO_PREFERENCES, type ProjectSummary } from '../../types'
 import HistoryPanel from '../history/HistoryPanel.vue'
 import AddPanel from '../launch/AddPanel.vue'
 import DwarfMessagePanel from '../message/DwarfMessagePanel.vue'
+import markSource from './CurrentMineMark.vue?raw'
 import ValleApp from './ValleApp.vue'
 import { valleBridgeOf } from './valleEntry'
 
@@ -1167,5 +1168,49 @@ describe('the current mine and its sound in the Valle root (ISSUE-307)', () => {
     ])
     await flushPromises()
     expect(player.liveOf(UI_SFX_SRC.finished)).toHaveLength(1)
+  })
+})
+
+// APPENDED for ISSUE-307: the current mark hides while a dive or a climb plays, and fades back where the zone lands
+// (`DS` organisms/mine-zone, `.dm-vz.is-moving > .dm-vz__body::after { opacity: 0 }`).
+describe('the current mark during a dive and a climb (ISSUE-307)', () => {
+  /** The live zones' current marks; the run's frozen copies in `.dm-vghosts` are read apart. */
+  const marks = (root: VueWrapper): string[] =>
+    root
+      .findAll('.dm-valle__body [data-valle-zone][aria-current="true"] [data-current-mark]')
+      .map((mark) => mark.attributes('data-moving')!)
+  const ghostMarks = (root: VueWrapper): number =>
+    root.findAll('.dm-vghosts [data-current-mark]').length
+
+  it('[US-VALLE-013.AC03, S28.03, S28.12] the current mark hides while a dive or a climb plays and shows again once it settles', async () => {
+    const { root, clock } = mountValle({ preset: 'control', mosaicOrder: [MORIA, EREBOR] })
+    await flushPromises()
+    expect(marks(root)).toEqual(['false'])
+    await root.get(`[data-valle-column="${EREBOR}"] button.dm-vz__dive`).trigger('click')
+    expect(root.get('[data-valle-root]').attributes('data-motion')).toBe('diving')
+    expect(marks(root)).toEqual(['true'])
+    await flushPromises()
+    const seenGhost = ghostMarks(root) > 0
+    clock.advance(330)
+    await flushPromises()
+    expect(marks(root)).toEqual(['false'])
+    esc()
+    await flushPromises()
+    expect(root.get('[data-valle-root]').attributes('data-motion')).toBe('climbing')
+    expect(marks(root)).toEqual(['true'])
+    clock.advance(330)
+    await flushPromises()
+    expect(marks(root)).toEqual(['false'])
+    // Hidden by opacity alone, never by moving or resizing the brackets: on the live zone while the run plays, and on
+    // the frozen copies the run moves over the stage, which carry the mark as it was before.
+    expect(seenGhost).toBe(true)
+    const style = markSource.slice(markSource.indexOf('<style')).replace(/\/\*[\s\S]*?\*\//g, '')
+    for (const selector of [
+      /\.dm-vmark\[data-moving='true'\]::after/,
+      /\.dm-vghosts \.dm-vmark::after/
+    ]) {
+      const hide = new RegExp(`${selector.source}\\s*\\{([^}]*)\\}`).exec(style)?.[1]
+      expect(hide?.replace(/\s+/g, ' ').trim()).toBe('opacity: 0;')
+    }
   })
 })

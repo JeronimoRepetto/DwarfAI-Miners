@@ -35,6 +35,8 @@ const props = defineProps<{
   content?: ZoneContent
   /** Its zone menu's entries while open, or `null`. */
   menu?: readonly ZoneMenuEntry[] | null
+  /** A dive or a climb plays (machine 28): the current mark hides until it settles. */
+  moving?: boolean
 }>()
 const emit = defineEmits<{
   fold: []
@@ -154,11 +156,11 @@ const listWidth = computed(
         </div>
         <div v-if="shows === 'mine'" class="dm-vz__well" @click="zoneClick">
           <slot name="art" :mine-id="mine.mineId" />
-          <CurrentMineMark :current="true" size="zone" />
+          <CurrentMineMark :current="true" size="zone" :moving="moving === true" />
         </div>
         <div v-else class="dm-vz__well" :data-zone-content="shows">
           <slot name="content" :mine-id="mine.mineId" :content="shows" />
-          <CurrentMineMark :current="true" size="zone" />
+          <CurrentMineMark :current="true" size="zone" :moving="moving === true" />
         </div>
       </section>
     </div>

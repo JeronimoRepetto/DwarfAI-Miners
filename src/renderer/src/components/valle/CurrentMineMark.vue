@@ -7,11 +7,17 @@
  * A shape and never a colour: it changes no hue, border, outline or ring of what it marks, so it is never read as needs
  * you. It covers its positioned parent, so inside a zone's body it sits within the needs-you ring the zone draws
  * around it, the two nested and never merged. Which mine is current is the host's answer; this only draws it.
+ *
+ * While a dive or a climb plays (`moving`, machine 28's run), the brackets hide, by opacity alone, and fade back in where
+ * the zone lands once the run settles (`DS` organisms/mine-zone, `.dm-vz.is-moving`).
  */
 import { computed } from 'vue'
 import { CURRENT_MARK, type CurrentMarkSize } from '../../lib/valle/currentMine'
 
-const props = defineProps<{ current: boolean; size: CurrentMarkSize }>()
+const props = withDefaults(
+  defineProps<{ current: boolean; size: CurrentMarkSize; moving?: boolean }>(),
+  { moving: false }
+)
 
 const style = computed(() => {
   const { thickness, arm, inset } = CURRENT_MARK[props.size]
@@ -25,6 +31,7 @@ const style = computed(() => {
     data-current-mark
     :data-mark="size"
     :data-current="current ? 'true' : 'false'"
+    :data-moving="moving ? 'true' : 'false'"
     :style="style"
     aria-hidden="true"
   ></span>
@@ -48,6 +55,14 @@ const style = computed(() => {
 }
 .dm-vmark[data-current='true']::after {
   opacity: 1;
+}
+/* A dive or a climb playing: hidden, after the rule that shows it, so it wins. */
+.dm-vmark[data-moving='true']::after {
+  opacity: 0;
+}
+/* The frozen copies a run moves over the stage (`flip.ts`) carry the mark as it was: hidden there too. */
+.dm-vghosts .dm-vmark::after {
+  opacity: 0;
 }
 @media (prefers-reduced-motion: reduce) {
   .dm-vmark::after {
