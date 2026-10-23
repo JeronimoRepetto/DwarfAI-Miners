@@ -191,6 +191,11 @@ import {
   type PresenceTracker
 } from './window/application/presenceTracker'
 import {
+  anyModeShown,
+  shownModeWindows,
+  type ShownModes
+} from './window/application/shownModeWindows'
+import {
   createHostReadRows,
   forwardHostEvents,
   HOST_EVENT,
@@ -1337,8 +1342,16 @@ export async function startUiMain({
     host === undefined
       ? undefined
       : composeHostReads({ routes, client: host.client, windows: modeWindowList })
+  /** Which mode windows are shown now: the Panel shown and not minimized, Veta or Valle shown by the mode shell. */
+  const shownModes = (): ShownModes => ({
+    panel: panel.visible(),
+    veta: shell?.shown('veta') ?? false,
+    valle: shell?.shown('valle') ?? false
+  })
   // A-44 feeds UI main's PresenceTracker (ADR-024 item 7; B-M07), once the table routes it `ui-local` (ISSUE-123): the
-  // on-screen set is the Panel's report while the Panel is shown and not minimized (in v1 the one mode window).
+  // on-screen set is the reports of the mode windows shown now, the Panel while shown and not minimized, the Veta or
+  // the Valle window while the mode shell shows it (AMENDED for ISSUE-306, was: every mode window while the Panel was
+  // visible, so nothing counted with Veta or Valle shown; S39.04, S39.05).
   const presence =
     host === undefined || panel === undefined
       ? undefined
@@ -1347,9 +1360,15 @@ export async function startUiMain({
           client: host.client,
           timers: realTimers,
           visibleWindows: () =>
-            panel.visible() ? modeWindowList().map((window) => window.webContentsId) : []
+            shownModeWindows(
+              modeWindowList().map((window) => window.webContentsId),
+              (webContentsId) =>
+                isVeta(webContentsId) ? 'veta' : isValle(webContentsId) ? 'valle' : 'panel',
+              shownModes()
+            )
         })
   const stopHearingVisibility = panel?.onVisibleChanged?.(() => presence?.tracker.windowsChanged())
+  const stopHearingModes = shell?.onShownChanged(() => presence?.tracker.windowsChanged())
   windowClosed = (webContentsId) => presence?.tracker.windowClosed(webContentsId)
   // AMENDED for ISSUE-240, the 4b deletion (was: `PerProviderShapeAdapter` and `CatalogMergeAdapter` for A-13, A-23,
   // A-35 and A-36 of the providers not yet moved, 21 §3.1): from 4b every provider's rows are the Host's.
@@ -1475,7 +1494,9 @@ export async function startUiMain({
           },
           display: notifications.display,
           drawsWithoutWindow: notifications.drawsWithoutWindow,
-          anyWindowOpen: () => panel.visible(),
+          // AMENDED for ISSUE-306 (was: the Panel visible): with Veta or Valle shown a window is open too, so the
+          // window-only fallback of S-018-1 draws there as well (US-SHELL-010.AC08).
+          anyWindowOpen: () => anyModeShown(shownModes()),
           log: uiLog,
           ...(departedDwarfs === undefined
             ? {}
@@ -1618,6 +1639,7 @@ export async function startUiMain({
     minesAdmin?.dispose()
     hostReads?.dispose()
     stopHearingVisibility?.()
+    stopHearingModes?.()
     shell?.dispose()
     host?.client.dispose()
   })

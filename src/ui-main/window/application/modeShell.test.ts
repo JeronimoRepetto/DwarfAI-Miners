@@ -345,3 +345,35 @@ describe('the mode shell with a Valle window (ISSUE-299; ADR-025 item 1; 07 mach
     expect(valle.visible).toBe(true)
   })
 })
+
+// APPENDED for ISSUE-306: which of Veta and Valle the shell shows, for the presence tracker (ADR-024 item 7; S39.04).
+describe('the mode shell says which mode windows it shows (ISSUE-306)', () => {
+  it('[S39.04, ADR-024] the shell answers whether Valle and Veta are shown and tells each show and hide', async () => {
+    const valle = new FakeModeWindow()
+    const part = { window: () => valle, bounds: () => ({ x: 0, y: 0, width: 1200, height: 800 }) }
+    const s = setup('hidden', false, { built: ['panel', 'veta', 'valle'], valle: part })
+    const heard: boolean[] = []
+    const stop = s.shell.onShownChanged(() => heard.push(s.shell.shown('valle')))
+    expect(s.shell.shown('valle')).toBe(false)
+    expect(s.shell.shown('veta')).toBe(false)
+    s.shell.panel.toggleVisible()
+    s.answer()
+    await Promise.resolve()
+    const moved = s.shell.coordinator.moveToMode({ mode: 'valle' })
+    s.answer()
+    const valleRun = (): string =>
+      (valle.calls.filter((c) => c.member === 'send').at(-1) as { payload: ModeTransition }).payload
+        .transitionId
+    s.shell.coordinator.transitionDone('valle', { transitionId: valleRun() })
+    await moved
+    expect(s.shell.shown('valle')).toBe(true)
+    expect(heard).toContain(true)
+    // Hidden: no longer shown, and said.
+    s.shell.panel.toggleVisible()
+    s.shell.coordinator.transitionDone('valle', { transitionId: valleRun() })
+    await Promise.resolve()
+    expect(s.shell.shown('valle')).toBe(false)
+    expect(heard.at(-1)).toBe(false)
+    stop()
+  })
+})

@@ -9,6 +9,9 @@
 //   the Panel those parts get answers `hide`, `show` and `toggleVisible` through it. Everything else is the Panel's own.
 // - A notification click reaches the per-mode reveal through the coordinator (S27.14), and the reveal's own restore
 //   and launch-open are runs too (S10.11, S10.12).
+// - The shell is the one that shows and hides the Veta and the Valle windows, so it answers whether each is shown
+//   (`shown`) and tells each show and hide (`onShownChanged`): the presence tracker counts only shown mode windows
+//   (ADR-024 item 7; 07 S39.04; ISSUE-306).
 import { builtModesOf, type DwarfId } from '@dwarfai/contracts'
 import type { UiLog } from '../../diagnostics/uiLogger'
 import type { ModeTiming } from '../ports/modeTiming'
@@ -67,6 +70,13 @@ export interface ModeShell {
   panel: PanelWindowUseCases
   /** Shows the Panel for a dialog only the Panel draws (Stop everything and quit's confirmation). */
   surfacePanel(): void
+  /**
+   * Whether the shell shows the Veta or the Valle window now (ISSUE-306): the presence tracker counts only shown mode
+   * windows (ADR-024 item 7; 07 S39.04).
+   */
+  shown(mode: 'veta' | 'valle'): boolean
+  /** Hears each show and hide of the Veta or the Valle window; answers the unsubscribe. */
+  onShownChanged(h: () => void): () => void
 }
 
 export function composeModeShell(deps: ModeShellDeps): ModeShell {
@@ -82,6 +92,11 @@ export function composeModeShell(deps: ModeShellDeps): ModeShell {
   const built = deps.built ?? BUILT_MODES
   // The Veta window (ISSUE-285): moved only where this build ships Veta (BR-19; ADR-034 item 2), else not built.
   const veta = built.includes('veta') ? deps.veta : undefined
+  /** Who hears a show or a hide of the Veta or the Valle window (`onShownChanged`). */
+  const shownListeners = new Set<() => void>()
+  const shownChanged = (): void => {
+    for (const h of [...shownListeners]) h()
+  }
   let vetaShown = false
   const vetaWindow = (): ModeWindow => {
     if (veta === undefined) throw new Error('the veta window is not built')
@@ -93,10 +108,12 @@ export function composeModeShell(deps: ModeShellDeps): ModeShell {
       showInactive: () => {
         window.showInactive()
         vetaShown = true
+        shownChanged()
       },
       hide: () => {
         window.hide()
         vetaShown = false
+        shownChanged()
       }
     }
   }
@@ -113,10 +130,12 @@ export function composeModeShell(deps: ModeShellDeps): ModeShell {
       showInactive: () => {
         window.showInactive()
         valleShown = true
+        shownChanged()
       },
       hide: () => {
         window.hide()
         valleShown = false
+        shownChanged()
       }
     }
   }
@@ -198,6 +217,11 @@ export function composeModeShell(deps: ModeShellDeps): ModeShell {
   const stopClosing = deps.hostClosing?.(() => void coordinator.hostClosed())
   return {
     coordinator,
+    shown: (mode) => (mode === 'veta' ? vetaShown : valleShown),
+    onShownChanged: (h) => {
+      shownListeners.add(h)
+      return () => shownListeners.delete(h)
+    },
     dispose: () => {
       stopDepartures?.()
       stopClosing?.()
