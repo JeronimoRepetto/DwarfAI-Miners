@@ -11,6 +11,11 @@ import { createFakeWindowApi } from '../../contracts/ipc/testing/fakeWindowApi'
 import { publishBoard, type TestBoard } from './testing/board'
 import { defaultDwarf } from './testing/factories'
 import App from './App.vue'
+import ValleApp from './components/valle/ValleApp.vue'
+import { valleBridgeOf } from './components/valle/valleEntry'
+import { VALLE_STORE_DEFAULTS } from './composables/useValleStores'
+import { createFakeAudioPlayer } from './lib/audio/fakeAudioPlayer'
+import { BORIN, MORIA, dwarfWire, mineWire, snapshotPage } from './lib/veta/testing/vetaFixtures'
 import DwarfMessagePanel from './components/message/DwarfMessagePanel.vue'
 import MapPage from './components/map/MapPage.vue'
 import MineColumn from './components/scene/MineColumn.vue'
@@ -231,7 +236,12 @@ let listener: ((t: ModeTransition) => void) | null = null
 const mounted: VueWrapper[] = []
 
 /** The shell over a UI main that runs each move with the Panel as its source, writing lastMode once it lands. */
-async function mountShell(): Promise<{ wrapper: VueWrapper; main: UiMain }> {
+async function mountShell(
+  board: { mines: unknown[]; tokensObserved: number } = {
+    mines: [{ ...MINE, dwarfs: [WORKER] }],
+    tokensObserved: 0
+  }
+): Promise<{ wrapper: VueWrapper; main: UiMain }> {
   const main: UiMain = {
     moves: [],
     writes: [],
@@ -241,7 +251,7 @@ async function mountShell(): Promise<{ wrapper: VueWrapper; main: UiMain }> {
   const settling = new Map<string, () => void>()
   let runs = 0
   stubApi({
-    board: { mines: [{ ...MINE, dwarfs: [WORKER] }], tokensObserved: 0 },
+    board,
     onModeTransition: (h: (t: ModeTransition) => void) => {
       listener = h
       return () => (listener = null)
@@ -290,10 +300,10 @@ async function mountShell(): Promise<{ wrapper: VueWrapper; main: UiMain }> {
 }
 
 /** The person opens the worker's chat: the mine on the map, then the dwarf in its column. */
-async function openChat(wrapper: VueWrapper): Promise<void> {
-  wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
+async function openChat(wrapper: VueWrapper, mineId = MINE.id, dwarf = WORKER): Promise<void> {
+  wrapper.findComponent(MapPage).vm.$emit('open', mineId)
   await flushPromises()
-  wrapper.findComponent(MineColumn).vm.$emit('select', WORKER)
+  wrapper.findComponent(MineColumn).vm.$emit('select', dwarf)
   await flushPromises()
 }
 
@@ -358,20 +368,25 @@ describe('the Panel mode lever and Mode at launch (ISSUE-294)', () => {
     expect(main.writes.filter((write) => write.key === 'lastMode')).toEqual([])
   })
 
-  it('[BR-19, ADR-034] with Veta built the lever shows ▼ Veta alone and Mode at launch lists Last used, Panel and Veta', async () => {
+  // AMENDED for ISSUE-311 (was: with Veta built the lever shows ▼ Veta alone and Mode at launch lists Last used, Panel and
+  // Veta): once Valle ships every mode is shown (ADR-034 item 2; BR-19), "▲ Valle" above "▼ Veta" as the design draws it.
+  it('[BR-19, ADR-034] with Valle built the lever shows ▲ Valle and ▼ Veta and Mode at launch lists Last used, Panel, Veta and Valle', async () => {
     const { wrapper } = await mountShell()
     const lever = wrapper.get('.dm-nav [aria-label="Mode"]')
     expect(lever.findAll('.dm-slot').map((slot) => slot.attributes('data-label'))).toEqual([
+      '▲ Valle',
       '▼ Veta'
     ])
-    expect(lever.text()).not.toContain('Valle')
+    // Never drawn disabled: a side of the lever is there and pressable, or absent (21 §1 item 8).
+    expect(lever.findAll('[disabled], [aria-disabled="true"]')).toEqual([])
 
     await openGeneral(wrapper)
     const select = wrapper.get('.dm-settings__panel select[aria-label="Mode at launch"]')
     expect(select.findAll('option').map((option) => option.text())).toEqual([
       'Last used',
       'Panel',
-      'Veta'
+      'Veta',
+      'Valle'
     ])
     expect((select.element as HTMLSelectElement).value).toBe('last-used')
   })
@@ -397,5 +412,128 @@ describe('the Panel mode lever and Mode at launch (ISSUE-294)', () => {
       expect((select.element as HTMLSelectElement).value).toBe(pick)
     }
     expect(main.writes).toHaveLength(picks.length)
+  })
+})
+
+/*
+ * ISSUE-311 (07 S10.04, S29.23, machine 9; US-SHELL-001.AC01; ADR-034 item 2): "▲ Valle" in a build that ships every
+ * mode. The Panel is the run's source; the Valle window, its own renderer, is the target: it is mounted after the Panel
+ * window went away, over a UI main whose session store holds what the Panel handed over.
+ */
+
+/** The climber, in Moria: the Host's ids, since the Valle window reads its mines and dwarfs from the Host's snapshot. */
+const VALLE_MINE = { ...MINE, id: MORIA }
+const CLIMBER = defaultDwarf({ id: BORIN, name: 'Borin', textDelivery: 'terminal' })
+
+/** The Valle window as UI main loads it, over a session store holding `session`; answers its run listener. */
+async function mountValleWindow(session: { drafts: Record<string, string> }): Promise<{
+  valle: VueWrapper
+  run(t: ModeTransition): void
+  done: string[]
+  writes: UiPreferenceWrite[]
+}> {
+  let heard: ((t: ModeTransition) => void) | null = null
+  const done: string[] = []
+  const writes: UiPreferenceWrite[] = []
+  const api = createFakeWindowApi({
+    onHostEvent: () => () => {},
+    getHostSnapshot: () =>
+      Promise.resolve(
+        snapshotPage(10, {
+          minesEverKnown: true,
+          mines: [mineWire(MORIA)],
+          dwarfs: [dwarfWire(BORIN, MORIA)]
+        })
+      ) as never,
+    getUiSession: () =>
+      Promise.resolve({
+        drafts: session.drafts,
+        chatViews: {},
+        askPicks: {},
+        openChat: {},
+        currentMine: {},
+        valle: {}
+      }) as never,
+    onModeTransition: (h) => {
+      heard = h as (t: ModeTransition) => void
+      return () => (heard = null)
+    },
+    modeTransitionDone: (p) => void done.push((p as { transitionId: string }).transitionId),
+    setUiPreference: (write) => {
+      writes.push(write as UiPreferenceWrite)
+      return Promise.resolve(write) as never
+    }
+  })
+  Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
+  // The Valle window's part of every run starts before its root mounts, as main.ts starts it.
+  modeTransitionPart()
+  const valle = mount(ValleApp, {
+    attachTo: document.body,
+    props: {
+      bridge: valleBridgeOf(api),
+      stores: { ...VALLE_STORE_DEFAULTS, preset: 'control' },
+      observer: () => ({ observe() {}, unobserve() {}, disconnect() {} }),
+      bodyObserver: () => () => {},
+      audioPlayer: createFakeAudioPlayer()
+    }
+  })
+  mounted.push(valle)
+  await flushPromises()
+  return { valle, run: (t) => heard?.(t), done, writes }
+}
+
+describe('▲ Valle on the Panel lever (ISSUE-311)', () => {
+  it("[US-SHELL-001.AC01, S10.04, S29.23] ▲ Valle moves into Valle, the chat in focus is pinned and focused in Valle's chat zone, and Valle becomes the last used mode", async () => {
+    const { wrapper, main } = await mountShell({
+      mines: [{ ...VALLE_MINE, dwarfs: [CLIMBER] }],
+      tokensObserved: 0
+    })
+    await openChat(wrapper, VALLE_MINE.id, CLIMBER)
+    await wrapper.get('.dm-composer textarea').setValue('half a thought')
+
+    await wrapper.get('.dm-nav [aria-label="Mode"] .dm-slot[data-label="▲ Valle"]').trigger('click')
+    await flushPromises()
+    // The move is A-N13 to Valle carrying the chat in focus (S10.04, machine 9).
+    expect(main.moves).toEqual([{ mode: 'valle', mineId: MORIA, dwarfId: BORIN }])
+    // As the run's source the Panel hands the chat over: its draft goes to the session store before t0.
+    expect(main.patches).toContainEqual({ kind: 'draft', dwarfId: BORIN, text: 'half a thought' })
+    // The Panel answers its half; the run lands, and Valle is the mode last used, written by the ModeCoordinator alone.
+    await vi.waitFor(() => expect(main.stored.lastMode).toBe('valle'))
+    expect(main.writes.filter((write) => write.key === 'lastMode')).toEqual([])
+
+    // The Valle window, the run's target: the carried chat lands in its chat zone, pinned and focused (S29.23), with the
+    // draft the Panel handed over (machine 9).
+    wrapper.unmount()
+    mounted.splice(mounted.indexOf(wrapper), 1)
+    modeTransitionPart().dispose()
+    const drafts: Record<string, string> = {}
+    for (const patch of main.patches as { kind: string; dwarfId?: string; text?: string }[]) {
+      if (patch.kind === 'draft') drafts[patch.dwarfId!] = patch.text!
+    }
+    const { valle, run, done, writes } = await mountValleWindow({ drafts })
+    run({
+      transitionId: 'run-valle',
+      from: 'panel',
+      to: 'valle',
+      t0: Date.now(),
+      role: 'target',
+      chat: { dwarfId: BORIN as never, mineId: MORIA as never }
+    })
+    await vi.waitFor(() => expect(done).toEqual(['run-valle']))
+    await flushPromises()
+    const open = valle.get('.dm-cstack__open')
+    expect(open.attributes('data-pin')).toBe(BORIN)
+    expect(
+      (
+        valle.get(`[data-valle-chat="${BORIN}"] .dm-composer textarea`)
+          .element as HTMLTextAreaElement
+      ).value
+    ).toBe('half a thought')
+    // Pinned, so persisted (S29.23); and Valle writes no lastMode either.
+    expect(writes).toContainEqual({
+      key: 'pins',
+      value: [{ dwarfId: BORIN, mineId: MORIA, order: 0 }]
+    })
+    expect(writes.filter((write) => write.key === 'lastMode')).toEqual([])
   })
 })

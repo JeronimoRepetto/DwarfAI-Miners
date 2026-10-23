@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import type {
   HostFrame,
+  ModeTransition,
   MoveToModeParams,
   UiPreferenceWrite,
   UiSessionPatch
@@ -8,6 +9,7 @@ import type {
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createFakeWindowApi } from '../../../../contracts/ipc/testing/fakeWindowApi'
+import { modeTransitionPart } from '../../composables/useModeTransition'
 import type { ValleBodyObserver } from '../../composables/useValleSplit'
 import { VALLE_STORE_DEFAULTS, type ValleStores } from '../../composables/useValleStores'
 import type { ValleClock } from '../../lib/valle/flip'
@@ -1465,5 +1467,71 @@ describe('the needs-you counter and queue in the Valle root (ISSUE-306)', () => 
     expect(root.find(`[data-valle-front-mine="${MORIA}"]`).exists()).toBe(true)
     expect(root.get('.dm-ctab.is-focus-pane').attributes('data-pin')).toBe(BORIN)
     expect(writes.filter((write) => write.key === 'vallePreset')).toHaveLength(presetWrites)
+  })
+})
+
+// APPENDED for ISSUE-311: Valle's part in a mode run (07 machine 9, S28.21, S29.23), the reveal of a notification click
+// (S39.06, S39.07) and the reduced-motion stand-ins (US-SHELL-011).
+describe('Valle in the mode lever, the reveal and reduced motion (ISSUE-311)', () => {
+  const BOTH = [
+    { dwarfId: BORIN, mineId: MORIA, order: 0 },
+    { dwarfId: DAIN, mineId: EREBOR, order: 1 }
+  ]
+  /** Borin in Moria and Dain in Erebor, both present. */
+  const twoDwarfs = (): Partial<Window['api']> => ({
+    getHostSnapshot: () =>
+      Promise.resolve(
+        snapshotPage(10, {
+          minesEverKnown: true,
+          mines: [mineWire(MORIA), mineWire(EREBOR)],
+          dwarfs: [dwarfWire(BORIN, MORIA), dwarfWire(DAIN, EREBOR)]
+        })
+      ) as never
+  })
+  const composer = (root: VueWrapper, dwarfId: string) =>
+    root.get(`[data-valle-chat="${dwarfId}"] .dm-composer textarea`)
+
+  it('[S9.01, S28.21] ▼ Panel from Valle hands the chat in focus over with its draft, never another pin’s', async () => {
+    // The Valle window's part of every run, over this case's `window.api`, as main.ts starts it.
+    modeTransitionPart().dispose()
+    let heard: ((t: ModeTransition) => void) | null = null
+    try {
+      const { root, moves, patches } = mountValle({ preset: 'control', pins: BOTH }, undefined, {
+        ...twoDwarfs(),
+        onModeTransition: (h) => {
+          heard = h as (t: ModeTransition) => void
+          return () => (heard = null)
+        }
+      })
+      modeTransitionPart()
+      await flushPromises()
+      await composer(root, BORIN).setValue('leaving words')
+      await root.get(`.dm-cstack [data-pin="${DAIN}"]`).trigger('click')
+      await flushPromises()
+      await composer(root, DAIN).setValue('dain words')
+      await root.get(`.dm-cstack [data-pin="${BORIN}"]`).trigger('click')
+      await flushPromises()
+
+      await root.get('[data-lever="panel"]').trigger('click')
+      await flushPromises()
+      expect(moves).toEqual([{ mode: 'panel', mineId: MORIA, dwarfId: BORIN }])
+      heard!({
+        transitionId: 'run-out',
+        from: 'valle',
+        to: 'panel',
+        t0: Date.now(),
+        role: 'source',
+        chat: { dwarfId: BORIN, mineId: MORIA }
+      })
+      // The chat in focus hands its draft and its view over before t0 (S9.01); Dain's, folded in the stack, does not.
+      expect(patches.filter((patch) => patch.kind === 'draft')).toEqual([
+        { kind: 'draft', dwarfId: BORIN, text: 'leaving words' }
+      ])
+      expect(patches.filter((patch) => patch.kind === 'chat-view').map((p) => p.dwarfId)).toEqual([
+        BORIN
+      ])
+    } finally {
+      modeTransitionPart().dispose()
+    }
   })
 })

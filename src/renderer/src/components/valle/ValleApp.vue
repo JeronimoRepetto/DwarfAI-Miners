@@ -88,6 +88,7 @@ import { useValleMosaic, type ValleZoneKey } from '../../composables/useValleMos
 import { useValleNeedsYou } from '../../composables/useValleNeedsYou'
 import { useMapPage } from '../../composables/useMapPage'
 import { useMines } from '../../composables/useMines'
+import { modeTransitionPart, type CarriedChat } from '../../composables/useModeTransition'
 import { useMinesPage } from '../../composables/useMinesPage'
 import { useVallePins } from '../../composables/useVallePins'
 import { useVallePreset } from '../../composables/useVallePreset'
@@ -401,6 +402,32 @@ const chat = computed((): { mineId: string; dwarfId: DwarfId } | null => {
   return pin?.kind === 'chat' ? { mineId: pin.mineId, dwarfId: pin.dwarfId } : null
 })
 
+/**
+ * A chat carried into Valle by a mode run (07 S29.23, machine 9; ISSUE-311): pinned when absent and focused, its mine
+ * made current, once the Host's facts are read and the pins restored; the run then restores its draft and view into
+ * that chat, the one in focus. A dwarf no longer present is not pinned.
+ */
+function carriedIn(chat: CarriedChat): void {
+  const land = (): void => {
+    split.sendPin({
+      kind: 'carried',
+      dwarfId: chat.dwarfId,
+      mineId: chat.mineId,
+      present: model.dwarfs.value.some((dwarf) => dwarf.id === chat.dwarfId)
+    })
+  }
+  if (factsRead.value) {
+    land()
+    return
+  }
+  const stop = watch(factsRead, (read) => {
+    if (!read) return
+    stop()
+    void nextTick(land)
+  })
+}
+const stopArrival = modeTransitionPart().onArrival(carriedIn)
+
 /** The current mine (07 machine 35): marked, written for the Valle host and heard (ISSUE-307). */
 const currentMine = useCurrentMine({
   bridge: props.bridge,
@@ -659,6 +686,7 @@ onMounted(() => {
 })
 onUnmounted(() => {
   unmounted = true
+  stopArrival()
   stopCues?.()
   stopAudio?.()
   currentMine.stop()
@@ -813,6 +841,7 @@ onUnmounted(() => {
               :pin="pin"
               :dock="chats.dock"
               :mine-name="nameOf(pin.mineId)"
+              :in-focus="pin.key === pins.set.value.focus"
               @close="split.sendPin({ kind: 'unpin', key: pin.key })"
               @history="chatHistory(pin.mineId)"
             />
@@ -838,6 +867,7 @@ onUnmounted(() => {
               :pin="pin"
               :dock="chats.dock"
               :mine-name="nameOf(pin.mineId)"
+              :in-focus="pin.key === pins.set.value.focus"
               @close="split.sendPin({ kind: 'unpin', key: pin.key })"
               @history="chatHistory(pin.mineId)"
             />

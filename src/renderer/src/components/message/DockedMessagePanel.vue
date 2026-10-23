@@ -26,6 +26,8 @@ const props = defineProps<{
   openAt?: ChatViewState['scrollAnchor']
   /** A gone pin's chat (S18.02): shown, never sending. */
   readOnly?: boolean
+  /** In Valle, the chat in focus: the one a mode run carries (DwarfMessagePanel `inFocus`, ISSUE-311). */
+  inFocus?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -67,6 +69,7 @@ function live(act: (dwarf: Dwarf) => void): void {
     :stop-disabled="dock.stopDisabled(dwarfId)"
     :answer-state="dock.questionState.byDwarfId[dwarfId]"
     :hosted-in="hostedIn"
+    :in-focus="inFocus"
     :open-at="openAt"
     @open-in-panel="emit('open-in-panel')"
     @history="emit('history')"
