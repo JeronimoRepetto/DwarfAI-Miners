@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { NO_PINS, addKey, stepPins, type PinInput, type PinSet } from '../../lib/valle/pins'
 import { pinFacts, pinHarness } from '../../lib/valle/testing/pinHarness'
@@ -87,10 +89,12 @@ describe('the pinned chat stack (ISSUE-302)', () => {
     expect(root.get('.dm-cstack__title').text()).toBe('Pinned chats')
     // Three chats and the open Add panel.
     expect(root.get('.dm-cstack__count').text()).toBe('4')
+    // Open, the Add pin has no line of its own (VQA-11): its name is the open chat's; its state shows on its line.
     const add = root.get(`[data-pin="${addKey(EREBOR)}"]`)
     expect(add.attributes('data-pin-state')).toBe('add')
-    expect(add.text()).toContain('New dwarf')
-    expect(add.text()).toContain('in erebor')
+    expect(add.attributes('aria-label')).toContain('New dwarf')
+    await root.get(`.dm-cstack__row[data-pin="${BORIN}"]`).trigger('click')
+    expect(root.get(`.dm-cstack__row[data-pin="${addKey(EREBOR)}"]`).text()).toContain('in erebor')
     root.unmount()
 
     const empty = mountStack(NO_PINS).root
@@ -112,14 +116,15 @@ describe('the pinned chat stack (ISSUE-302)', () => {
         },
         NALI
       ],
-      // A middle click on the last line: focus to the one before it, the expanded chat.
+      // × on the last line: focus to the one before it, the expanded chat.
+      ['×', () => root.get(`[data-pin="${NALI}"] .dm-cstack__x`).trigger('click'), BORIN],
+      // A middle click on the only pin left, the expanded chat, which has no line of its own (VQA-11): focus to the
+      // stack itself.
       [
         'middle click',
-        () => root.get(`[data-pin="${NALI}"]`).trigger('auxclick', { button: 1 }),
-        BORIN
-      ],
-      // × on the only pin left: focus to the stack itself.
-      ['×', () => root.get(`[data-pin="${BORIN}"] .dm-cstack__x`).trigger('click'), null]
+        () => root.get(`[data-pin="${BORIN}"]`).trigger('auxclick', { button: 1 }),
+        null
+      ]
     ]
     for (const [how, act, focused] of rows) {
       await act()
@@ -164,7 +169,8 @@ describe('the pinned chat stack empty state (ISSUE-310; 07 machine 38; US-VALLE-
   it('[US-VALLE-014.AC03, S38.01] unpinning the only chat returns the stack to the empty state', async () => {
     const { root } = mountStack(setOf({ kind: 'click', dwarfId: BORIN, mineId: MORIA }))
     expect(root.findAll('.dm-cstack__empty')).toHaveLength(0)
-    await root.get(`[data-pin="${BORIN}"] .dm-cstack__x`).trigger('click')
+    // The only pin is the open chat, with no line of its own (VQA-11): a middle click unpins it.
+    await root.get(`[data-pin="${BORIN}"]`).trigger('auxclick', { button: 1 })
     await flushPromises()
     expect(root.findAll('.dm-cstack__empty').map((l) => l.text())).toEqual([EMPTY])
     expect(root.findAll('[data-pin]')).toHaveLength(0)
@@ -175,18 +181,114 @@ describe('the pinned chat stack empty state (ISSUE-310; 07 machine 38; US-VALLE-
 // APPENDED for the Valle visual parity (EPIC-20): an Add pin's line leads with the "+" box where a portrait would be
 // (`DS/prototype/organisms/chat-stack/chat-stack.js`: `span.dm-ctab__add` holding the add icon), open or collapsed.
 describe("an Add pin's line in the stack (EPIC-20 visual parity)", () => {
-  it('[US-VALLE-007.AC12] an Add pin leads its line with the "+" box, expanded or collapsed, where a chat has its portrait', async () => {
+  it('[US-VALLE-007.AC12] an Add pin leads its collapsed line with the "+" box, where a chat has its portrait; open, it has no line', async () => {
     const opened = stepPins(three(), { kind: 'add-open', mineId: EREBOR })
     if (!opened.ok) throw new Error('refused')
     const { root } = mountStack(opened.set)
-    const open = root.get(`[data-pin="${addKey(EREBOR)}"] .dm-cstack__row`)
-    expect(open.element.firstElementChild?.classList.contains('dm-ctab__add')).toBe(true)
-    expect(open.find('.dm-ctab__add .dm-icon').exists()).toBe(true)
+    // Open, the Add pin is its panel alone, with no line above it (VQA-11; `DS` chat-stack.js render).
+    const open = root.get(`.dm-cstack__open[data-pin="${addKey(EREBOR)}"]`)
+    expect(open.find('.dm-cstack__row').exists()).toBe(false)
+    expect(open.find('.dm-ctab__add').exists()).toBe(false)
     // Collapsed once another pin takes the focus.
     await root.get(`.dm-cstack__row[data-pin="${BORIN}"]`).trigger('click')
     await flushPromises()
     const line = root.get(`.dm-cstack__row[data-pin="${addKey(EREBOR)}"]`)
     expect(line.attributes('data-expanded')).toBe('false')
     expect(line.element.firstElementChild?.classList.contains('dm-ctab__add')).toBe(true)
+  })
+})
+
+// APPENDED for the Valle QA (VQA-01, VQA-11; EPIC-20). The design draws the stack with three pins and is silent on more
+// (`DS` organisms/chat-stack); the rule decided in development: the open chat keeps its full space and is never
+// covered, the collapsed lines above and below it share what is left and scroll inside their own regions, and nothing in
+// the pinned column draws past it. jsdom lays nothing out, so the layout is read from the rules the stack declares (the
+// house idiom, valleChatHosting.test.ts); the laid-out page is the L9 case `e2e/valle/stack-overflow.e2e.ts`.
+const stackCss = readFileSync(join(import.meta.dirname, 'PinnedStack.vue'), 'utf8')
+
+/** The declarations of the stack's rule whose selector is exactly `selector`. */
+function rule(selector: string): Record<string, string> {
+  const at = stackCss.indexOf('\n' + selector + ' {')
+  expect(at, `no rule ${selector}`).toBeGreaterThan(-1)
+  const body = stackCss.slice(stackCss.indexOf('{', at) + 1, stackCss.indexOf('}', at))
+  return Object.fromEntries(
+    body
+      .split(';')
+      .map((line) => line.trim())
+      .filter((line) => line.includes(':'))
+      .map((line) => [
+        line.slice(0, line.indexOf(':')).trim(),
+        line.slice(line.indexOf(':') + 1).trim()
+      ])
+  )
+}
+
+/** The pins of each part of the list, in order: a lines region by its lines, the open chat by its own pin. */
+const parts = (wrapper: VueWrapper): string[][] =>
+  [...wrapper.get('.dm-cstack__list').element.children].map((part) =>
+    part.classList.contains('dm-cstack__open')
+      ? ['open:' + part.getAttribute('data-pin')]
+      : [...part.querySelectorAll('[data-pin]')].map((line) => line.getAttribute('data-pin') ?? '')
+  )
+
+describe('the pinned chat stack with many pins (Valle QA VQA-01, VQA-11)', () => {
+  it('[US-VALLE-007.AC08] the pin in focus has no line of its own: its chat opens in its place, as in the prototype', async () => {
+    const { root } = mountStack(three())
+    // `DS/prototype/organisms/chat-stack/chat-stack.js` render: the focused item's line is removed, its chat appended.
+    const open = root.get(`.dm-cstack__open[data-pin="${BORIN}"]`)
+    expect(open.findAll('.dm-cstack__row')).toHaveLength(0)
+    expect(root.findAll('.dm-cstack__row').map((line) => line.attributes('data-pin'))).toEqual([
+      DAIN,
+      NALI
+    ])
+    // The focus moves: the line it left comes back, the one it reached goes.
+    await root.get(`.dm-cstack__row[data-pin="${DAIN}"]`).trigger('click')
+    expect(root.findAll('.dm-cstack__row').map((line) => line.attributes('data-pin'))).toEqual([
+      BORIN,
+      NALI
+    ])
+    expect(
+      root.get(`.dm-cstack__open[data-pin="${DAIN}"]`).findAll('.dm-cstack__row')
+    ).toHaveLength(0)
+  })
+
+  it('[US-VALLE-007.AC08] the lines above and below the open chat sit in their own regions, in pin order', async () => {
+    const { root } = mountStack(three())
+    expect(parts(root)).toEqual([[`open:${BORIN}`], [DAIN, NALI]])
+    await root.get(`.dm-cstack__row[data-pin="${DAIN}"]`).trigger('click')
+    expect(parts(root)).toEqual([[BORIN], [`open:${DAIN}`], [NALI]])
+    await root.get(`.dm-cstack__row[data-pin="${NALI}"]`).trigger('click')
+    expect(parts(root)).toEqual([[BORIN, DAIN], [`open:${NALI}`]])
+    // Every region is a lines region, named for what it holds.
+    for (const region of root.findAll('.dm-cstack__list > :not(.dm-cstack__open)')) {
+      expect(region.classes()).toContain('dm-cstack__lines')
+      expect(region.attributes('role')).toBe('group')
+    }
+  })
+
+  it('[US-VALLE-007.AC08] the lines regions give way first and scroll inside themselves; the open chat never shrinks; nothing leaves the list', () => {
+    // A lines region shrinks before the open chat (flex-shrink 1 against 0), down to one whole line, and scrolls what
+    // no longer fits; its lines keep the design's 44 px plate.
+    expect(rule('.dm-cstack__lines')).toMatchObject({
+      display: 'flex',
+      'flex-direction': 'column',
+      flex: '0 1 auto',
+      'min-height': 'calc(44px + 2 * var(--px, 2px))',
+      'overflow-y': 'auto'
+    })
+    expect(rule('.dm-cstack__row')).toMatchObject({ flex: 'none', height: '44px' })
+    // The open chat takes what is left and never gives any of it up: at least the design's 240 px and at least half the
+    // list, so many lines never squeeze its conversation to a sliver, or more when its own content needs more (the flex
+    // item's automatic minimum, kept by declaring no min-height).
+    const open = rule('.dm-cstack__open')
+    expect(open).toMatchObject({ flex: '1 0 max(240px, 50%)' })
+    expect(open['min-height']).toBeUndefined()
+    // That content is the MessagePanel's fixed parts, its head, its card or composer, never its conversation: the log
+    // scrolls inside the room left to it (`DS/docs/screens/message.md`, height set by the layout, scrolls inside), so a
+    // long log never sizes the open chat and pushes its composer out of view.
+    expect(rule('.dm-cstack__open > :deep(.dm-msg .dm-msg__log)')).toMatchObject({
+      contain: 'size'
+    })
+    // Should the floors together still not fit, the list scrolls as a whole: nothing draws past the column.
+    expect(rule('.dm-cstack__list')).toMatchObject({ 'min-height': '0', 'overflow-y': 'auto' })
   })
 })

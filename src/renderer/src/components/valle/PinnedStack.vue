@@ -10,6 +10,9 @@
  * - × ("Unpin `<name>`") or a middle click unpins any pin; its session keeps running (AC03).
  * - Where keyboard focus goes after an unpin is machine 29's (`focusRequest`): the next line, else the one before it,
  *   else the stack itself (tabindex -1), never dropped (AC04).
+ * - The pin in focus has no line: its chat stands in the line's place, unpinned by the chat's own × or a middle click.
+ * - With more lines than fit, the open chat keeps its room and is never covered; the lines above and below it share
+ *   what is left, each side scrolling inside its own region, and nothing draws past the stack (Valle QA VQA-01).
  *
  * With nothing pinned the guidance line takes the place of the lines (07 machine 38; US-VALLE-014; ISSUE-310): a pure read
  * of the pins, nothing stored.
@@ -31,6 +34,32 @@ const emit = defineEmits<{ select: [key: PinKey]; unpin: [key: PinKey] }>()
 const root = ref<HTMLElement | null>(null)
 /** Machine 38: with nothing pinned the guidance line takes the place of the lines (S38.01). */
 const empty = computed(() => stackState({ pins: props.pins }) === 'stack-empty')
+
+/** A part of the list: the lines above the open chat, the open chat, then the lines below it. */
+type StackPart =
+  | { readonly kind: 'above' | 'below'; readonly label: string; readonly pins: readonly PinView[] }
+  | { readonly kind: 'open'; readonly pin: PinView }
+
+/**
+ * The list in its three parts. The pin in focus has no line of its own: its chat takes the line's place
+ * (`DS/prototype/organisms/chat-stack/chat-stack.js` render). The lines on each side of it are a region of their own,
+ * which scrolls when they do not fit (Valle QA VQA-01, a package gap resolved in development: the design draws three
+ * pins and is silent on more). An empty side has no region.
+ */
+const parts = computed<readonly StackPart[]>(() => {
+  const at = props.pins.findIndex((pin) => pin.key === props.focus)
+  const above = at === -1 ? props.pins : props.pins.slice(0, at)
+  const below = at === -1 ? [] : props.pins.slice(at + 1)
+  return [
+    ...(above.length > 0
+      ? [{ kind: 'above' as const, label: 'Pinned chats above', pins: above }]
+      : []),
+    ...(at === -1 ? [] : [{ kind: 'open' as const, pin: props.pins[at]! }]),
+    ...(below.length > 0
+      ? [{ kind: 'below' as const, label: 'Pinned chats below', pins: below }]
+      : [])
+  ]
+})
 
 watch(
   () => props.focusRequest,
@@ -72,20 +101,38 @@ function onAuxClick(event: MouseEvent, key: PinKey): void {
       <span class="dm-cstack__count">{{ pins.length > 0 ? pins.length : '' }}</span>
     </header>
     <div class="dm-cstack__list">
-      <template v-for="pin in pins" :key="pin.key">
+      <template v-for="part in parts" :key="part.kind">
         <div
-          v-if="pin.key === focus"
+          v-if="part.kind === 'open'"
           class="dm-cstack__open"
           tabindex="-1"
           data-expanded="true"
-          :data-pin="pin.key"
-          :data-pin-mine="pin.mineId"
-          :data-pin-state="pin.state"
-          :data-read-only="pin.readOnly ? 'true' : 'false'"
-          :aria-label="pin.text.name"
-          @auxclick="onAuxClick($event, pin.key)"
+          :data-pin="part.pin.key"
+          :data-pin-mine="part.pin.mineId"
+          :data-pin-state="part.pin.state"
+          :data-read-only="part.pin.readOnly ? 'true' : 'false'"
+          :aria-label="part.pin.text.name"
+          @auxclick="onAuxClick($event, part.pin.key)"
         >
-          <div class="dm-cstack__row m-mat" :data-needs="pin.text.needs ? 'true' : 'false'">
+          <slot name="chat" :pin="part.pin" />
+        </div>
+        <div v-else class="dm-cstack__lines" role="group" :aria-label="part.label">
+          <div
+            v-for="pin in part.pins"
+            :key="pin.key"
+            class="dm-cstack__row m-mat"
+            role="button"
+            tabindex="0"
+            data-expanded="false"
+            :data-pin="pin.key"
+            :data-pin-mine="pin.mineId"
+            :data-pin-state="pin.state"
+            :data-needs="pin.text.needs ? 'true' : 'false'"
+            :aria-label="pin.text.lineLabel"
+            @click="emit('select', pin.key)"
+            @keydown="onLineKey($event, pin.key)"
+            @auxclick="onAuxClick($event, pin.key)"
+          >
             <span v-if="pin.kind === 'add'" class="dm-ctab__add" aria-hidden="true"
               ><PixelIcon name="add"
             /></span>
@@ -95,6 +142,7 @@ function onAuxClick(event: MouseEvent, key: PinKey): void {
             <button
               type="button"
               class="dm-cstack__x"
+              tabindex="-1"
               :aria-label="pin.text.unpinLabel"
               title="Unpin"
               @click.stop="emit('unpin', pin.key)"
@@ -102,39 +150,6 @@ function onAuxClick(event: MouseEvent, key: PinKey): void {
               <span aria-hidden="true">×</span>
             </button>
           </div>
-          <slot name="chat" :pin="pin" />
-        </div>
-        <div
-          v-else
-          class="dm-cstack__row m-mat"
-          role="button"
-          tabindex="0"
-          data-expanded="false"
-          :data-pin="pin.key"
-          :data-pin-mine="pin.mineId"
-          :data-pin-state="pin.state"
-          :data-needs="pin.text.needs ? 'true' : 'false'"
-          :aria-label="pin.text.lineLabel"
-          @click="emit('select', pin.key)"
-          @keydown="onLineKey($event, pin.key)"
-          @auxclick="onAuxClick($event, pin.key)"
-        >
-          <span v-if="pin.kind === 'add'" class="dm-ctab__add" aria-hidden="true"
-            ><PixelIcon name="add"
-          /></span>
-          <slot v-else name="portrait" :pin="pin" />
-          <span class="dm-cstack__name">{{ pin.text.name }}</span>
-          <span class="dm-cstack__state">{{ pin.text.line }}</span>
-          <button
-            type="button"
-            class="dm-cstack__x"
-            tabindex="-1"
-            :aria-label="pin.text.unpinLabel"
-            title="Unpin"
-            @click.stop="emit('unpin', pin.key)"
-          >
-            <span aria-hidden="true">×</span>
-          </button>
         </div>
       </template>
     </div>
@@ -173,11 +188,17 @@ function onAuxClick(event: MouseEvent, key: PinKey): void {
   line-height: 1;
   color: var(--ink-faint);
 }
+/*
+ * Valle QA VQA-01 (the design is silent past three pins): the list never draws past its row of the stack. Its parts
+ * are the lines above, the open chat and the lines below; the line regions give way first, the open chat never does.
+ * Should their floors together still not fit, the list scrolls as a whole.
+ */
 .dm-cstack__list {
   display: flex;
   flex-direction: column;
   gap: 4px;
   min-height: 0;
+  overflow-y: auto;
 }
 .dm-cstack__empty {
   padding: 12px;
@@ -186,11 +207,24 @@ function onAuxClick(event: MouseEvent, key: PinKey): void {
   line-height: 1.4;
   color: var(--ink-faint);
 }
+/* A side's lines: as tall as they are, or down to one whole line, scrolling what no longer fits. */
+.dm-cstack__lines {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  gap: 4px;
+  min-height: calc(44px + 2 * var(--px, 2px));
+  overflow-y: auto;
+}
+/*
+ * The open chat takes what the lines leave and never gives any of it up: at least the design's 240 px and at least half
+ * the list, so many lines never squeeze its conversation to a sliver, more when its own content needs more (no
+ * min-height, so the flex item's automatic minimum, its content, holds).
+ */
 .dm-cstack__open {
   display: flex;
-  flex: 1 1 auto;
+  flex: 1 0 max(240px, 50%);
   flex-direction: column;
-  min-height: 240px;
 }
 /*
  * The MessagePanel or the Add panel in the chat zone fills it and shrinks with it down to its own min-content width
@@ -202,6 +236,14 @@ function onAuxClick(event: MouseEvent, key: PinKey): void {
   flex: 1 1 auto;
   width: 100%;
   min-width: min-content;
+}
+/*
+ * The open chat's own floor is its fixed parts (its head, its card or composer), never its conversation: the log
+ * scrolls inside the room left to it (`DS/docs/screens/message.md`: height set by the layout, scrolls inside), so a long
+ * log never sizes the open chat and pushes its composer out of view (Valle QA VQA-01).
+ */
+.dm-cstack__open > :deep(.dm-msg .dm-msg__log) {
+  contain: size;
 }
 .dm-cstack__row {
   display: flex;
