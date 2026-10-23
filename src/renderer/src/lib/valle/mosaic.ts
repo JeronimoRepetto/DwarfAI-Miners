@@ -13,7 +13,8 @@
  * - The dashed "Add a mine here" slot (`slotMenu`): every mine not in the mosaic with its tier, or disabled and "not
  *   enterable", a rule, then "A new project…", the ordinary folder flow (A-30, A-31 for a worktree) whose mine joins the
  *   end of the mosaic; the Add panel never opens for it (S32.11).
- * - S32.15 (Reset preset recomputes the order) is ISSUE-309's.
+ * - S32.15 (ISSUE-309): "Reset preset" in the Control room recomputes the order from every mine with a crew again, in
+ *   the Host's data order, written at once; only at rest (`idle` → `idle`).
  * - Only the transitions 07 machine 32 lists are taken; anything else is refused and changes nothing (ADR-024).
  */
 import type { MineId, Tier } from '@dwarfai/contracts'
@@ -74,6 +75,8 @@ export type MosaicInput =
   | { readonly kind: 'reveal'; readonly mineId: MineId }
   /** Reset metrics (S32.16; S39.10). */
   | { readonly kind: 'reset-metrics' }
+  /** "Reset preset" in the Control room (S32.15; S37.03). */
+  | { readonly kind: 'reset-preset' }
 
 /** What the caller carries out after a transition. */
 export type MosaicEffect =
@@ -196,6 +199,12 @@ function stepIdle(mosaic: Mosaic, input: MosaicInput, facts: MosaicFacts): Mosai
       return step.ok
         ? { ...step, effects: [...step.effects, { kind: 'scroll-to', mineId: input.mineId }] }
         : step
+    }
+    case 'reset-preset': {
+      // S32.15: the Control room's own; the order is every mine with a crew again, not the person's arrangement.
+      if (facts.preset !== 'control') return REFUSED
+      const order = firstMosaicOrder(facts)
+      return taken('S32.15', idle(order), [{ kind: 'write-order', order }])
     }
     default:
       return REFUSED
