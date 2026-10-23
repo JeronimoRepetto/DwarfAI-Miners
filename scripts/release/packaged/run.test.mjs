@@ -53,15 +53,24 @@ function p08Only() {
   return checks
 }
 
-/** A fake check module: its P id, and whether it passes, with the detail it reports. */
-function fakeCheck(dir, file, { id, ok, detail }) {
+/** A fake check module: its P id, and whether it passes (or what blocks it), with the detail it reports. */
+function fakeCheck(dir, file, { id, ok, detail, blocked }) {
+  const answer = blocked === undefined ? { ok, detail } : { ok, detail, blocked }
   writeFileSync(
     path.join(dir, file),
     `export const id = ${JSON.stringify(id)}\n` +
       `export default async function check() {\n` +
-      `  return { ok: ${ok}, detail: ${JSON.stringify(detail)} }\n` +
+      `  return ${JSON.stringify(answer)}\n` +
       `}\n`
   )
+}
+
+/** A P-05 that SP-03 blocks: the signed and notarized `.app` is not recorded (ISSUE-270). */
+const BLOCKED_P05 = {
+  id: 'P-05',
+  ok: false,
+  detail: 'mac-arm64/DwarfAI-Miners.app — SP-03 (signed/notarized .app) not recorded',
+  blocked: { by: 'SP-03', owner: 'the owner' }
 }
 
 describe('packaged-artifact check runner (20 §2.3)', () => {
@@ -174,6 +183,37 @@ describe('packaged-artifact check runner (20 §2.3)', () => {
     const complete = run([artifacts, '--checks', checks, '--release', '--required', required])
     expect(complete.code).toBe(0)
     expect(complete.output).toMatch(/^P-05 ok: host copy$/m)
+  })
+
+  // ADDED for ISSUE-270: a check may answer that a spike blocks it (`blocked: { by, owner }`); it is never green.
+  it('[ADR-027, SP-03] by default a spike-blocked check prints a blocked line and does not fail the run', () => {
+    const checks = tempDir('packaged-checks-')
+    const artifacts = tempDir('packaged-artifacts-')
+    fakeCheck(checks, 'p01-fake.packaged.mjs', { id: 'P-01', ok: true, detail: 'fuses read back' })
+    fakeCheck(checks, 'p05-fake.packaged.mjs', BLOCKED_P05)
+
+    const result = run([artifacts, '--checks', checks])
+
+    expect(result.output).toMatch(
+      /^P-05 blocked: mac-arm64\/DwarfAI-Miners\.app — SP-03 \(signed\/notarized \.app\) not recorded$/m
+    )
+    expect(result.output).not.toMatch(/^P-05 (ok|FAIL)/m)
+    expect(result.code).toBe(0)
+  })
+
+  it('[ADR-027, SP-03] in release mode a spike-blocked check fails the run, naming the spike and its owner', () => {
+    const checks = tempDir('packaged-checks-')
+    const artifacts = tempDir('packaged-artifacts-')
+    const required = path.join(tempDir('packaged-required-'), 'required.json')
+    writeFileSync(required, JSON.stringify([{ id: 'P-05', issue: 'ISSUE-270' }]))
+    fakeCheck(checks, 'p05-fake.packaged.mjs', BLOCKED_P05)
+
+    const result = run([artifacts, '--checks', checks, '--release', '--required', required])
+
+    expect(result.code).toBe(1)
+    expect(result.output).toMatch(
+      /^P-05 FAIL: blocked by SP-03, owned by the owner: mac-arm64\/DwarfAI-Miners\.app — SP-03 \(signed\/notarized \.app\) not recorded$/m
+    )
   })
 
   it('[ADR-027] required.json names all nine P ids with the issue that owns each', () => {
