@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import type {
   HostFrame,
+  ModeTransition,
   MoveToModeParams,
   VetaLayoutRequest,
   VetaLayoutResult
@@ -9,6 +10,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createFakeWindowApi } from '../../../../contracts/ipc/testing/fakeWindowApi'
 import { FRAME_CLOCK_KEY } from '../../composables/useFramePlayer'
+import { modeTransitionPart } from '../../composables/useModeTransition'
 import { createFrameClock, type FrameClock } from '../../lib/sprite/frameClock'
 import { checkIdleBudget } from '../../lib/sprite/idleBudget'
 import { FakeTickSource, fakeFrameClockEnv } from '../../lib/sprite/testing/FakeTickSource'
@@ -283,5 +285,83 @@ describe('the Veta strip (07 machine 20; ISSUE-287)', () => {
     for (const part of parts) {
       expect(part.classes(), part.attributes('data-veta-part')).toContain('dm-focus-inset')
     }
+  })
+})
+
+describe('a chat carried into a Veta window still reading the Host (VQA-08; 07 S24.18)', () => {
+  // The window's one run part is shared: a part an earlier mount started over another fake is let go first.
+  beforeEach(() => {
+    modeTransitionPart().dispose()
+  })
+  afterEach(() => {
+    modeTransitionPart().dispose()
+  })
+
+  it('[US-SHELL-001.AC01, S24.18] a run landing before the first snapshot was read raises the carried chat once the dwarf is known', async () => {
+    let heard: ((t: ModeTransition) => void) | null = null
+    // Every read of the Host waits until the facts are fed; a read after that is answered at once.
+    const waiting: Array<() => void> = []
+    let fed = false
+    const layouts: VetaLayoutRequest[] = []
+    ;(window as unknown as { api: unknown }).api = createFakeWindowApi({
+      // The window was just built by the move: the Host's facts arrive after the run has landed.
+      getHostSnapshot: () =>
+        new Promise((resolve) => {
+          const answer = (): void =>
+            resolve(
+              snapshotPage(10, {
+                minesEverKnown: true,
+                mines: [mineWire(MORIA)],
+                dwarfs: [dwarfWire(BORIN, MORIA, { status: 'working' })]
+              }) as never
+            )
+          if (fed) answer()
+          else waiting.push(answer)
+        }) as never,
+      getUiSession: () =>
+        Promise.resolve({
+          drafts: {},
+          chatViews: {},
+          askPicks: {},
+          openChat: {},
+          currentMine: {},
+          valle: {}
+        }) as never,
+      onModeTransition: (h) => {
+        heard = h as (t: ModeTransition) => void
+        return () => (heard = null)
+      },
+      layoutVeta: (request) => {
+        layouts.push(request as VetaLayoutRequest)
+        return Promise.resolve(PLACE)
+      }
+    })
+    const { clock } = countingClock()
+    mounted = mount(VetaApp, {
+      attachTo: document.body,
+      global: { provide: { [FRAME_CLOCK_KEY as symbol]: clock } }
+    })
+    await flushPromises()
+    expect(heard, 'the window plays its part in every run').not.toBeNull()
+
+    // The run was held until the page loaded: its t0 and the shell motion are already past when it is heard.
+    heard!({
+      transitionId: 'run-veta',
+      from: 'valle',
+      to: 'veta',
+      t0: Date.now() - 1_000,
+      role: 'target',
+      chat: { mineId: MORIA as never, dwarfId: BORIN as never }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await flushPromises()
+    fed = true
+    for (const read of waiting.splice(0)) read()
+    await flushPromises()
+    await vi.waitFor(() =>
+      expect(layouts.filter((l) => l.kind === 'rise')).toEqual([
+        expect.objectContaining({ kind: 'rise', dwarfId: BORIN })
+      ])
+    )
   })
 })

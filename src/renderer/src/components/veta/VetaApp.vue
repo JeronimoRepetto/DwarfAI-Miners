@@ -1252,25 +1252,31 @@ onMounted(() => {
   document.addEventListener('visibilitychange', visibility)
   document.addEventListener('pointerdown', pressed, true)
   window.addEventListener('blur', blurred)
-  void dock.start().then(() => {
+  const docked = dock.start().then(() => {
     started = true
   })
   // A name measures its true width once the pixel faces have loaded.
   void document.fonts?.ready.then(measureBand)
-  void life.start()
+  const read = life.start()
   void board.start()
   void startAsks()
   risen.start()
-  // S24.18 (ISSUE-293): a run into Veta carrying a chat rises it once the shell motion landed, as a click does.
+  /*
+   * S24.18 (ISSUE-293): a run into Veta carrying a chat rises it once the shell motion landed, as a click does. VQA-08: a
+   * window built by that very move hears the run before its dock and the Host's facts were read, so whether the dwarf
+   * is present, and where the chat rises, are decided once both were, never on the empty strip of a page still loading.
+   */
   stopLanding = modeTransitionPart().onLanded((carried) => {
-    void risen.dispatch({
-      type: 'arrive',
-      mineId: carried.mineId,
-      dwarfId: carried.dwarfId,
-      present: chambers.value.some(
-        (c) => c.mine.id === carried.mineId && c.dwarfs.some((d) => d.id === carried.dwarfId)
-      )
-    })
+    void Promise.allSettled([docked, read]).then(() =>
+      risen.dispatch({
+        type: 'arrive',
+        mineId: carried.mineId,
+        dwarfId: carried.dwarfId,
+        present: chambers.value.some(
+          (c) => c.mine.id === carried.mineId && c.dwarfs.some((d) => d.id === carried.dwarfId)
+        )
+      })
+    )
   })
   // S24.14 (ISSUE-293): once Veta played its half of a run away, its content veiled, the risen chat folds at once, its
   // draft and view kept. A hidden frameless window does not reliably report itself hidden (`visibilitychange`).
