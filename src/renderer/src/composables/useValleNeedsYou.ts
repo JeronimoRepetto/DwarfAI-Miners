@@ -12,6 +12,9 @@
  *   focused, expanded in the stack (S29.19, the pins), its mine made current (S35.01), and its zone called with the
  *   ring; in the Work front a swap to the dwarf's mine when it differs (S28.15, no dive), then its tab selected (S29.19).
  *   The pins mark the chat as answered from the queue for a later dive (S28.03).
+ * - Owner ruling 2026-10-23 (VQA-02, VQA-13; `DS` valle.js `nextNeed`, `answer`): the counter goes to the next waiter
+ *   after the one it last jumped to, round the queue, the ones that left skipped; every jump, the counter's or an
+ *   entry's, ends with the keyboard in that dwarf's chat.
  * - A stale press (S34.11): the entry's ask closed before the press ran; its chat still opens while the dwarf is present.
  *
  * The jump's parts are injected; the Valle root hands it its own composables.
@@ -25,6 +28,7 @@ import {
   type CounterView,
   type EntryView,
   type JumpTarget,
+  type NeedsYouEntry,
   type NeedsYouInput,
   type NeedsYouQueue
 } from '../lib/valle/needsYou'
@@ -49,6 +53,11 @@ export interface ValleNeedsYouJump {
   current(mineId: MineId): void
   /** S28.15: the Work front swapped to the mine, the tab order led by the dwarf (the preset's own swap). */
   swap(mineId: MineId, dwarfId: DwarfId): void
+  /**
+   * Owner ruling 2026-10-23 (VQA-13; `DS` valle.js `answer`): the keyboard handed to the dwarf's chat once the jump
+   * drew it, instead of staying on the counter or the entry pressed.
+   */
+  focus?(dwarfId: DwarfId): void
 }
 
 export interface ValleNeedsYouDeps {
@@ -105,16 +114,25 @@ export function useValleNeedsYou(deps: ValleNeedsYouDeps): ValleNeedsYouPart {
     return model.needsYou.value.some((entry) => entry.mineId === call.mineId) ? call : null
   })
 
+  /**
+   * The entry the last jump went to, as it was then (owner ruling 2026-10-23, VQA-02): the counter's next press goes to
+   * the one after it, round the queue (`nextWaiter`). Kept even once that dwarf left the queue, so the ones that left
+   * are skipped rather than the turn starting over.
+   */
+  let lastJumped: NeedsYouEntry | null = null
+
   function carry(jump: JumpTarget): void {
     if (jump.preset === 'control') {
       deps.jump.reveal(jump.mineId)
       deps.jump.pin(jump.dwarfId, jump.mineId)
       deps.jump.current(jump.mineId)
       lastCall.value = { mineId: jump.mineId, seq: (seq += 1) }
-      return
+    } else {
+      if (jump.swap) deps.jump.swap(jump.mineId, jump.dwarfId)
+      deps.jump.pin(jump.dwarfId, jump.mineId)
     }
-    if (jump.swap) deps.jump.swap(jump.mineId, jump.dwarfId)
-    deps.jump.pin(jump.dwarfId, jump.mineId)
+    lastJumped = model.needsYou.value.find((entry) => entry.dwarfId === jump.dwarfId) ?? lastJumped
+    deps.jump.focus?.(jump.dwarfId)
   }
 
   function send(input: NeedsYouInput): void {
@@ -127,7 +145,12 @@ export function useValleNeedsYou(deps: ValleNeedsYouDeps): ValleNeedsYouPart {
     entries,
     called,
     press() {
-      send({ kind: 'counter', preset: deps.preset(), frontMine: deps.frontMine() })
+      send({
+        kind: 'counter',
+        preset: deps.preset(),
+        frontMine: deps.frontMine(),
+        after: lastJumped
+      })
     },
     pressEntry(entry) {
       send({

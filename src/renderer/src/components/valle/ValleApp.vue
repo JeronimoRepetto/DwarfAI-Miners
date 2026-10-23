@@ -124,6 +124,7 @@ import type { AudioPlayer } from '../../lib/audio/player'
 import type { CrewSoundEvent } from '../../lib/audio/crew'
 import { mineCrew } from '../../lib/scene/mineColumn'
 import { sceneDwarfStatus } from '../../lib/scene/sceneDwarf'
+import { focusChatIn } from '../../lib/valle/chatFocus'
 import { mineRowCrew } from '../../lib/valle/mineRows'
 import { mapTotals } from '../../lib/map/mapPage'
 import type { PausableFrameClock } from '../../lib/sprite/frameClock'
@@ -570,9 +571,29 @@ const needsYou = useValleNeedsYou({
       split.sendPin({ kind: 'jump', dwarfId, mineId })
     },
     current: (mineId) => currentMine.send({ kind: 'chat', mineId }),
-    swap: (mineId, dwarfId) => preset.send({ kind: 'pick', mineId, dwarfId })
+    swap: (mineId, dwarfId) => preset.send({ kind: 'pick', mineId, dwarfId }),
+    focus: (dwarfId) => focusJumpedChat(dwarfId)
   }
 })
+/** How many frames a jump waits for its chat to be drawn: a Work front swap runs 180 ms, a dive longer. */
+const JUMP_FOCUS_FRAMES = 60
+/**
+ * Owner ruling 2026-10-23 (VQA-13; `DS` valle.js `answer`): after a needs-you jump the keyboard goes into the dwarf's
+ * chat, once the pins, the swap or the mosaic drew it, rather than staying on the counter or the entry pressed. Tried
+ * after the render, then each frame for a bounded while; never a motion ghost's copy (`focusChatIn`).
+ */
+function focusJumpedChat(dwarfId: DwarfId): void {
+  let frames = 0
+  const attempt = (): void => {
+    const root = rootEl.value
+    if (root === null || focusChatIn(root, dwarfId)) return
+    frames += 1
+    if (frames >= JUMP_FOCUS_FRAMES) return
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(attempt)
+    else setTimeout(attempt, 16)
+  }
+  void nextTick(attempt)
+}
 /**
  * A needs-you jump, the counter's or an entry's (S34.05, S34.06): a nav page over the main zone gives way to the mines
  * first (S28.20), as the reveal does, so the jump lands where the person sees it (owner live check 2026-10-23).

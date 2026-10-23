@@ -13,8 +13,9 @@ import type { VallePreset } from './preset'
  *   the place its next ask's `askedAt` takes in the Host's order (S34.04). Every other entry stays the same object, in
  *   the same place, so the row patches in place (NFR-PERF-03).
  * - A press never changes the preset (US-VALLE-004.AC01, US-VALLE-012.AC02): the jump names the preset it answers in.
- *   The counter goes to the oldest entry (S34.05, S34.06); an entry to its own dwarf (S34.07), whose chat still opens
- *   when its ask closed meanwhile and the dwarf is present (S34.11).
+ *   The counter goes to the next entry after the one it last jumped to, round the queue, the oldest first (S34.05,
+ *   S34.06 as the owner ruling 2026-10-23 reads them, `nextWaiter`); an entry to its own dwarf (S34.07), whose chat
+ *   still opens when its ask closed meanwhile and the dwarf is present (S34.11).
  * - The words are the design's (`DS/docs/copy.md`, Valle top bar and Needs-you queue; decision log, "Needs-you count
  *   wording"; BR-12). The counter's accessible name counts and never names a dwarf (US-VALLE-004.AC07); an entry's
  *   spells out the dwarf and the mine, never the mark alone (US-VALLE-012.AC07).
@@ -88,7 +89,13 @@ export type NeedsYouInput =
   /** B-F10 `dwarf.departed` (S34.03). */
   | { readonly kind: 'departed'; readonly dwarfId: DwarfId }
   /** `UI:` the counter pressed (S34.05, S34.06, S34.08). */
-  | { readonly kind: 'counter'; readonly preset: VallePreset; readonly frontMine: MineId | null }
+  | {
+      readonly kind: 'counter'
+      readonly preset: VallePreset
+      readonly frontMine: MineId | null
+      /** The entry the last press jumped to, as it was then; absent or `null` before any jump. */
+      readonly after?: NeedsYouEntry | null
+    }
   /** `UI:` an entry pressed, as the row drew it (S34.07, S34.11). */
   | {
       readonly kind: 'entry'
@@ -204,6 +211,23 @@ function advanced(queue: NeedsYouQueue, at: number, next: number): NeedsYouQueue
   return place === -1 ? [...rest, moved] : [...rest.slice(0, place), moved, ...rest.slice(place)]
 }
 
+/**
+ * Owner ruling 2026-10-23 (VQA-02): the counter's next waiter, round the queue (`DS` valle.js `nextNeed`), where 07
+ * machine 34 S34.05/S34.06 read "the oldest". With no jump yet, the oldest. After a jump, the entry that follows the one
+ * jumped to in the Host's order; when that dwarf left the queue meanwhile, the first entry asked after it, so the ones
+ * that left are skipped and the press never falls back to the start. Past the newest, round to the oldest.
+ */
+export function nextWaiter(
+  queue: NeedsYouQueue,
+  after: NeedsYouEntry | null
+): NeedsYouEntry | null {
+  const oldest = queue[0]
+  if (oldest === undefined || after === null) return oldest ?? null
+  const at = queue.findIndex((entry) => entry.dwarfId === after.dwarfId)
+  if (at !== -1) return queue[(at + 1) % queue.length]!
+  return queue.find((entry) => entry.askedAt > after.askedAt) ?? oldest
+}
+
 /** One transition of the table of 07 machine 34, or `not-listed` (ADR-024). S34.12, the hold, is the read model's. */
 export function stepNeedsYou(queue: NeedsYouQueue, input: NeedsYouInput): NeedsYouStep {
   switch (input.kind) {
@@ -226,12 +250,12 @@ export function stepNeedsYou(queue: NeedsYouQueue, input: NeedsYouInput): NeedsY
       if (!queue.some((entry) => entry.dwarfId === input.dwarfId)) return REFUSED
       return taken('S34.03', without(queue, input.dwarfId))
     case 'counter': {
-      const oldest = queue[0]
-      if (oldest === undefined) return taken('S34.08', queue)
+      const next = nextWaiter(queue, input.after ?? null)
+      if (next === null) return taken('S34.08', queue)
       return taken(
         input.preset === 'control' ? 'S34.05' : 'S34.06',
         queue,
-        jumpOf(oldest.dwarfId, oldest.mineId, input.preset, input.frontMine)
+        jumpOf(next.dwarfId, next.mineId, input.preset, input.frontMine)
       )
     }
     case 'entry': {
