@@ -210,8 +210,9 @@ const props = defineProps<{
    * The mode window hosting this chat (ISSUE-293; BR-21: one component in every mode). In Veta the header offers
    * "▢ Open in the Panel" (screens/message.md, Header: "only when the chat rose from Veta"; US-MSG-010.AC02, AC03),
    * and the mine-history request stays hidden until the Panel can be opened on the history (BR-19; 07 S24.13 waits on
-   * `ModeTransition.slot`). In Valle's pins and panes (TVC) neither tool shows: Valle's history drawer is ISSUE-308's,
-   * and the panel registers no mode-transition hand-off, Valle's part in a run being ISSUE-311's. The Panel by default.
+   * `ModeTransition.slot`). In Valle's pins and panes (TVC) "▢ Open in the Panel" does not show and the panel registers
+   * no mode-transition hand-off, Valle's part in a run being ISSUE-311's; AMENDED for ISSUE-308 (was: no Mine history
+   * either), its Mine history shows, the host placing the history (07 S31.11, S36.01). The Panel by default.
    */
   hostedIn?: 'panel' | 'veta' | 'valle'
   /**
@@ -945,8 +946,12 @@ const { setName, resetName: resetDwarfName } = useDwarfRename()
 const offersReset = computed(() => props.dwarf.customName !== undefined)
 /** Hosted in Veta: the hand-off tool shows, and the mine-history request is not offered yet (BR-19). */
 const inVeta = computed(() => props.hostedIn === 'veta')
-/** Hosted in Veta or Valle: the mine-history request is not offered yet (BR-19). */
-const offersHistory = computed(() => props.hostedIn !== 'veta' && props.hostedIn !== 'valle')
+/**
+ * Hosted in Veta: the mine-history request is not offered yet (BR-19). AMENDED for ISSUE-308 (was: nor in Valle): in
+ * Valle it shows the mine's history in its zone from the Control room stack (07 S31.11) and opens the drawer under the
+ * chats from the Work front's deck (S36.01; US-VALLE-011.AC01).
+ */
+const offersHistory = computed(() => props.hostedIn !== 'veta')
 const menu = computed(() => {
   const entries = messagePanelMenu(
     props.stopDisabled === true ? 'stopping' : null,
@@ -957,7 +962,7 @@ const menu = computed(() => {
 const stopAsked = ref(false)
 
 function onMenu(index: number): void {
-  // In Veta and Valle the menu lacks its Mine history row: a pick past it names the row one further down.
+  // In Veta the menu lacks its Mine history row: a pick past it names the row one further down.
   const row = !offersHistory.value && index >= MENU_HISTORY ? index + 1 : index
   const picked = messagePanelMenuAction(row, offersReset.value)
   if (picked === 'console') emit('open-console')

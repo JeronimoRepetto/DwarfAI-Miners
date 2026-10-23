@@ -57,17 +57,23 @@
  *   voice are never gated on it. It follows the page's own visibility (a hidden window plays nothing, S35.08), plays
  *   no music and no Panel cue, and adopts the stored Sound settings again on every show and when Valle's Settings page
  *   closes (the page's rows write the preference alone).
+ * - The history drawer (`useValleHistoryDrawer`, 07 machine 36; ISSUE-308): "Mine history" in the Work front's mine
+ *   toolbar, the deck's History bar, or a chat's mine-history request in the deck opens the mine's history under the
+ *   chat tabs and panes, rising with a fade, the chats above never moved; its own close sinks it with a fade. A climb
+ *   out, leaving Valle or a hidden window closes it at once, a swap keeps it on the new mine, its mine removed closes
+ *   it. The same request from a chat in the Control room stack shows the history in that mine's zone instead (S31.11).
  *
  * The bridge is the composition root's (`valleBridgeOf(window.api)`, R13); the observer is the browser's own unless a
  * test hands one.
  */
-import type { DwarfId, MineId } from '@dwarfai/contracts'
+import type { DwarfId, MineId, MoveToModeParams } from '@dwarfai/contracts'
 import { computed, nextTick, onMounted, onUnmounted, provide, shallowRef, watch } from 'vue'
 import { useAttentionCues } from '../../composables/useAttentionCues'
 import { useAudio, type AudioVisibility } from '../../composables/useAudio'
 import { useCurrentMine } from '../../composables/useCurrentMine'
 import { useValleArrivalToast } from '../../composables/useValleArrivalToast'
 import { useValleChats } from '../../composables/useValleChats'
+import { useValleHistoryDrawer } from '../../composables/useValleHistoryDrawer'
 import { useValleMosaic, type ValleZoneKey } from '../../composables/useValleMosaic'
 import { useMapPage } from '../../composables/useMapPage'
 import { useMines } from '../../composables/useMines'
@@ -98,6 +104,7 @@ import { createValleReadModel } from '../../lib/valle/valleReadModel'
 import WorktreeDialog from '../browse/WorktreeDialog.vue'
 import ToastHost from '../overlay/ToastHost.vue'
 import ChatDeck from './ChatDeck.vue'
+import HistoryDrawer from './HistoryDrawer.vue'
 import ValleChat from './ValleChat.vue'
 import NavSlot from '../shell/NavSlot.vue'
 import ValleControlRoom from './ValleControlRoom.vue'
@@ -215,7 +222,8 @@ const gated = (): boolean =>
 const shown = shallowRef(document.visibilityState === 'visible')
 const visibilityChanged = (): void => {
   shown.value = document.visibilityState === 'visible'
-  // A hidden window freezes timelines: the run resolves at once (S28.22).
+  // A hidden window freezes timelines: the run resolves at once (S28.22); the history drawer closes at once (S36.04).
+  if (!shown.value) historyDrawer.send({ kind: 'hidden' })
   if (!shown.value) preset.send({ kind: 'hidden' })
   // S35.08: the current mine is kept for the next show, where the stored Sound settings are adopted again.
   if (!shown.value) currentMine.send({ kind: 'hidden' })
@@ -424,6 +432,59 @@ watch(
   }
 )
 
+/** The history drawer under the Work front's chats (07 machine 36; ISSUE-308). */
+const drawerEl = shallowRef<{ $el: Element } | null>(null)
+const historyDrawer = useValleHistoryDrawer({
+  bridge: props.bridge,
+  motion: {
+    clock: props.clock ?? BROWSER_CLOCK,
+    reduced,
+    target: () => drawerEl.value?.$el ?? null,
+    animate: (element, frames, timing) => {
+      void parts.run(element, frames, timing)
+    },
+    cancel: (elements) => parts.cancel(elements),
+    afterRender: (run) => {
+      void nextTick(run)
+    }
+  }
+})
+/** The drawer while drawn: its mine and its state. */
+const drawer = computed(() => {
+  const state = historyDrawer.state.value
+  return state.kind === 'closed' ? null : state
+})
+/** "Mine history" in the mine toolbar or the History bar: opens the drawer (S36.01), or sinks it when open (S36.03). */
+function toggleHistory(mineId: MineId | null): void {
+  if (drawer.value !== null) historyDrawer.send({ kind: 'close' })
+  else if (mineId !== null) historyDrawer.send({ kind: 'open', mineId, preset: view.value.preset })
+}
+/** A mine-history request from a chat: the drawer in the Work front (S36.01), the mine's zone in the Control room (S31.11). */
+function chatHistory(mineId: MineId): void {
+  if (view.value.preset === 'front') historyDrawer.send({ kind: 'open', mineId, preset: 'front' })
+  else mosaic.historyRequest(mineId)
+}
+// S36.04: a climb out closes it at once; S36.05: a swap keeps it open on the new mine.
+watch(
+  () => view.value.preset,
+  (now) => {
+    if (now !== 'front') historyDrawer.send({ kind: 'climb-out' })
+  },
+  { flush: 'sync' }
+)
+watch(
+  () => (view.value.preset === 'front' ? frontMine.value : null),
+  (mineId) => {
+    if (mineId !== null) historyDrawer.send({ kind: 'swap', mineId })
+  },
+  { flush: 'sync' }
+)
+/** "▼ Panel" / "▼ Veta": leaving Valle closes the drawer at once (S36.04). */
+function leave(move: MoveToModeParams): void {
+  historyDrawer.send({ kind: 'leave' })
+  preset.send({ kind: 'leave', move })
+}
+
 /** Valle's nav column: the slots whose page takes the main zone (S28.19), the Panel's own slots. */
 const NAV_SLOTS = [...WORLD_SLOTS, ...SYSTEM_SLOTS].filter(
   (slot): slot is PanelNavSlot & { area: ValleNavPage } =>
@@ -481,7 +542,10 @@ window.addEventListener('resize', resized)
 // The Host removed the mine the Work front shows: a swap to another, or a climb out at once (S28.23).
 const stopFacts = model.onFacts((facts) => {
   for (const fact of facts) {
-    if (fact.kind === 'mine-removed') preset.send({ kind: 'mine-removed', mineId: fact.mineId })
+    if (fact.kind !== 'mine-removed') continue
+    // S36.06 first: the drawer on that mine closes at once, before the Work front swaps or climbs out (S28.23).
+    historyDrawer.send({ kind: 'mine-removed', mineId: fact.mineId })
+    preset.send({ kind: 'mine-removed', mineId: fact.mineId })
   }
 })
 
@@ -524,6 +588,7 @@ onUnmounted(() => {
   stopCues?.()
   stopAudio?.()
   currentMine.stop()
+  historyDrawer.stop()
   audio.dispose()
   document.removeEventListener('visibilitychange', visibilityChanged)
   window.removeEventListener('keydown', onKey)
@@ -552,7 +617,7 @@ onUnmounted(() => {
       :chat="chat"
       @tab="(target) => preset.send({ kind: 'tab', preset: target })"
       @arrow="(key) => preset.send({ kind: 'arrow', key })"
-      @leave="(move) => preset.send({ kind: 'leave', move })"
+      @leave="leave"
     />
     <div ref="body" class="dm-valle__body" :style="{ '--chat-w': chatWidth }">
       <nav class="dm-valle__nav" aria-label="Valle">
@@ -582,6 +647,7 @@ onUnmounted(() => {
         :content="mosaic.frontContent.value"
         :menu="frontMenu"
         :moving="gated()"
+        :history-open="drawer !== null"
         @menu="toggleMenu({ preset: 'front' })"
         @menu-pick="(id) => mosaic.pickMenu(id)"
         @menu-dismiss="mosaic.dismiss()"
@@ -589,6 +655,7 @@ onUnmounted(() => {
         @unfold="preset.send({ kind: 'unfold' })"
         @pick="(mineId) => preset.send({ kind: 'pick', mineId })"
         @current="(mineId) => currentMine.send({ kind: 'painting', mineId })"
+        @history="toggleHistory"
       >
         <template #content="{ mineId, content }">
           <ValleZoneHistory
@@ -664,6 +731,7 @@ onUnmounted(() => {
               :dock="chats.dock"
               :mine-name="nameOf(pin.mineId)"
               @close="split.sendPin({ kind: 'unpin', key: pin.key })"
+              @history="chatHistory(pin.mineId)"
             />
           </template>
         </PinnedStack>
@@ -673,12 +741,14 @@ onUnmounted(() => {
           :focus="pins.set.value.focus"
           :focus-request="pins.focusRequest.value"
           :split="deckSplit"
+          :history="frontMine === null ? null : { open: drawer !== null }"
           @select="selectPin"
           @unpin="(key) => split.sendPin({ kind: 'unpin', key })"
           @drag="(key) => split.sendPin({ kind: 'drag', key })"
           @drop="(order) => split.sendPin({ kind: 'drop', order })"
           @drag-cancel="split.sendPin({ kind: 'drag-cancel' })"
           @split="split.press()"
+          @history="toggleHistory(frontMine)"
         >
           <template #chat="{ pin }">
             <ValleChat
@@ -686,6 +756,16 @@ onUnmounted(() => {
               :dock="chats.dock"
               :mine-name="nameOf(pin.mineId)"
               @close="split.sendPin({ kind: 'unpin', key: pin.key })"
+              @history="chatHistory(pin.mineId)"
+            />
+          </template>
+          <template #drawer>
+            <HistoryDrawer
+              v-if="drawer !== null"
+              ref="drawerEl"
+              :mine-id="drawer.mineId"
+              :state="drawer.kind"
+              @close="historyDrawer.send({ kind: 'close' })"
             />
           </template>
         </ChatDeck>
