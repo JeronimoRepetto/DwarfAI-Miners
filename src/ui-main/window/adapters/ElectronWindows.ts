@@ -329,7 +329,11 @@ export class ElectronWindows implements WindowFactory {
       this.deps.BrowserWindow,
       vetaWindowRequest({ preloadPath: this.deps.preload, iconPath: this.deps.icon })
     )
-    this.vetaWindow = { window, mode: this.manage(window, modeEntry(this.deps.appEntry, 'veta')) }
+    this.vetaWindow = {
+      window,
+      // Built on its first entry, whose run is sent at once (S24.18, S27.05): its pushes wait for its page (VQA-08).
+      mode: this.manage(window, modeEntry(this.deps.appEntry, 'veta'), { holdUntilLoaded: true })
+    }
     return this.vetaWindow.mode
   }
 

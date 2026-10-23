@@ -11,9 +11,9 @@ import { homedir } from 'node:os'
 import type { CopyRootBuild } from '@dwarfai/contracts'
 import type { UiLog } from '../diagnostics/uiLogger'
 import { plainFs } from './plainFs'
+import { packagedCopyPlan } from './adapters/packagedCopySource'
 import type { HostCopyPreparer } from './ports'
 import {
-  copySourceOf,
   ensureVersionedCopy,
   errnoOf,
   nodeCopyOps,
@@ -48,7 +48,15 @@ export function createCopyPreparer(options: CopyPreparerOptions): HostCopyPrepar
         ? versionedCopyRoot({ platform, build: options.build, env: uiEnv, homeDir: homedir() })
         : { ok: true as const, value: options.copyRoot }
     if (!root.ok) return root
-    const sourceDir = copySourceOf(options.execPath, platform)
+    // Where the copy is made from and where the Host runs inside it (adapters/packagedCopySource.ts): the
+    // launcher relocates the executable into `contentDir`, never leaving it in the install location (ADR-027 item 1).
+    const plan = packagedCopyPlan({
+      execPath: options.execPath,
+      platform,
+      version: options.appVersion,
+      root: root.value
+    })
+    const sourceDir = plan.sourceDir
     const copy = await ensureVersionedCopy({
       version: options.appVersion,
       sourceDir,
@@ -74,6 +82,6 @@ export function createCopyPreparer(options: CopyPreparerOptions): HostCopyPrepar
     } catch (error) {
       return { ok: false, errCode: `COPY_${errnoOf(error)}` }
     }
-    return { ok: true, sourceDir, sourceRealDir, contentDir: copy.contentDir }
+    return { ok: true, sourceDir, sourceRealDir, contentDir: plan.contentDir }
   }
 }
