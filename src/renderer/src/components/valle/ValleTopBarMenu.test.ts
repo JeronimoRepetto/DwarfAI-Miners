@@ -132,7 +132,8 @@ describe('the Valle top bar menu (ISSUE-309)', () => {
     await root.get('[role="menuitem"]').trigger('click')
     await flushPromises()
 
-    // The one toast contract: the window's one host, which stands directly inside the Valle root.
+    // The one toast contract: the window's one host, standing over the main zone alone (07 §24 I-38: the design has no
+    // Valle rule yet), outside the nav, the chat zone and the mines.
     const hosts = root.findAll('.dm-toasts')
     expect(hosts).toHaveLength(1)
     // Only the toast this reset adds is counted: the window's queue is a module singleton.
@@ -141,7 +142,9 @@ describe('the Valle top bar menu (ISSUE-309)', () => {
       .filter((toast) => toast.text().includes('Control room is back to its preset'))
     expect(added).toHaveLength(1)
     const host = hosts[0]!.element
-    expect(host.parentElement).toBe(root.get('[data-valle-root]').element)
+    const area = root.get('[data-valle-toasts]').element
+    expect(host.parentElement).toBe(area)
+    expect(area.closest('nav, aside')).toBeNull()
     // Nothing the toast could cover contains it, and it contains none of them: the mines, the chats, a composer.
     const covered = [
       ...root.element.querySelectorAll(

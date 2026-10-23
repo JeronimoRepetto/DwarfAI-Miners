@@ -822,6 +822,10 @@ onUnmounted(() => {
           </template>
         </ChatDeck>
       </aside>
+      <!-- The toast contract's host over the main zone alone (BR-23; 07 §24 I-38): never over the chat zone. -->
+      <div class="dm-valle__toasts" data-valle-toasts>
+        <ToastHost />
+      </div>
     </div>
     <div class="dm-vghosts" aria-hidden="true"></div>
     <WorktreeDialog
@@ -830,7 +834,6 @@ onUnmounted(() => {
       @accept="mosaic.answerWorktree(true)"
       @dismiss="mosaic.answerWorktree(false)"
     />
-    <ToastHost />
   </main>
 </template>
 
@@ -844,12 +847,26 @@ onUnmounted(() => {
   overflow: hidden;
 }
 .dm-valle__body {
+  position: relative;
   display: grid;
   grid-template-columns: 56px minmax(0, 1fr) 12px var(--chat-w);
   gap: 6px;
   min-width: 0;
   min-height: 0;
   padding: 6px;
+}
+/*
+ * The area the general toast rule centres on (BR-23): the main zone, between the nav column and the splitter (padding 6,
+ * nav 56, gap 6 on the left; the chat zone, its gap, the 12 px splitter and the padding on the right). The toast stands
+ * 56 px above its bottom, so it never lies over the chat zone or a composer; the design's own Valle rule is open (07 §24
+ * I-38). It takes no pointer.
+ */
+.dm-valle__toasts {
+  position: absolute;
+  inset-block: 6px;
+  inset-inline-start: 68px;
+  inset-inline-end: calc(var(--chat-w) + 30px);
+  pointer-events: none;
 }
 .dm-valle__nav {
   display: flex;
