@@ -411,3 +411,23 @@ describe('the Valle window before its page has loaded (ISSUE-311)', () => {
     ])
   })
 })
+
+// APPENDED for VQA-08: the Veta window is built on its first entry too (ADR-025 items 1, 5), and that entry's run is
+// sent to it at once: a push its page could not hear yet lost the run, so a chat carried in by "▼ Veta" never rose (S24.18).
+describe('the Veta window before its page has loaded (VQA-08)', () => {
+  it('[US-SHELL-001.AC01, S24.18] a push to the Veta window before its page has loaded reaches it once the page has loaded, in order', () => {
+    const veta = new ElectronWindows(deps()).veta('display-a')
+    const window = FakeBrowserWindow.built[0]!
+    veta.send('mode:transition', { transitionId: 't-1' })
+    veta.send('mode:transition', { transitionId: 't-2' })
+    expect(window.calls.filter((call) => call.startsWith('send'))).toEqual([])
+    window.webContents.emit('did-finish-load')
+    // Then pushes go straight through.
+    veta.send('mode:transition', { transitionId: 't-3' })
+    expect(window.calls.filter((call) => call.startsWith('send'))).toEqual([
+      'send mode:transition {"transitionId":"t-1"}',
+      'send mode:transition {"transitionId":"t-2"}',
+      'send mode:transition {"transitionId":"t-3"}'
+    ])
+  })
+})
