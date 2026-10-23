@@ -30,6 +30,8 @@
 import type { MineId, ZoneContent } from '@dwarfai/contracts'
 import { computed, inject, onMounted, onUnmounted, onUpdated, shallowRef } from 'vue'
 import { mosaicState } from '../../lib/valle/emptyStates'
+import { controlMinimum } from '../../lib/valle/split'
+import type { MineTier } from '../../types'
 import type { SlotEntry } from '../../lib/valle/mosaic'
 import type { ZoneMenuEntry, ZoneMenuItemId } from '../../lib/valle/zone'
 import ActionButton from '../controls/ActionButton.vue'
@@ -55,6 +57,10 @@ const props = defineProps<{
     needs?: boolean
     /** The number of the needs-you jump that called this zone (S34.05), 0 when none: each call flashes the ring. */
     called?: number
+    /** The mine's tier, once known: its chip leads the header. */
+    tier?: MineTier | null
+    /** Its crew's count: the column is never narrower than its roster (`controlMinimum`). */
+    portraits?: number
   }[]
   /** The zone menu open on a column, with its entries, or `null`. */
   menu?: { mineId: MineId; entries: readonly ZoneMenuEntry[] } | null
@@ -163,6 +169,8 @@ onUnmounted(() => {
         :data-needs="column.needs ? 'true' : 'false'"
         :aria-current="column.current ? 'true' : undefined"
         :aria-label="`Mine ${column.name}${column.current ? ', current' : ''}`"
+        :data-closed="column.enterable ? 'false' : 'true'"
+        :style="{ '--min': `${controlMinimum(column.portraits ?? 0)}px` }"
       >
         <div class="dm-vz__bg" aria-hidden="true"></div>
         <span
@@ -174,21 +182,20 @@ onUnmounted(() => {
         <div class="dm-vz__head" @click="zoneClick($event, column.mineId)">
           <ZoneHeader
             :name="column.name"
+            :tier="column.tier ?? null"
             :content="column.content ?? 'mine'"
             :menu-open="menu?.mineId === column.mineId"
             @menu="emit('menu', column.mineId)"
           >
             <template #tools>
-              <button
-                type="button"
+              <ActionButton
                 class="dm-vz__dive"
-                aria-label="Dive in · Work front on this mine"
+                icon="promote"
+                size="sm"
                 title="Dive in · Work front on this mine"
                 :disabled="!column.enterable"
                 @click="emit('dive', column.mineId)"
-              >
-                ⤢
-              </button>
+              />
             </template>
           </ZoneHeader>
           <ZoneMenu
@@ -220,6 +227,7 @@ onUnmounted(() => {
           />
         </div>
         <div v-if="(column.content ?? 'mine') === 'mine'" class="dm-vz__foot">
+          <span class="dm-vz__footbg m-mat" aria-hidden="true"></span>
           <div class="dm-vz__roster"><slot name="roster" :mine-id="column.mineId" /></div>
           <ActionButton
             class="dm-vz__plus"
@@ -262,17 +270,27 @@ onUnmounted(() => {
      and clamp the scroll a climb restores. */
   overflow-y: hidden;
 }
+/* `DS` mine-zone.css: the zone, its plates as their own layers so a dive stretches them and moves the rest. */
 .dm-vz {
   position: relative;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  flex: 0 0 max(232px, var(--col-w));
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  flex: 0 0 max(var(--min, 232px), var(--col-w));
+  gap: 4px;
+  min-width: var(--min, 232px);
+  height: 100%;
   min-height: 0;
+  padding: 4px;
 }
 .dm-vz__bg {
   position: absolute;
   inset: 0;
+  transform-origin: 0 0;
   pointer-events: none;
+  background: var(--rock-lo);
+  box-shadow:
+    inset 2px 2px 0 0 var(--wood-lo),
+    inset -2px -2px 0 0 var(--rock-hi);
 }
 /*
  * Attention level 1 (`DS` organisms/mine-zone): the heavy outline Veta uses, above the plates, never over the art's middle.
@@ -282,6 +300,7 @@ onUnmounted(() => {
 .dm-vz__ring {
   position: absolute;
   inset: 0;
+  transform-origin: 0 0;
   z-index: 3;
   opacity: 0;
   pointer-events: none;
@@ -329,6 +348,49 @@ onUnmounted(() => {
 }
 .dm-vz__well {
   position: relative;
+  display: grid;
+  min-width: 0;
   min-height: 0;
+  overflow: hidden;
+  container-type: size;
+  place-items: center;
+}
+/* What the zone shows instead of its mine fills the body (`DS` `.dm-vz__other`). */
+.dm-vz__well[data-zone-content] {
+  container-type: normal;
+  place-items: stretch;
+}
+.dm-vz__well[data-zone-content] > :deep(*) {
+  min-width: 0;
+  min-height: 0;
+}
+.dm-vz__foot {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 60px;
+  padding: 0 4px 0 2px;
+  min-width: 0;
+}
+.dm-vz__footbg {
+  --mat-fill: var(--wood-lo);
+  --mat-hi: var(--wood);
+  --mat-lo: var(--rock-lo);
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+.dm-vz__roster {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.dm-vz__plus {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  font-size: var(--fs-section);
 }
 </style>

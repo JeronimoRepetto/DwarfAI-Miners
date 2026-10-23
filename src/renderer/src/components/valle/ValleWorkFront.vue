@@ -24,6 +24,10 @@ import { computed, inject, onUnmounted, shallowRef, watch } from 'vue'
 import { VALLE_LIST_FOLDED_WIDTH, VALLE_LIST_WIDTH } from '../../lib/valle/preset'
 import type { ZoneMenuEntry, ZoneMenuItemId } from '../../lib/valle/zone'
 import { ADD_DWARF_LABEL } from '../../lib/scene/mineColumn'
+import { mineMinimum } from '../../lib/valle/split'
+import type { MineTier } from '../../types'
+import TierChip from '../controls/TierChip.vue'
+import PixelIcon from '../icon/PixelIcon.vue'
 import ActionButton from '../controls/ActionButton.vue'
 import CurrentMineMark from './CurrentMineMark.vue'
 import ZoneHeader from './ZoneHeader.vue'
@@ -33,9 +37,9 @@ import { VALLE_TRACK_ZONE } from './valleZones'
 const props = defineProps<{
   foldedList: boolean
   /** The compact list's mines, in order. */
-  mines: readonly { mineId: MineId; name: string }[]
+  mines: readonly { mineId: MineId; name: string; tier?: MineTier | null; crew?: string }[]
   /** The Work front's one mine, if known. */
-  mine: { mineId: MineId; name: string } | null
+  mine: { mineId: MineId; name: string; tier?: MineTier | null; portraits?: number } | null
   /** That mine cannot be entered (`DS` organisms/mine-zone `data-closed`): "+ Dwarf" is disabled. */
   closed?: boolean
   /** What the one zone shows. */
@@ -106,56 +110,64 @@ const listWidth = computed(
       <button
         v-if="foldedList"
         type="button"
-        class="dm-mrows__strip"
+        class="dm-mrows__strip dm-mrows__unfold m-mat"
         aria-label="Show the mines list"
         title="Show the mines list"
         @click="emit('unfold')"
       >
-        MINES
+        <PixelIcon name="mines" :scale="2" />
+        <span>MINES</span>
       </button>
-      <header v-else class="dm-mrows__head">
-        <span class="dm-mrows__title">Mines</span>
-        <button
-          type="button"
-          class="dm-mrows__fold"
-          aria-label="Fold the list"
-          title="Fold the list"
-          @click="emit('fold')"
-        >
-          ⇤
-        </button>
-      </header>
-      <div v-if="!foldedList" class="dm-mrows__list">
-        <button
-          v-for="row in mines"
-          :key="row.mineId"
-          type="button"
-          class="dm-mrow"
-          :data-valle-row="row.mineId"
-          :data-current="row.mineId === mine?.mineId ? 'true' : 'false'"
-          :aria-current="row.mineId === mine?.mineId ? 'true' : undefined"
-          @click="emit('pick', row.mineId)"
-        >
-          {{ row.name }}<CurrentMineMark :current="row.mineId === mine?.mineId" size="list" />
-        </button>
+      <div v-else class="dm-mrows__open">
+        <header class="dm-mrows__head m-mat">
+          <h2 class="dm-mrows__title">Mines</h2>
+          <span class="dm-mrows__grow"></span>
+          <ActionButton
+            class="dm-mrows__fold"
+            icon="chevron"
+            size="sm"
+            title="Fold the list"
+            @click="emit('fold')"
+          />
+        </header>
+        <div class="dm-mrows__list">
+          <button
+            v-for="row in mines"
+            :key="row.mineId"
+            type="button"
+            class="dm-mrow"
+            :data-valle-row="row.mineId"
+            :data-current="row.mineId === mine?.mineId ? 'true' : 'false'"
+            :aria-current="row.mineId === mine?.mineId ? 'true' : undefined"
+            @click="emit('pick', row.mineId)"
+          >
+            <TierChip v-if="row.tier" :tier="row.tier" />
+            <span class="dm-mrow__name">{{ row.name }}</span>
+            <span v-if="row.crew" class="dm-mrow__crew">{{ row.crew }}</span>
+            <CurrentMineMark :current="row.mineId === mine?.mineId" size="list" />
+          </button>
+        </div>
       </div>
     </section>
     <div class="dm-vmines" role="region" aria-label="Mines">
       <section
         v-if="mine !== null"
         ref="zone"
-        class="dm-vz"
+        class="dm-vz is-front"
         :data-valle-front-mine="mine.mineId"
         data-valle-zone
         :data-content="shows"
         data-current="true"
         aria-current="true"
         :aria-label="`Mine ${mine.name}, current`"
+        :data-closed="closed ? 'true' : 'false'"
+        :style="{ '--min-front': `${mineMinimum(mine.portraits ?? 0)}px` }"
       >
         <div class="dm-vz__bg" aria-hidden="true"></div>
         <div class="dm-vz__head" @click="zoneClick">
           <ZoneHeader
             :name="mine.name"
+            :tier="mine.tier ?? null"
             :content="shows"
             :menu-open="(menu ?? null) !== null"
             @menu="emit('menu')"
@@ -187,8 +199,10 @@ const listWidth = computed(
           <CurrentMineMark :current="true" size="zone" :moving="moving === true" />
         </div>
         <div v-if="shows === 'mine'" class="dm-vz__foot">
+          <span class="dm-vz__footbg m-mat" aria-hidden="true"></span>
           <div class="dm-vz__roster"><slot name="roster" :mine-id="mine.mineId" /></div>
           <ActionButton
+            class="dm-vz__adds"
             :label="ADD_DWARF_LABEL"
             variant="primary"
             :title="`New dwarf in ${mine.name}`"
@@ -202,41 +216,83 @@ const listWidth = computed(
 </template>
 
 <style scoped>
+/* `DS/docs/screens/valle.md` Parts: the Work front's main zone, the list beside the one mine. */
 .dm-valle__main {
+  position: relative;
   display: grid;
   grid-template-columns: var(--list-w) minmax(0, 1fr);
   gap: 6px;
   min-width: 0;
   min-height: 0;
 }
+/* `DS` organisms/mine-rows, mine-rows.css. */
 .dm-mrows {
+  position: relative;
+  display: grid;
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
+  height: 100%;
+}
+.dm-mrows__open {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 4px;
+  min-width: 0;
+  min-height: 0;
 }
 .dm-mrows__head {
+  --mat-fill: var(--wood);
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 0;
+  height: 44px;
+  padding: 0 2px 0 10px;
+  margin: var(--px);
 }
-.dm-mrows__strip {
-  width: 100%;
-  height: 100%;
-  writing-mode: vertical-rl;
+.dm-mrows__title {
+  font: 400 var(--fs-title) / 1 var(--f-display);
+  color: var(--gold);
+}
+.dm-mrows__grow {
+  flex: 1;
+}
+.dm-mrows__fold :deep(svg) {
+  transform: scaleX(-1);
 }
 .dm-mrows__list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  align-content: start;
   gap: 2px;
   min-height: 0;
   overflow-y: auto;
+  padding: 4px;
+  background: var(--rock);
+  box-shadow: inset 2px 2px 0 0 var(--rock-lo);
 }
 .dm-mrow {
   position: relative;
-  overflow: hidden;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 6px;
+  min-height: 44px;
+  padding: 4px 6px;
   text-align: start;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  background: var(--wood-lo);
+  box-shadow:
+    inset 2px 2px 0 0 var(--wood),
+    inset -2px -2px 0 0 var(--rock-lo);
+  transition: transform var(--dur-press) var(--ease-step);
+}
+.dm-mrow:hover {
+  box-shadow:
+    inset 2px 2px 0 0 var(--wood-hi),
+    inset -2px -2px 0 0 var(--rock-lo),
+    0 0 0 2px var(--brass-lo);
+}
+.dm-mrow:active {
+  transform: translateY(var(--px));
 }
 /* The line of the mine shown, the current mine: the gold face (`DS` organisms/mine-rows), no brass ring. */
 .dm-mrow[data-current='true'] {
@@ -246,22 +302,73 @@ const listWidth = computed(
     inset -2px -2px 0 0 var(--gold-deep),
     0 0 0 2px var(--rock-lo);
 }
-.dm-vmines {
+.dm-mrow > :deep(.dm-tier) {
+  grid-row: 1 / 3;
+}
+.dm-mrow__name {
+  min-width: 0;
+  overflow: hidden;
+  font: 400 var(--fs-body) / 1.2 var(--f-meta);
+  color: var(--parchment);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dm-mrow__crew {
+  grid-column: 2;
+  font: 400 var(--fs-meta) / 1.2 var(--f-meta);
+  color: var(--ink-faint);
+}
+.dm-mrow[data-current='true'] .dm-mrow__crew {
+  color: var(--parch-hi);
+}
+.dm-mrows__unfold {
+  --mat-fill: var(--wood);
   display: grid;
+  align-content: start;
+  justify-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 100%;
+  padding: 8px 0;
+  font: 400 var(--fs-meta) / 1 var(--f-meta);
+  color: var(--ink-soft);
+  writing-mode: vertical-rl;
+}
+.dm-mrows__unfold > :deep(svg) {
+  writing-mode: horizontal-tb;
+}
+.dm-mrows__unfold:hover {
+  --mat-edge: var(--brass);
+  color: var(--ink);
+}
+/* `DS` mine-zone.css, as the Work front's one mine (`.dm-vz.is-front`). */
+.dm-vmines {
+  display: flex;
+  gap: 6px;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
 }
 .dm-vz {
   position: relative;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  min-width: 0;
+  flex: 1 1 auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 4px;
+  min-width: var(--min-front, 300px);
+  height: 100%;
   min-height: 0;
+  padding: 4px;
 }
 .dm-vz__bg {
   position: absolute;
   inset: 0;
+  transform-origin: 0 0;
   pointer-events: none;
+  background: var(--rock-lo);
+  box-shadow:
+    inset 2px 2px 0 0 var(--wood-lo),
+    inset -2px -2px 0 0 var(--rock-hi);
 }
 .dm-vz__head {
   position: relative;
@@ -269,6 +376,45 @@ const listWidth = computed(
 }
 .dm-vz__well {
   position: relative;
+  display: grid;
+  min-width: 0;
   min-height: 0;
+  overflow: hidden;
+  container-type: size;
+  place-items: center;
+}
+.dm-vz__well[data-zone-content] {
+  container-type: normal;
+  place-items: stretch;
+}
+.dm-vz__well[data-zone-content] > :deep(*) {
+  min-width: 0;
+  min-height: 0;
+}
+.dm-vz__foot {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 60px;
+  padding: 0 4px 0 2px;
+  min-width: 0;
+}
+.dm-vz__footbg {
+  --mat-fill: var(--wood-lo);
+  --mat-hi: var(--wood);
+  --mat-lo: var(--rock-lo);
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+.dm-vz__roster {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.dm-vz__adds {
+  position: relative;
 }
 </style>

@@ -111,6 +111,7 @@ import {
 import { at as sampleTime, silenceMs, type GoldenSample } from './sample'
 import MinePicker from '../components/veta/MinePicker.vue'
 import MineTab from '../components/veta/MineTab.vue'
+import NeedsYouQueue from '../components/valle/NeedsYouQueue.vue'
 import PinnedStack from '../components/valle/PinnedStack.vue'
 import VetaChamber from '../components/veta/VetaChamber.vue'
 import VetaEntrance from '../components/veta/VetaEntrance.vue'
@@ -1968,6 +1969,8 @@ export const RENDERS: Record<string, Render> = {
   // The mine card in each of its states, every prop read off the state's own tree.
   // Valle (ISSUE-310): the pinned chat stack with nothing pinned.
   'organisms/chat-stack#empty': valleStackEmpty,
+  // Valle (EPIC-20 visual parity): the needs-you queue with nobody waiting.
+  'organisms/needs-queue#empty': () => ({ component: NeedsYouQueue, props: { entries: [] } }),
   // Veta (ISSUE-287): the closed entrance, and a chamber lit or asleep.
   'organisms/veta-strip#first-run': vetaStrip(true),
   'organisms/veta-strip#no-sessions': vetaStrip(false),

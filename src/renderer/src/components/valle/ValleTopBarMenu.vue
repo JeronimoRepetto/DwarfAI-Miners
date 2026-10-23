@@ -10,6 +10,7 @@
  */
 import { nextTick, onBeforeUnmount, shallowRef, watch } from 'vue'
 import type { MenuEntry } from '../../lib/overlay/menu'
+import ActionButton from '../controls/ActionButton.vue'
 import MenuList from '../overlay/MenuList.vue'
 
 const props = defineProps<{
@@ -22,7 +23,9 @@ const emit = defineEmits<{ toggle: []; reset: []; dismiss: [] }>()
 
 const ITEMS: MenuEntry[] = [{ label: 'Reset preset' }]
 
-const more = shallowRef<HTMLButtonElement | null>(null)
+const more = shallowRef<InstanceType<typeof ActionButton> | null>(null)
+/** The "⋯" button itself, the design's `atoms/button`. */
+const moreButton = (): HTMLElement | null => (more.value?.$el as HTMLElement | undefined) ?? null
 const menu = shallowRef<HTMLElement | null>(null)
 const list = shallowRef<InstanceType<typeof MenuList> | null>(null)
 
@@ -30,7 +33,7 @@ const list = shallowRef<InstanceType<typeof MenuList> | null>(null)
 function pressed(event: PointerEvent): void {
   const target = event.target
   if (!(target instanceof Node)) return
-  if (menu.value?.contains(target) || more.value?.contains(target)) return
+  if (menu.value?.contains(target) || moreButton()?.contains(target)) return
   emit('dismiss')
 }
 
@@ -47,7 +50,7 @@ watch(
     if (!was) return
     await nextTick()
     const active = document.activeElement
-    if (active === null || active === document.body) more.value?.focus()
+    if (active === null || active === document.body) moreButton()?.focus()
   },
   { immediate: true }
 )
@@ -56,20 +59,18 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', pressed, true)
 
 <template>
   <div class="dm-vbar__preset" data-valle-preset-menu>
-    <button
+    <ActionButton
       ref="more"
-      type="button"
       class="dm-vbar__more"
-      aria-label="Preset options"
+      icon="more"
+      size="sm"
       title="Preset options"
-      aria-haspopup="menu"
+      haspopup="menu"
       :aria-expanded="open ? 'true' : 'false'"
       :disabled="!offered"
       data-preset-more
       @click="emit('toggle')"
-    >
-      ⋯
-    </button>
+    />
     <div v-if="open" ref="menu" class="dm-vbar__menu" data-preset-menu>
       <MenuList
         ref="list"

@@ -123,6 +123,9 @@ import {
 import type { AudioPlayer } from '../../lib/audio/player'
 import type { CrewSoundEvent } from '../../lib/audio/crew'
 import { mineCrew } from '../../lib/scene/mineColumn'
+import { sceneDwarfStatus } from '../../lib/scene/sceneDwarf'
+import { mineRowCrew } from '../../lib/valle/mineRows'
+import { mapTotals } from '../../lib/map/mapPage'
 import type { PausableFrameClock } from '../../lib/sprite/frameClock'
 import type { Dwarf, Mine } from '../../types'
 import type { PinKey } from '../../lib/valle/pins'
@@ -131,6 +134,8 @@ import { createVetaMotion } from '../../lib/veta/vetaMotion'
 import { createValleReadModel } from '../../lib/valle/valleReadModel'
 import WorktreeDialog from '../browse/WorktreeDialog.vue'
 import CrewRoster from '../scene/CrewRoster.vue'
+import DwarfPortrait from '../dwarf/DwarfPortrait.vue'
+import VaultStrip from '../vault/VaultStrip.vue'
 import ToastHost from '../overlay/ToastHost.vue'
 import ChatDeck from './ChatDeck.vue'
 import NeedsYouCounter from './NeedsYouCounter.vue'
@@ -363,7 +368,9 @@ const columns = computed(() =>
     mineId,
     name: nameOf(mineId),
     enterable: enterable(mineId),
-    content: mosaic.contentOf(mineId)
+    content: mosaic.contentOf(mineId),
+    tier: tierOf(mineId),
+    portraits: crewCount(mineId)
   }))
 )
 /** The zone menu open on a Control room column, or on the Work front's zone. */
@@ -390,14 +397,28 @@ function toggleMenu(zone: ValleZoneKey): void {
 
 /** The Work front's mine: the one dived into or swapped in, else the last one worked in (S28.02, N-15). */
 const frontMine = computed((): MineId | null => view.value.mineId ?? stores.value.lastFrontMineId)
+/** A mine's tier, once measured. */
+const tierOf = (mineId: MineId) =>
+  model.mines.value.find((mine) => mine.id === mineId)?.tier ?? null
+/** How many dwarfs a mine holds: its roster's portraits. */
+const crewCount = (mineId: MineId): number =>
+  model.dwarfs.value.filter((dwarf) => dwarf.mineId === mineId).length
 const nameOf = (mineId: MineId): string =>
   model.mines.value.find((mine) => mine.id === mineId)?.name ?? ''
+/** The Work front's list lines (`DS` organisms/mine-rows): each mine's tier and its crew line. */
 const listMines = computed(() =>
-  model.mines.value.map((mine) => ({ mineId: mine.id, name: mine.name }))
+  model.mines.value.map((mine) => ({
+    mineId: mine.id,
+    name: mine.name,
+    tier: mine.tier,
+    crew: mineRowCrew(crewCount(mine.id), mine.state !== 'unenterable')
+  }))
 )
 const shownMine = computed(() => {
   const mineId = frontMine.value
-  return mineId === null ? null : { mineId, name: nameOf(mineId) }
+  return mineId === null
+    ? null
+    : { mineId, name: nameOf(mineId), tier: tierOf(mineId), portraits: crewCount(mineId) }
 })
 const body = shallowRef<HTMLElement | null>(null)
 const split = useValleSplit({
@@ -499,9 +520,14 @@ const zoneColumns = computed(() =>
     called: needsYou.called.value?.mineId === column.mineId ? needsYou.called.value.seq : 0
   }))
 )
+/** Every mine's ore, as the Map totals it: the top bar's strip (`DS` organisms/valle-bar `.dm-vbar__ore`). */
+const oreTotals = computed(() => mapTotals(board.state.materials))
 /** The board's mine behind a zone, as the Panel draws it (its tier, its crew), once the board has it. */
 const boardMine = (mineId: MineId): Mine | null =>
   board.state.mines.find((mine) => mine.id === mineId) ?? null
+/** A pinned chat's dwarf on the board, whose portrait leads its line or tab; null for an Add pin or one not yet read. */
+const pinDwarf = (key: string): Dwarf | null =>
+  board.state.mines.flatMap((mine) => mine.dwarfs).find((dwarf) => dwarf.id === key) ?? null
 /** The dwarf whose chat is in focus: its sprite and portrait wear the selected look. */
 const focusedDwarf = computed((): string | null => chat.value?.dwarfId ?? null)
 /** A dwarf pressed in a zone, on its sprite or its roster portrait (S29.03…S29.05, S35.01, S35.07). */
@@ -653,10 +679,16 @@ function leave(move: MoveToModeParams): void {
 }
 
 /** Valle's nav column: the slots whose page takes the main zone (S28.19), the Panel's own slots. */
-const NAV_SLOTS = [...WORLD_SLOTS, ...SYSTEM_SLOTS].filter(
-  (slot): slot is PanelNavSlot & { area: ValleNavPage } =>
-    slot.area === 'map' || slot.area === 'mines' || slot.area === 'settings'
-)
+const navSlots = (slots: readonly PanelNavSlot[]) =>
+  slots.filter(
+    (slot): slot is PanelNavSlot & { area: ValleNavPage } =>
+      slot.area === 'map' || slot.area === 'mines' || slot.area === 'settings'
+  )
+/** In the Panel nav's groups (`DS` organisms/nav): World at the top, System at the foot. */
+const NAV_GROUPS = [
+  { name: 'World', slots: navSlots(WORLD_SLOTS) },
+  { name: 'System', slots: navSlots(SYSTEM_SLOTS) }
+]
 /** The splitter and the chat zone it sizes (07 machine 33; ISSUE-305). */
 const chatsEl = shallowRef<HTMLElement | null>(null)
 const splitterEl = shallowRef<{ $el: Element } | null>(null)
@@ -835,21 +867,32 @@ onUnmounted(() => {
       @reset="resetPreset.reset()"
       @menu-dismiss="resetPreset.dismiss()"
     >
+      <template #ore>
+        <VaultStrip :ore="oreTotals" label="Ore" :max="6" />
+      </template>
       <template #counter>
         <NeedsYouCounter :view="needsYou.counter.value" :still="still" @press="needsYou.press()" />
       </template>
     </ValleTopBar>
     <div ref="body" class="dm-valle__body" :style="{ '--chat-w': chatWidth }">
-      <nav class="dm-valle__nav" aria-label="Valle">
-        <NavSlot
-          v-for="slot in NAV_SLOTS"
-          :key="slot.id"
-          :icon="slot.icon"
-          :label="slot.label"
-          :data-slot="slot.id"
-          :current="slot.area === view.page"
-          @click="nav(slot.area)"
-        />
+      <nav class="dm-valle__nav m-mat" aria-label="Valle">
+        <div
+          v-for="group in NAV_GROUPS"
+          :key="group.name"
+          class="dm-valle__navgroup"
+          role="group"
+          :aria-label="group.name"
+        >
+          <NavSlot
+            v-for="slot in group.slots"
+            :key="slot.id"
+            :icon="slot.icon"
+            :label="slot.label"
+            :data-slot="slot.id"
+            :current="slot.area === view.page"
+            @click="nav(slot.area)"
+          />
+        </div>
       </nav>
       <ValleNavPageView v-if="view.page !== null" :page="view.page">
         <ValleHostedPage
@@ -983,6 +1026,15 @@ onUnmounted(() => {
           @select="selectPin"
           @unpin="(key) => split.sendPin({ kind: 'unpin', key })"
         >
+          <template #portrait="{ pin }">
+            <DwarfPortrait
+              v-if="pinDwarf(pin.key) !== null"
+              :role="pinDwarf(pin.key)!.role"
+              :status="sceneDwarfStatus(pinDwarf(pin.key)!)"
+              class="dm-vpin__portrait"
+              size="sm"
+            />
+          </template>
           <template #chat="{ pin }">
             <ValleChat
               :pin="pin"
@@ -1009,6 +1061,15 @@ onUnmounted(() => {
           @split="split.press()"
           @history="toggleHistory(frontMine)"
         >
+          <template #portrait="{ pin }">
+            <DwarfPortrait
+              v-if="pinDwarf(pin.key) !== null"
+              :role="pinDwarf(pin.key)!.role"
+              :status="sceneDwarfStatus(pinDwarf(pin.key)!)"
+              class="dm-vpin__portrait"
+              size="sm"
+            />
+          </template>
           <template #chat="{ pin }">
             <ValleChat
               :pin="pin"
@@ -1050,13 +1111,18 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+/* `DS/docs/screens/valle.md` Parts, `.dm-valle`: one rock ground with its frame, three rows 6 px apart. */
 .valle {
   position: relative;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 6px;
   width: 100vw;
   height: 100vh;
+  padding: 6px;
   overflow: hidden;
+  background: var(--rock);
+  box-shadow: inset 0 -2px 0 0 var(--rock-lo);
 }
 .dm-valle__body {
   position: relative;
@@ -1065,25 +1131,41 @@ onUnmounted(() => {
   gap: 6px;
   min-width: 0;
   min-height: 0;
-  padding: 6px;
 }
 /*
- * The area the general toast rule centres on (BR-23): the main zone, between the nav column and the splitter (padding 6,
- * nav 56, gap 6 on the left; the chat zone, its gap, the 12 px splitter and the padding on the right). The toast stands
+ * The area the general toast rule centres on (BR-23): the main zone, between the nav column and the splitter (nav 56 and
+ * gap 6 on the left; the chat zone, its gap, the 12 px splitter and its gap on the right). The toast stands
  * 56 px above its bottom, so it never lies over the chat zone or a composer; the design's own Valle rule is open (07 §24
  * I-38). It takes no pointer.
  */
 .dm-valle__toasts {
   position: absolute;
-  inset-block: 6px;
-  inset-inline-start: 68px;
-  inset-inline-end: calc(var(--chat-w) + 30px);
+  inset-block: 0;
+  inset-inline-start: 62px;
+  inset-inline-end: calc(var(--chat-w) + 24px);
   pointer-events: none;
 }
+/* The Panel nav's plate (`DS` organisms/nav, nav.css): wood, 56 px, its groups top and foot. */
 .dm-valle__nav {
+  --mat-fill: var(--wood-lo);
+  --mat-hi: var(--wood);
+  --mat-lo: var(--rock-lo);
+  --mat-edge: var(--rock-lo);
   display: flex;
   flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 0;
+  padding: 8px 0 10px;
+}
+.dm-valle__navgroup {
+  display: grid;
+  justify-items: center;
   gap: 6px;
+}
+/* A pinned chat's portrait sits flush in its line or tab (`DS` chat-stack.css, chat-tab.css: `.dm-portrait { margin: 0 }`). */
+.dm-vpin__portrait {
+  margin: 0;
 }
 .dm-vghosts {
   position: absolute;

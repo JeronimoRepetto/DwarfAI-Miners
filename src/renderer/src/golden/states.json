@@ -674,5 +674,9 @@
   {
     "key": "organisms/chat-stack#empty",
     "red": "Not measured: registered without a golden run (ISSUE-310)"
+  },
+  {
+    "key": "organisms/needs-queue#empty",
+    "red": "Not measured: registered without a golden run (EPIC-20 Valle visual parity)"
   }
 ]

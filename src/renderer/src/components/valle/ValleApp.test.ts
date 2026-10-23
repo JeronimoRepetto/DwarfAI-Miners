@@ -1981,3 +1981,57 @@ describe('the mine art in the Valle zones (EPIC-20 package gap)', () => {
     expect(clocks.every((clock) => clock.disposed)).toBe(true)
   })
 })
+
+// APPENDED for Valle's visual parity (EPIC-20 package gap): the top bar's ore totals (`DS` organisms/valle-bar
+// `.dm-vbar__ore`), the Panel's own vault strip over the board's totals, between the preset menu and the counter.
+describe("Valle's top bar ore totals (EPIC-20 package gap)", () => {
+  it('the top bar shows the ore totals of every mine as the Map does, before the needs-you counter', async () => {
+    const { root } = mountValle({ preset: 'control' })
+    await flushPromises()
+    const bar = root.get('header.dm-vbar')
+    const ore = bar.find('.dm-vbar__ore [role="group"][aria-label="Ore"]')
+    expect(ore.exists()).toBe(true)
+    const parts = [...bar.element.children].map((child) => child.className)
+    expect(parts.findIndex((name) => name.includes('dm-vbar__ore'))).toBeLessThan(
+      parts.findIndex((name) => name.includes('dm-vbar__needs'))
+    )
+  })
+})
+
+// APPENDED for Valle's visual parity (EPIC-20 package gap): a pinned chat's line and tab lead with its dwarf's portrait
+// (`DS` organisms/chat-stack `.dm-cstack__row`, molecules/chat-tab), the Panel's own, carrying the dwarf's state.
+describe("the pinned chats' portraits in Valle (EPIC-20 package gap)", () => {
+  const twoMines = (): Partial<Window['api']> => ({
+    getHostSnapshot: () =>
+      Promise.resolve(
+        snapshotPage(10, {
+          minesEverKnown: true,
+          mines: [mineWire(MORIA), mineWire(EREBOR)],
+          dwarfs: [dwarfWire(BORIN, MORIA), dwarfWire(DAIN, EREBOR)]
+        })
+      ) as never
+  })
+  const PINS = [
+    { dwarfId: BORIN, mineId: MORIA, order: 0 },
+    { dwarfId: DAIN, mineId: EREBOR, order: 1 }
+  ]
+
+  it('a collapsed stack line and every chat tab lead with the dwarf’s portrait, an Add pin with its "+"', async () => {
+    const { root } = mountValle({ preset: 'control', pins: PINS }, undefined, twoMines())
+    await flushPromises()
+    const line = root.get(`.dm-cstack__row[data-pin="${DAIN}"]`)
+    expect(line.find('.dm-portrait').exists()).toBe(true)
+    expect(line.element.firstElementChild?.classList.contains('dm-portrait')).toBe(true)
+
+    root.unmount()
+    const front = mountValle(
+      { preset: 'front', lastFrontMineId: MORIA, pins: PINS },
+      undefined,
+      twoMines()
+    ).root
+    await flushPromises()
+    const tabs = front.findAll('.dm-cdeck [role="tab"]')
+    expect(tabs.length).toBeGreaterThan(0)
+    expect(tabs.every((tab) => tab.find('.dm-portrait').exists())).toBe(true)
+  })
+})

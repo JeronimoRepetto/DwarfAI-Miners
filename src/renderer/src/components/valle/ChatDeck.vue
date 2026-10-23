@@ -218,6 +218,7 @@ function onDragEnd(): void {
           @dragend="onDragEnd"
         >
           <span v-if="pin.kind === 'add'" class="dm-ctab__add" aria-hidden="true">+</span>
+          <slot v-else name="portrait" :pin="pin" />
           <span class="dm-ctab__name">{{ pin.text.name }}</span>
           <span class="dm-ctab__ask" aria-hidden="true">{{ pin.text.tab }}</span>
           <button

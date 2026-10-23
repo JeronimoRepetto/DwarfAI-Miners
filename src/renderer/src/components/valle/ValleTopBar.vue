@@ -10,6 +10,7 @@
 import type { DwarfId, MineId, MoveToModeParams } from '@dwarfai/contracts'
 import { nextTick, ref, watch } from 'vue'
 import type { VallePreset } from '../../lib/valle/preset'
+import ActionButton from '../controls/ActionButton.vue'
 import ValleTopBarMenu from './ValleTopBarMenu.vue'
 
 const props = withDefaults(
@@ -74,14 +75,14 @@ function leave(mode: 'panel' | 'veta'): void {
 </script>
 
 <template>
-  <header class="dm-vbar" aria-label="Valle" :data-preset="preset">
-    <div ref="tablist" class="dm-vbar__presets" role="tablist" aria-label="Valle preset">
+  <header class="dm-vbar m-mat" aria-label="Valle" :data-preset="preset">
+    <div ref="tablist" class="dm-vbar__tabs" role="tablist" aria-label="Valle preset">
       <button
         v-for="tab in TABS"
         :key="tab.preset"
         type="button"
         role="tab"
-        class="dm-vbar__tab"
+        class="dm-vbar__tab m-mat"
         :data-preset-tab="tab.preset"
         :aria-selected="tab.preset === preset ? 'true' : 'false'"
         :tabindex="tab.preset === preset ? 0 : -1"
@@ -91,7 +92,6 @@ function leave(mode: 'panel' | 'veta'): void {
         {{ tab.label }}
       </button>
     </div>
-    <slot name="counter" />
     <ValleTopBarMenu
       :open="menuOpen"
       :offered="offered"
@@ -99,50 +99,107 @@ function leave(mode: 'panel' | 'veta'): void {
       @reset="emit('reset')"
       @dismiss="emit('menuDismiss')"
     />
-    <div class="dm-vbar__mode" aria-label="Mode">
-      <span class="dm-vbar__mode-label">MODE</span>
-      <button
-        type="button"
-        class="dm-vbar__lever"
-        data-lever="panel"
+    <span class="dm-vbar__grow"></span>
+    <div class="dm-vbar__ore"><slot name="ore" /></div>
+    <slot name="counter" />
+    <div class="dm-vbar__lever" role="group" aria-label="Mode">
+      <span class="dm-vbar__lever-label" aria-hidden="true">MODE</span>
+      <ActionButton
+        label="▼ Panel"
+        size="sm"
         title="Back to the Panel"
+        data-lever="panel"
         @click="leave('panel')"
-      >
-        ▼ Panel
-      </button>
-      <button
-        type="button"
-        class="dm-vbar__lever"
-        data-lever="veta"
+      />
+      <ActionButton
+        label="▼ Veta"
+        icon="veta"
+        size="sm"
         title="Fold into Veta"
+        data-lever="veta"
         @click="leave('veta')"
-      >
-        ▼ Veta
-      </button>
+      />
     </div>
   </header>
 </template>
 
 <style scoped>
+/* `DS` organisms/valle-bar, valle-bar.css: one wood plate, one height, fixed for the life of the screen. */
 .dm-vbar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-height: 40px;
-  padding: 0 6px;
-}
-.dm-vbar__presets {
-  display: flex;
-  gap: 2px;
-}
-.dm-vbar__tab[aria-selected='true'] {
-  font-weight: 700;
-  text-decoration: underline;
-}
-.dm-vbar__mode {
+  --mat-fill: var(--wood);
+  --mat-hi: var(--wood-hi);
+  --mat-lo: var(--wood-lo);
+  --mat-edge: var(--rock-lo);
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-left: auto;
+  height: 52px;
+  padding: 0 6px;
+  margin: var(--px);
+  min-width: 0;
+}
+.dm-vbar__tabs {
+  display: flex;
+  gap: 0;
+  padding: 4px;
+  background: var(--rock);
+  box-shadow:
+    inset 2px 2px 0 0 var(--rock-lo),
+    inset -2px -2px 0 0 var(--wood-hi);
+}
+.dm-vbar__tab {
+  --mat-fill: var(--wood-lo);
+  --mat-hi: var(--wood);
+  --mat-lo: var(--rock-lo);
+  --mat-edge: var(--rock-lo);
+  height: 32px;
+  margin: var(--px);
+  padding: 0 14px;
+  font: 400 var(--fs-section) / 1 var(--f-label);
+  color: var(--ink-soft);
+  white-space: nowrap;
+  transition: transform var(--dur-press) var(--ease-step);
+}
+.dm-vbar__tab:hover {
+  --mat-edge: var(--brass-lo);
+  color: var(--ink);
+}
+.dm-vbar__tab:active {
+  transform: translateY(var(--px));
+}
+.dm-vbar__tab[aria-selected='true'] {
+  --mat-fill: var(--gold-select);
+  --mat-hi: var(--gold);
+  --mat-lo: var(--gold-deep);
+  --mat-edge: var(--brass-hi);
+  color: var(--parch-hi);
+}
+.dm-vbar__grow {
+  flex: 1;
+  min-width: 8px;
+}
+.dm-vbar__ore {
+  min-width: 0;
+  overflow: hidden;
+}
+.dm-vbar__ore :deep(.dm-vault) {
+  flex-wrap: nowrap;
+}
+.dm-vbar__lever {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex: none;
+  padding: 2px 4px;
+  background: var(--rock);
+  box-shadow:
+    inset 2px 2px 0 0 var(--rock-lo),
+    inset -2px -2px 0 0 var(--wood);
+}
+.dm-vbar__lever-label {
+  padding: 0 6px 0 2px;
+  font: 400 var(--fs-meta) / 1 var(--f-meta);
+  color: var(--ink-faint);
+  letter-spacing: 0.08em;
 }
 </style>
