@@ -3,9 +3,11 @@
  * A-30, A-31, §2.2 A-N21; ADR-024 items 1, 4; ISSUE-304): which mines the mosaic shows and in what order, what each zone
  * shows, which mines are muted, the zone menu, the dashed "Add a mine here" slot and its "A new project…" folder flow.
  *
- * - Opened once the Host's facts are read (S32.01, S32.02): the stored order restored, or on a first visit every mine
- *   with a crew, written at once. After the first visit a mine whose first dwarf arrives does not join by itself
- *   (OQ-77 A). Reset metrics rewrites the stores; read again, the mosaic opens anew (S32.16, then S32.01).
+ * - Opened once the Host's facts are read (S32.01, S32.02): the person's stored order restored, or, while they never
+ *   arranged it (a stored `null` or `[]`), every mine with a crew, live and never written, so each new mine with a
+ *   crew joins (owner ruling 2026-10-23, VQA-07). Their first close, pick, reveal, declare or Reset preset writes it;
+ *   from then on a mine whose first dwarf arrives does not join by itself (OQ-77 A). Reset metrics rewrites the
+ *   stores; read again, the mosaic opens anew (S32.16, then S32.01).
  * - Every change is written at once through A-N21: the order (`valleMosaicOrder`), the zones' contents (`valleLayout`,
  *   through machine 28's view, `writeLayouts`) and the muted mines (`mutedMineIds`) (TC-304-01). UI main is the only
  *   writer of the stores.
@@ -35,6 +37,7 @@ import {
   type Ref
 } from 'vue'
 import {
+  mosaicOrder,
   openMosaic,
   slotMenu,
   stepMosaic,
@@ -389,7 +392,9 @@ export function useValleMosaic(deps: ValleMosaicDeps): ValleMosaicPart {
   }
 
   const order = computed((): readonly MineId[] => {
-    const shown = mosaic.value?.order ?? []
+    const current = mosaic.value
+    // Never arranged by the person: every mine with a crew now, live (owner ruling 2026-10-23, VQA-07).
+    const shown = current === null ? [] : mosaicOrder(current, facts())
     // A mine removed while a menu or the folder flow was open has no column (S32.02's rule, applied as shown).
     const mines = deps.model.mines.value
     return shown.filter((mineId) => mines.some((mine) => mine.id === mineId))

@@ -214,12 +214,9 @@ describe('the Valle root and its presets (ISSUE-300)', () => {
     // The top bar and the chat zone are the same elements throughout (VA3).
     expect(root.get('header.dm-vbar').element).toBe(bar)
     expect(root.get('aside[aria-label="Pinned chats"]').element).toBe(chats)
-    // AMENDED for ISSUE-304 (was: the preset alone): the first open with no stored order writes the first mosaic, every
-    // mine with a crew (07 S32.01), before any change of this case.
-    expect(writes).toEqual([
-      { key: 'valleMosaicOrder', value: [MORIA] },
-      { key: 'vallePreset', value: 'control' }
-    ])
+    // AMENDED for owner ruling 2026-10-23 (VQA-07) (was, for ISSUE-304: the first mosaic written at the first open):
+    // the person never arranged the order, so it is computed live and never written; the preset alone.
+    expect(writes).toEqual([{ key: 'vallePreset', value: 'control' }])
   })
 
   it("[US-VALLE-001.AC04, US-VALLE-001.AC07, S28.16, S28.17] the Work front's list folds to the MINES strip and back, each change written through A-N21", async () => {
@@ -233,10 +230,9 @@ describe('the Valle root and its presets (ISSUE-300)', () => {
     expect(root.get('.dm-valle__main').attributes('style')).toContain('--list-w: 232px')
     const folded = defaultValleLayouts()
     folded.front.foldedList = true
-    // AMENDED for ISSUE-304 (was: the two layouts alone): the first open with no stored order writes the first mosaic,
-    // every mine with a crew (07 S32.01), before any change of this case.
+    // AMENDED for owner ruling 2026-10-23 (VQA-07) (was, for ISSUE-304: the first mosaic written at the first open):
+    // the person never arranged the order, so it is computed live and never written; the two layouts alone.
     expect(writes).toEqual([
-      { key: 'valleMosaicOrder', value: [MORIA] },
       { key: 'valleLayout', value: folded },
       { key: 'valleLayout', value: defaultValleLayouts() }
     ])
@@ -329,9 +325,9 @@ describe('the pinned chats in the Valle root (ISSUE-302)', () => {
       layouts.front.split = on
       return { key: 'valleLayout', value: layouts }
     }
-    // AMENDED for ISSUE-304 (was: the two wishes alone): the first open with no stored order writes the first mosaic,
-    // every mine with a crew (07 S32.01), before any change of this case.
-    expect(writes).toEqual([{ key: 'valleMosaicOrder', value: [MORIA] }, split(true), split(false)])
+    // AMENDED for owner ruling 2026-10-23 (VQA-07) (was, for ISSUE-304: the first mosaic written at the first open):
+    // the person never arranged the order, so it is computed live and never written; the two wishes alone.
+    expect(writes).toEqual([split(true), split(false)])
   })
 })
 

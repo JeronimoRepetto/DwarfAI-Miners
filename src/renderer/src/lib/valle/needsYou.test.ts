@@ -101,6 +101,67 @@ describe('machine 34 diagram conformance', () => {
     }
   })
 
+  // Owner ruling 2026-10-23 (VQA-02): the counter goes to the NEXT waiter after the one last jumped to, round the
+  // queue (`DS` valle.js `nextNeed`), not always to the oldest as 07 machine 34 S34.05/S34.06 read.
+  it('[US-VALLE-004.AC01, S34.05, S34.06] each press goes to the next waiting dwarf after the one last jumped to, in queue order, and wraps round to the oldest', () => {
+    const press = (after: NeedsYouEntry | null): DwarfId => {
+      const step = stepNeedsYou(HOST_QUEUE, {
+        kind: 'counter',
+        preset: 'control',
+        frontMine: null,
+        after
+      })
+      if (!step.ok || step.jump === null) throw new Error('jumped')
+      return step.jump.dwarfId
+    }
+    // No jump yet: the oldest.
+    expect(press(null)).toBe(BORIN)
+    expect(press(HOST_QUEUE[0]!)).toBe(DAIN)
+    expect(press(HOST_QUEUE[1]!)).toBe(NALI)
+    // Round the queue: after the newest comes the oldest again.
+    expect(press(HOST_QUEUE[2]!)).toBe(BORIN)
+    // The Work front reads the same order: after BORIN, DAIN's mine swapped in.
+    const front = stepNeedsYou(HOST_QUEUE, {
+      kind: 'counter',
+      preset: 'front',
+      frontMine: MORIA,
+      after: HOST_QUEUE[0]!
+    })
+    expect(front).toMatchObject({
+      ok: true,
+      id: 'S34.06',
+      jump: { preset: 'front', dwarfId: DAIN, mineId: EREBOR, swap: true }
+    })
+  })
+
+  it('[US-VALLE-004.AC01, S34.05, S34.03] a dwarf that left the queue is skipped: the press goes to the one that followed it, else round to the oldest', () => {
+    const counter = (queue: NeedsYouQueue, after: NeedsYouEntry): DwarfId | null => {
+      const step = stepNeedsYou(queue, {
+        kind: 'counter',
+        preset: 'control',
+        frontMine: null,
+        after
+      })
+      return step.ok && step.jump !== null ? step.jump.dwarfId : null
+    }
+    // DAIN was jumped to, then answered: the next is NALI, who followed DAIN, never BORIN again.
+    const withoutDain = [HOST_QUEUE[0]!, HOST_QUEUE[2]!]
+    expect(counter(withoutDain, HOST_QUEUE[1]!)).toBe(NALI)
+    // NALI, the newest, was jumped to and answered: round to the oldest.
+    expect(counter(HOST_QUEUE.slice(0, 2), HOST_QUEUE[2]!)).toBe(BORIN)
+    // DAIN jumped to, then DAIN and NALI answered while FLOI asked: the next after DAIN is FLOI, not BORIN.
+    expect(counter([HOST_QUEUE[0]!, entry(FLOI, MORIA, 40)], HOST_QUEUE[1]!)).toBe(FLOI)
+    // Nobody waiting: nothing, whatever was jumped to (S34.08).
+    expect(
+      stepNeedsYou([], {
+        kind: 'counter',
+        preset: 'control',
+        frontMine: null,
+        after: HOST_QUEUE[0]!
+      })
+    ).toEqual({ ok: true, id: 'S34.08', queue: [], jump: null })
+  })
+
   it('[US-VALLE-004.AC02, S34.08] with nobody waiting the counter reads Nobody waiting, is disabled and does nothing', () => {
     expect(needsYouState([])).toBe('nobody-waiting')
     expect(counterView([])).toEqual({

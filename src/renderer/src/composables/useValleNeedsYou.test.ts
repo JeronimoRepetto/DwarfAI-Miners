@@ -14,15 +14,17 @@ const MORIA = '01920000-0000-7000-8000-00000000a001' as MineId
 const EREBOR = '01920000-0000-7000-8000-00000000a002' as MineId
 const BORIN = '01920000-0000-7000-8000-00000000d001' as DwarfId
 const DAIN = '01920000-0000-7000-8000-00000000d002' as DwarfId
+const NALI = '01920000-0000-7000-8000-00000000d003' as DwarfId
 
-function world(initial: NeedsYouQueue) {
+function world(initial: NeedsYouQueue, options: { focus?: boolean } = {}) {
   const calls: string[] = []
   const preset = shallowRef<VallePreset>('control')
   const front = shallowRef<MineId | null>(null)
   const queue = shallowRef<NeedsYouQueue>(initial)
   const dwarfs = shallowRef<readonly DwarfWire[]>([
     { id: BORIN, mineId: MORIA, baseName: 'borin', customName: null } as DwarfWire,
-    { id: DAIN, mineId: EREBOR, baseName: 'dain', customName: 'Dain Ironfoot' } as DwarfWire
+    { id: DAIN, mineId: EREBOR, baseName: 'dain', customName: 'Dain Ironfoot' } as DwarfWire,
+    { id: NALI, mineId: MORIA, baseName: 'nali', customName: null } as DwarfWire
   ])
   const scope = effectScope()
   const part = scope.run(() =>
@@ -39,7 +41,8 @@ function world(initial: NeedsYouQueue) {
         reveal: (mineId) => calls.push(`reveal ${mineId}`),
         pin: (dwarfId, mineId) => calls.push(`pin ${dwarfId} ${mineId}`),
         current: (mineId) => calls.push(`current ${mineId}`),
-        swap: (mineId, dwarfId) => calls.push(`swap ${mineId} ${dwarfId}`)
+        swap: (mineId, dwarfId) => calls.push(`swap ${mineId} ${dwarfId}`),
+        ...(options.focus ? { focus: (dwarfId: DwarfId) => calls.push(`focus ${dwarfId}`) } : {})
       }
     })
   )!
@@ -103,6 +106,48 @@ describe('the needs-you jump in Valle (ISSUE-306)', () => {
     w.dwarfs.value = w.dwarfs.value.filter((d) => d.id !== DAIN)
     w.part.pressEntry({ dwarfId: DAIN, mineId: EREBOR })
     expect(w.calls).toEqual([])
+    w.scope.stop()
+  })
+
+  // Owner ruling 2026-10-23 (VQA-02, VQA-13): the counter goes round the queue, the next after the one last jumped to,
+  // and every jump, the counter's or an entry's, hands the keyboard to that dwarf's chat (`DS` valle.js `answer`).
+  it('[US-VALLE-004.AC01, US-VALLE-012.AC02, S34.05, S34.07] three presses with three waiters reach each in turn and wrap, an entry press moves the turn, and each jump ends with the keyboard in the chat', () => {
+    const w = world(
+      [
+        { dwarfId: BORIN, mineId: MORIA, askedAt: 1 },
+        { dwarfId: DAIN, mineId: EREBOR, askedAt: 2 },
+        { dwarfId: NALI, mineId: MORIA, askedAt: 3 }
+      ],
+      { focus: true }
+    )
+    const focused = (): string[] => w.calls.splice(0).filter((call) => call.startsWith('focus'))
+    w.part.press()
+    expect(w.calls.at(-1)).toBe(`focus ${BORIN}`)
+    expect(focused()).toEqual([`focus ${BORIN}`])
+    w.part.press()
+    expect(focused()).toEqual([`focus ${DAIN}`])
+    w.part.press()
+    expect(focused()).toEqual([`focus ${NALI}`])
+    // Round the queue.
+    w.part.press()
+    expect(focused()).toEqual([`focus ${BORIN}`])
+    // An entry press is a jump too: the keyboard goes to its chat, and the next press follows it.
+    w.part.pressEntry({ dwarfId: DAIN, mineId: EREBOR })
+    expect(w.calls.at(-1)).toBe(`focus ${DAIN}`)
+    expect(focused()).toEqual([`focus ${DAIN}`])
+    // DAIN answered meanwhile: skipped, the next after DAIN is NALI.
+    w.queue.value = w.queue.value.filter((entry) => entry.dwarfId !== DAIN)
+    w.part.press()
+    expect(focused()).toEqual([`focus ${NALI}`])
+    // The Work front reads the same turn: round to BORIN, swapped in, then the keyboard in his chat.
+    w.preset.value = 'front'
+    w.front.value = EREBOR
+    w.part.press()
+    expect(w.calls.splice(0)).toEqual([
+      `swap ${MORIA} ${BORIN}`,
+      `pin ${BORIN} ${MORIA}`,
+      `focus ${BORIN}`
+    ])
     w.scope.stop()
   })
 })
