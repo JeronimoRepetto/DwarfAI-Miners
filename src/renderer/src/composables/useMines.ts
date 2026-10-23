@@ -35,8 +35,7 @@ const state = reactive(defaultMinesState())
  * THE BOARD FROM THE HOST (ISSUE-092; ADR-033 item 3; 14 §4.3, §6.4 row `useMines`).
  *
  * The same singleton becomes a read model of the snapshot's `mines` and `dwarfs` sections and the frames
- * `mine.changed`, `ledger.changed`, `dwarf.arrived`, `dwarf.changed`, `dwarf.departed` (14 §3.5; `mine.removed`
- * joins when its catalog entry lands). `state` keeps the shape `lib/**` and the components read today.
+ * `mine.changed`, `mine.removed`, `ledger.changed`, `dwarf.arrived`, `dwarf.changed`, `dwarf.departed` (14 §3.5). `state` keeps the shape `lib/**` and the components read today.
  *
  * - The Host is the board's one writer (21 §1 item 4). AMENDED for ISSUE-242, cut 5 (was: until the first Host snapshot
  *   was read, today's A-12/A-P2 feed, from cut 1 `BoardFacadeAdapter`'s, wrote the board through `setMines`, and after it
@@ -255,6 +254,12 @@ function applyFrame(frame: HostFrame): void {
     case 'mine.changed': {
       const parsed = HOST_FRAME_SCHEMAS['mine.changed'].safeParse(frame.data)
       if (parsed.success) board.mines.set(parsed.data.mine.id, parsed.data.mine)
+      return
+    }
+    case 'mine.removed': {
+      // B-F07: the mine and its ore leave the board at once (US-MINES-006.AC03); its dwarfs departed first.
+      const parsed = HOST_FRAME_SCHEMAS['mine.removed'].safeParse(frame.data)
+      if (parsed.success) board.mines.delete(parsed.data.mineId)
       return
     }
     case 'ledger.changed': {

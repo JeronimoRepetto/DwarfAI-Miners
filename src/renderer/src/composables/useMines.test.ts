@@ -480,4 +480,29 @@ describe('useMines from the Host read model', () => {
     // A dwarf the Host does not hold has no reason of its own: nothing is assumed about it.
     expect(stopUnavailableReason(DAIN)).toBeNull()
   })
+
+  /*
+   * APPENDED: `mine.removed` (14 §2.4 B-F07) takes the mine off the board at once, with its ore, so its Map marker,
+   * its Valle zone and the Map and Valle ore totals drop it without waiting for a snapshot. Its dwarfs' own
+   * `dwarf.departed {mine-removed}` came first (frames/board.ts).
+   */
+  it('[US-MINES-006.AC03] a mine.removed frame takes the mine and its ore off the board at once', async () => {
+    const BETA = '01920000-0000-7000-8000-00000000a002' as MineId
+    const ore = { ...mineWire().totals, gold: { tokens: 100_000 } }
+    const host = installHost([
+      page(3, [mineWire({ totals: ore }), mineWire({ id: BETA, name: 'beta' })], [])
+    ])
+    await useMines().start()
+    await settle()
+    expect(useMines().state.mines.map((mine) => mine.id)).toEqual([ALPHA, BETA])
+    expect(useMines().state.materials?.gold).toBe(100_000)
+
+    host.push([frame(4, 'mine.removed', { mineId: ALPHA, removedAt: 5 })])
+
+    expect(useMines().state.mines.map((mine) => mine.id)).toEqual([BETA])
+    expect(useMines().state.materials?.gold).toBe(0)
+    // A later frame about the removed mine's ore does not bring it back.
+    host.push([frame(5, 'ledger.changed', { mineId: ALPHA, totals: ore })])
+    expect(useMines().state.mines.map((mine) => mine.id)).toEqual([BETA])
+  })
 })
