@@ -957,6 +957,7 @@ onUnmounted(() => {
             v-if="boardMine(mineId) !== null"
             :mine="boardMine(mineId)!"
             :selected-id="focusedDwarf"
+            :arrived="board.state.arrived"
             @dwarf="(dwarf) => dwarfPressed(dwarf, mineId)"
             @crew-sound="crewSound"
           />
@@ -1008,6 +1009,7 @@ onUnmounted(() => {
             v-if="boardMine(mineId) !== null"
             :mine="boardMine(mineId)!"
             :selected-id="focusedDwarf"
+            :arrived="board.state.arrived"
             @dwarf="(dwarf) => dwarfPressed(dwarf, mineId)"
             @crew-sound="crewSound"
           />

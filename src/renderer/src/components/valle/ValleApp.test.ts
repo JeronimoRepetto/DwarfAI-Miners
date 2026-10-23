@@ -2184,3 +2184,21 @@ describe("Valle's app mark (EPIC-20 visual parity)", () => {
     expect(player.clips.filter((clip) => clip.src === UI_SFX_SRC.panel)).toHaveLength(before + 1)
   })
 })
+
+// APPENDED for the Valle visual parity (EPIC-20): a zone's crew walks in and out as the Panel's column does
+// (`useCrewWalk`), told by the window's board which dwarfs arrived (#156).
+describe("the walk in a Valle zone's painting (EPIC-20 visual parity)", () => {
+  it('[US-MINE-009.AC02] a dwarf arriving in a zone walks in from the spawn point, entering', async () => {
+    const { root, push } = mountValle({ preset: 'control', mosaicOrder: [MORIA], pins: [] })
+    await flushPromises()
+    push([frame(11, 'dwarf.arrived', { dwarf: dwarfWire(NALI, MORIA), announce: false })])
+    await flushPromises()
+    const nali = root
+      .findAllComponents(SceneDwarf)
+      .find((dwarf) => dwarf.props('dwarf').id === NALI)
+    expect(nali).toBeDefined()
+    expect(root.get(`[data-valle-column="${MORIA}"]`).element.contains(nali!.element)).toBe(true)
+    expect(nali!.props('entering')).toBe(true)
+    expect(nali!.props('walking')).toBe(true)
+  })
+})
