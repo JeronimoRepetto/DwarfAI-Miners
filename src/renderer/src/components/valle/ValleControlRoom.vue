@@ -7,8 +7,11 @@
  * - Each column is its mine's zone: the plate behind it, its header (the name, what the zone shows when it is not its
  *   mine, `⤢` to dive in, and "⋯" for the zone menu), and what it shows. `⤢` dives into the mine (S28.03), disabled for
  *   a mine that cannot be entered (S28.04); a double-click on the art dives too, never one on a dwarf's sprite, which
- *   only pins or focuses its chat (S28.05). The art itself (the interior, its crew, the roster) is later issues' (`art`
- *   slot), and so is what a zone shows instead of its mine (`content` slot).
+ *   only pins or focuses its chat (S28.05). The art (the interior and its crew, `art` slot) and the roster under it
+ *   (`roster` slot) are the host's, drawn with the Panel's own parts (ValleMineArt, CrewRoster); what a zone shows
+ *   instead of its mine is the `content` slot.
+ * - The roster's "+" (`DS` organisms/mine-zone, "New dwarf in <name>") reports the mine (`add`): the host opens the Add
+ *   panel pinned and focused (S29.16); disabled for a mine that cannot be entered.
  * - The zone menu (machine 31) opens below its "⋯": swapping what the zone shows keeps the column in its slot.
  * - Each zone registers with the on-screen report (`VALLE_TRACK_ZONE`, S39.05): only a zone showing its mine counts.
  * - The scroller is the one whose sideways scroll a dive saves and a climb restores (S28.03, S28.12): `mosaic` exposes
@@ -29,6 +32,7 @@ import { computed, inject, onMounted, onUnmounted, onUpdated, shallowRef } from 
 import { mosaicState } from '../../lib/valle/emptyStates'
 import type { SlotEntry } from '../../lib/valle/mosaic'
 import type { ZoneMenuEntry, ZoneMenuItemId } from '../../lib/valle/zone'
+import ActionButton from '../controls/ActionButton.vue'
 import AddMineSlot from './AddMineSlot.vue'
 import CurrentMineMark from './CurrentMineMark.vue'
 import ZoneHeader from './ZoneHeader.vue'
@@ -75,6 +79,8 @@ const emit = defineEmits<{
   'slot-new': []
   /** S35.02: a single click on the mine's painting or header. */
   current: [mineId: MineId]
+  /** S29.16: the roster's "+", a new dwarf in this mine. */
+  add: [mineId: MineId]
 }>()
 
 /** A dwarf's sprite inside the art: a double-click there never dives. */
@@ -211,6 +217,18 @@ onUnmounted(() => {
             :current="column.current === true"
             size="zone"
             :moving="moving === true"
+          />
+        </div>
+        <div v-if="(column.content ?? 'mine') === 'mine'" class="dm-vz__foot">
+          <div class="dm-vz__roster"><slot name="roster" :mine-id="column.mineId" /></div>
+          <ActionButton
+            class="dm-vz__plus"
+            label="+"
+            size="sm"
+            :title="`New dwarf in ${column.name}`"
+            :aria-label="`New dwarf in ${column.name}`"
+            :disabled="!column.enterable"
+            @click="emit('add', column.mineId)"
           />
         </div>
       </section>

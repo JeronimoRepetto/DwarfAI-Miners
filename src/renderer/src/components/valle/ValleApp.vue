@@ -91,6 +91,7 @@ import { useAttentionCues } from '../../composables/useAttentionCues'
 import { useAudio, type AudioVisibility } from '../../composables/useAudio'
 import { useCurrentMine } from '../../composables/useCurrentMine'
 import { useValleArrivalToast } from '../../composables/useValleArrivalToast'
+import { VALLE_ART_CLOCKS, useValleArtClocks } from '../../composables/useValleArtClocks'
 import { useValleChats } from '../../composables/useValleChats'
 import { useValleHistoryDrawer } from '../../composables/useValleHistoryDrawer'
 import { useValleMosaic, type ValleZoneKey } from '../../composables/useValleMosaic'
@@ -120,11 +121,16 @@ import {
   type ValleClock
 } from '../../lib/valle/flip'
 import type { AudioPlayer } from '../../lib/audio/player'
+import type { CrewSoundEvent } from '../../lib/audio/crew'
+import { mineCrew } from '../../lib/scene/mineColumn'
+import type { PausableFrameClock } from '../../lib/sprite/frameClock'
+import type { Dwarf, Mine } from '../../types'
 import type { PinKey } from '../../lib/valle/pins'
 import type { ValleFacts, ValleNavPage } from '../../lib/valle/preset'
 import { createVetaMotion } from '../../lib/veta/vetaMotion'
 import { createValleReadModel } from '../../lib/valle/valleReadModel'
 import WorktreeDialog from '../browse/WorktreeDialog.vue'
+import CrewRoster from '../scene/CrewRoster.vue'
 import ToastHost from '../overlay/ToastHost.vue'
 import ChatDeck from './ChatDeck.vue'
 import NeedsYouCounter from './NeedsYouCounter.vue'
@@ -141,6 +147,7 @@ import ValleSettingsPage from './ValleSettingsPage.vue'
 import ValleSplitter from './ValleSplitter.vue'
 import ValleZoneHistory from './ValleZoneHistory.vue'
 import ValleWorkFront from './ValleWorkFront.vue'
+import ValleMineArt from './ValleMineArt.vue'
 import { VALLE_PAGES, VALLE_TRACK_ZONE } from './valleZones'
 import type { ValleBridge } from './valleEntry'
 
@@ -154,6 +161,8 @@ const props = defineProps<{
   clock?: ValleClock
   /** The sound engine's player; one `Audio` element per clip unless a test hands one. */
   audioPlayer?: AudioPlayer
+  /** A new frame clock for one zone's art; the window's own frames unless a test hands one. */
+  artClock?: () => PausableFrameClock
 }>()
 
 const { stores } = useValleStores(props.bridge, props.stores)
@@ -280,20 +289,30 @@ let stopCues: (() => void) | undefined
 let stopAudio: (() => void) | undefined
 let unmounted = false
 
+/** The window's observers over the Valle viewport: the on-screen report's and the zones' art clocks'. */
+const viewportObserver: VallePresenceDeps['observer'] =
+  props.observer ??
+  ((callback, options) =>
+    new IntersectionObserver(
+      (entries) =>
+        callback(entries.map(({ target, intersectionRatio }) => ({ target, intersectionRatio }))),
+      options
+    ))
 const presence = useVallePresence({
   bridge: props.bridge,
   // A nav page over the main zone hides every mine (S39.05; 07 §24 I-36).
   facts: () => ({ shown: shown.value, pageOverMain: view.value.page !== null }),
-  observer:
-    props.observer ??
-    ((callback, options) =>
-      new IntersectionObserver(
-        (entries) =>
-          callback(entries.map(({ target, intersectionRatio }) => ({ target, intersectionRatio }))),
-        options
-      ))
+  observer: viewportObserver
 })
 provide(VALLE_TRACK_ZONE, presence.track)
+// Each zone's sprites on a clock of their own, held still while the zone is out of view (NFR-PERF-10).
+provide(
+  VALLE_ART_CLOCKS,
+  useValleArtClocks({
+    observer: viewportObserver,
+    ...(props.artClock ? { clock: props.artClock } : {})
+  })
+)
 
 const { showToast } = useToasts()
 useValleArrivalToast({
@@ -480,6 +499,27 @@ const zoneColumns = computed(() =>
     called: needsYou.called.value?.mineId === column.mineId ? needsYou.called.value.seq : 0
   }))
 )
+/** The board's mine behind a zone, as the Panel draws it (its tier, its crew), once the board has it. */
+const boardMine = (mineId: MineId): Mine | null =>
+  board.state.mines.find((mine) => mine.id === mineId) ?? null
+/** The dwarf whose chat is in focus: its sprite and portrait wear the selected look. */
+const focusedDwarf = computed((): string | null => chat.value?.dwarfId ?? null)
+/** A dwarf pressed in a zone, on its sprite or its roster portrait (S29.03…S29.05, S35.01, S35.07). */
+function dwarfPressed(dwarf: Dwarf, mineId: MineId): void {
+  // The dwarf speaks: a voice is never gated on the current mine (S35.07), as a click in the Panel's column.
+  audio.playVoice(dwarf.role)
+  split.sendPin({ kind: 'click', dwarfId: dwarf.id as DwarfId, mineId })
+  // Its mine current even when its chat was already in focus (S35.01), as a pin selected is.
+  currentMine.send({ kind: 'chat', mineId })
+}
+/** The roster's "+" or "+ Dwarf": the Add panel pinned and focused, aimed at the mine (S29.16). */
+function addPressed(mineId: MineId): void {
+  split.sendPin({ kind: 'add-open', mineId })
+}
+/** A sound of a zone's crew: the engine plays only the current mine's (US-VALLE-016.AC03). */
+function crewSound(event: CrewSoundEvent): void {
+  audio.playCrew(event)
+}
 /** A pin selected: its chat focused, and in the Control room its mine made current even when already in focus (S35.01). */
 function selectPin(key: PinKey): void {
   split.sendPin({ kind: 'select', key })
@@ -824,6 +864,7 @@ onUnmounted(() => {
         :folded-list="view.layouts.front.foldedList"
         :mines="listMines"
         :mine="shownMine"
+        :closed="shownMine !== null && !enterable(shownMine.mineId)"
         :content="mosaic.frontContent.value"
         :menu="frontMenu"
         :moving="gated()"
@@ -836,7 +877,25 @@ onUnmounted(() => {
         @pick="(mineId) => preset.send({ kind: 'pick', mineId })"
         @current="(mineId) => currentMine.send({ kind: 'painting', mineId })"
         @history="toggleHistory"
+        @add="addPressed"
       >
+        <template #art="{ mineId }">
+          <ValleMineArt
+            v-if="boardMine(mineId) !== null"
+            :mine="boardMine(mineId)!"
+            :selected-id="focusedDwarf"
+            @dwarf="(dwarf) => dwarfPressed(dwarf, mineId)"
+            @crew-sound="crewSound"
+          />
+        </template>
+        <template #roster="{ mineId }">
+          <CrewRoster
+            v-if="boardMine(mineId) !== null"
+            :dwarfs="mineCrew(boardMine(mineId)!)"
+            :selected-id="focusedDwarf"
+            @pick="(dwarf) => dwarfPressed(dwarf, mineId)"
+          />
+        </template>
         <template #content="{ mineId, content }">
           <ValleZoneHistory
             v-if="content === 'history'"
@@ -869,7 +928,25 @@ onUnmounted(() => {
         @dive="(mineId) => preset.send({ kind: 'dive', mineId })"
         @sprite-double-click="preset.send({ kind: 'sprite-double-click' })"
         @current="(mineId) => currentMine.send({ kind: 'painting', mineId })"
+        @add="addPressed"
       >
+        <template #art="{ mineId }">
+          <ValleMineArt
+            v-if="boardMine(mineId) !== null"
+            :mine="boardMine(mineId)!"
+            :selected-id="focusedDwarf"
+            @dwarf="(dwarf) => dwarfPressed(dwarf, mineId)"
+            @crew-sound="crewSound"
+          />
+        </template>
+        <template #roster="{ mineId }">
+          <CrewRoster
+            v-if="boardMine(mineId) !== null"
+            :dwarfs="mineCrew(boardMine(mineId)!)"
+            :selected-id="focusedDwarf"
+            @pick="(dwarf) => dwarfPressed(dwarf, mineId)"
+          />
+        </template>
         <template #content="{ mineId, content }">
           <ValleZoneHistory
             v-if="content === 'history'"

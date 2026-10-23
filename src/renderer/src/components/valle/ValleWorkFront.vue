@@ -8,8 +8,9 @@
  * - The list's rows, one per mine, the one shown marked current: picking another swaps it in place (S28.15, 180 ms).
  * - The one mine as its zone: the plate, the header with its name, what the zone shows when it is not its mine and the
  *   "⋯" of its zone menu (07 machine 31; ISSUE-304: no mines list and no "Close this column" here), the art, the parts
- *   the dive's FLIP moves into place (`flip.ts`). Its other tools (ambience, history) and the art itself are later
- *   issues' (`art` slot), and so is what the zone shows instead of its mine (`content` slot).
+ *   the dive's FLIP moves into place (`flip.ts`). The art (`art` slot) and the roster (`roster` slot) are the host's,
+ *   drawn with the Panel's own parts; "+ Dwarf" under the roster reports the mine (`add`, S29.16). What the zone shows
+ *   instead of its mine is the `content` slot.
  * - "Mine history · opens under the chats" in the mine's toolbar asks for the history drawer under the chats (07 S36.01;
  *   US-VALLE-011; ISSUE-308), reporting whether it is open (`aria-expanded`); the drawer itself is the deck's.
  * - The zone registers with the on-screen report (`VALLE_TRACK_ZONE`, S39.05): it counts only while showing its mine.
@@ -22,6 +23,7 @@ import type { MineId, ZoneContent } from '@dwarfai/contracts'
 import { computed, inject, onUnmounted, shallowRef, watch } from 'vue'
 import { VALLE_LIST_FOLDED_WIDTH, VALLE_LIST_WIDTH } from '../../lib/valle/preset'
 import type { ZoneMenuEntry, ZoneMenuItemId } from '../../lib/valle/zone'
+import { ADD_DWARF_LABEL } from '../../lib/scene/mineColumn'
 import ActionButton from '../controls/ActionButton.vue'
 import CurrentMineMark from './CurrentMineMark.vue'
 import ZoneHeader from './ZoneHeader.vue'
@@ -34,6 +36,8 @@ const props = defineProps<{
   mines: readonly { mineId: MineId; name: string }[]
   /** The Work front's one mine, if known. */
   mine: { mineId: MineId; name: string } | null
+  /** That mine cannot be entered (`DS` organisms/mine-zone `data-closed`): "+ Dwarf" is disabled. */
+  closed?: boolean
   /** What the one zone shows. */
   content?: ZoneContent
   /** Its zone menu's entries while open, or `null`. */
@@ -54,6 +58,8 @@ const emit = defineEmits<{
   current: [mineId: MineId]
   /** S36.01: "Mine history" in the mine's toolbar. */
   history: [mineId: MineId]
+  /** S29.16: "+ Dwarf" under the roster, a new dwarf in this mine. */
+  add: [mineId: MineId]
 }>()
 
 /** A dwarf's sprite, or a control in the header or the art: its press is its own, never a click on the painting. */
@@ -179,6 +185,16 @@ const listWidth = computed(
         <div v-else class="dm-vz__well" :data-zone-content="shows">
           <slot name="content" :mine-id="mine.mineId" :content="shows" />
           <CurrentMineMark :current="true" size="zone" :moving="moving === true" />
+        </div>
+        <div v-if="shows === 'mine'" class="dm-vz__foot">
+          <div class="dm-vz__roster"><slot name="roster" :mine-id="mine.mineId" /></div>
+          <ActionButton
+            :label="ADD_DWARF_LABEL"
+            variant="primary"
+            :title="`New dwarf in ${mine.name}`"
+            :disabled="closed"
+            @click="emit('add', mine.mineId)"
+          />
         </div>
       </section>
     </div>
