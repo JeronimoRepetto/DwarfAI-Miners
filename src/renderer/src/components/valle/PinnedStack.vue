@@ -19,6 +19,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { STACK_EMPTY_TEXT, stackState } from '../../lib/valle/emptyStates'
 import type { FocusRequest, PinKey, PinView } from '../../lib/valle/pins'
+import PixelIcon from '../icon/PixelIcon.vue'
 
 const props = defineProps<{
   pins: readonly PinView[]
@@ -85,7 +86,10 @@ function onAuxClick(event: MouseEvent, key: PinKey): void {
           @auxclick="onAuxClick($event, pin.key)"
         >
           <div class="dm-cstack__row m-mat" :data-needs="pin.text.needs ? 'true' : 'false'">
-            <slot name="portrait" :pin="pin" />
+            <span v-if="pin.kind === 'add'" class="dm-ctab__add" aria-hidden="true"
+              ><PixelIcon name="add"
+            /></span>
+            <slot v-else name="portrait" :pin="pin" />
             <span class="dm-cstack__name">{{ pin.text.name }}</span>
             <span class="dm-cstack__state">{{ pin.text.line }}</span>
             <button
@@ -115,7 +119,10 @@ function onAuxClick(event: MouseEvent, key: PinKey): void {
           @keydown="onLineKey($event, pin.key)"
           @auxclick="onAuxClick($event, pin.key)"
         >
-          <slot name="portrait" :pin="pin" />
+          <span v-if="pin.kind === 'add'" class="dm-ctab__add" aria-hidden="true"
+            ><PixelIcon name="add"
+          /></span>
+          <slot v-else name="portrait" :pin="pin" />
           <span class="dm-cstack__name">{{ pin.text.name }}</span>
           <span class="dm-cstack__state">{{ pin.text.line }}</span>
           <button
@@ -249,5 +256,15 @@ function onAuxClick(event: MouseEvent, key: PinKey): void {
 .dm-cstack__x:hover {
   background: var(--rock-lo);
   opacity: 1;
+}
+/* An Add pin's face, where a chat has its portrait (`DS` chat-tab.css `.dm-ctab__add`, drawn in the stack's lines too). */
+.dm-ctab__add {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  background: var(--rock);
+  box-shadow: inset 2px 2px 0 0 var(--rock-lo);
 }
 </style>
