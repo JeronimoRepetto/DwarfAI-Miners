@@ -96,36 +96,80 @@ export function assignScene(
     idsByKind.set(kind, [...(idsByKind.get(kind) ?? []), occupant.id])
   }
 
-  for (const [kind, ids] of idsByKind) {
-    // A re-authored interior that dropped a kind still has to put the dwarf
-    // somewhere on its floor: an unplaced dwarf would simply not be drawn.
-    const pool = anchorPool(layout, kind)
-    const slots = assignSlots(ids, pool.length)
+  /*
+   * Foremen overflowing the diamonds (VQA-10). Every dwarf a person launches is a foreman (the
+   * Host's rank is its depth below the root session), and the three diamonds sit on one landing,
+   * so doubling foremen up on them huddled a whole crew there. The design's rule stops at "a
+   * foreman on a foreman station" and draws one foreman per mine; past the diamonds, a foreman
+   * takes a worker station no miner holds, and doubles up only once those are gone too. Miners
+   * are seated first and never move for it, so a foreman arriving still cannot shuffle the rock
+   * face.
+   */
+  const foremen = idsByKind.get('foreman') ?? []
+  idsByKind.delete('foreman')
+  for (const [kind, ids] of idsByKind) seat(placements, ids, anchorPool(layout, kind))
 
-    const sharersBySlot = new Map<number, string[]>()
-    for (const id of ids) {
-      const slot = slots.get(id) ?? 0
-      sharersBySlot.set(slot, [...(sharersBySlot.get(slot) ?? []), id])
-    }
-
-    for (const [slot, sharers] of sharersBySlot) {
-      const anchor = pool[slot] ?? pool[0]
-      // Sorted so a dwarf's side of a shared rock is stable across polls too,
-      // not just which rock it went to.
-      const sorted = [...sharers].sort()
-      for (const [shareIndex, id] of sorted.entries()) {
-        placements.set(id, {
-          anchor,
-          point: sharedPoint(anchor, shareIndex, sorted.length),
-          shareIndex,
-          shareCount: sorted.length,
-          facesLeft: anchor.facesLeft
-        })
-      }
-    }
+  const diamonds = anchorPool(layout, 'foreman')
+  const [seated, overflow] = splitOverflow(foremen, diamonds.length)
+  seat(placements, seated, diamonds)
+  if (overflow.length > 0) {
+    const held = new Set([...placements.values()].map((place) => place.anchor.id))
+    const [free, ...rest] = anchorPool(layout, 'worker').filter(
+      (anchor) => anchor.kind === 'worker' && !held.has(anchor.id)
+    )
+    seat(placements, overflow, free ? [free, ...rest] : diamonds)
   }
 
   return placements
+}
+
+/*
+ * Which foremen keep a diamond: those `assignSlots` would seat alone, the hash-preferred holders
+ * first and the rest in sorted-id order, as many as there are diamonds. A pure function of the ids,
+ * like every other placement here.
+ */
+function splitOverflow(ids: readonly string[], slotCount: number): [string[], string[]] {
+  if (ids.length <= slotCount) return [[...ids], []]
+  const sorted = [...ids].sort()
+  const slots = assignSlots(sorted, slotCount)
+  const holder = new Map<number, string>()
+  for (const id of sorted) {
+    const slot = slots.get(id) ?? 0
+    if (!holder.has(slot)) holder.set(slot, id)
+  }
+  const seated = new Set(holder.values())
+  return [sorted.filter((id) => seated.has(id)), sorted.filter((id) => !seated.has(id))]
+}
+
+/** Seat these ids on this pool, doubling up only past its size (`assignSlots`). */
+function seat(
+  placements: Map<string, ScenePlacement>,
+  ids: readonly string[],
+  pool: readonly [SceneAnchor, ...SceneAnchor[]]
+): void {
+  const slots = assignSlots(ids, pool.length)
+
+  const sharersBySlot = new Map<number, string[]>()
+  for (const id of ids) {
+    const slot = slots.get(id) ?? 0
+    sharersBySlot.set(slot, [...(sharersBySlot.get(slot) ?? []), id])
+  }
+
+  for (const [slot, sharers] of sharersBySlot) {
+    const anchor = pool[slot] ?? pool[0]
+    // Sorted so a dwarf's side of a shared rock is stable across polls too,
+    // not just which rock it went to.
+    const sorted = [...sharers].sort()
+    for (const [shareIndex, id] of sorted.entries()) {
+      placements.set(id, {
+        anchor,
+        point: sharedPoint(anchor, shareIndex, sorted.length),
+        shareIndex,
+        shareCount: sorted.length,
+        facesLeft: anchor.facesLeft
+      })
+    }
+  }
 }
 
 /**
