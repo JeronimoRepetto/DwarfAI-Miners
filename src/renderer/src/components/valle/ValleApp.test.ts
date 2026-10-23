@@ -1492,6 +1492,62 @@ describe('Valle in the mode lever, the reveal and reduced motion (ISSUE-311)', (
   const composer = (root: VueWrapper, dwarfId: string) =>
     root.get(`[data-valle-chat="${dwarfId}"] .dm-composer textarea`)
 
+  it('[S29.23, S39.03] on the first entry, a chat carried by a run heard before the root mounted lands pinned and focused, with its draft', async () => {
+    // The Valle window's part hears the run first (main.ts starts it before the stores are read); the root mounts after.
+    modeTransitionPart().dispose()
+    const ran: string[] = []
+    let heard: ((t: ModeTransition) => void) | null = null
+    const early = createFakeWindowApi({
+      onModeTransition: (h) => {
+        heard = h as (t: ModeTransition) => void
+        return () => (heard = null)
+      },
+      modeTransitionDone: (p) => void ran.push((p as { transitionId: string }).transitionId),
+      getUiSession: () =>
+        Promise.resolve({
+          drafts: { [DAIN]: 'carried words' },
+          chatViews: {},
+          askPicks: {},
+          openChat: {},
+          currentMine: {},
+          valle: {}
+        }) as never
+    })
+    Object.defineProperty(window, 'api', { configurable: true, writable: true, value: early })
+    try {
+      modeTransitionPart()
+      heard!({
+        transitionId: 'run-first',
+        from: 'panel',
+        to: 'valle',
+        t0: Date.now(),
+        role: 'target',
+        chat: { dwarfId: DAIN, mineId: EREBOR }
+      })
+      await flushPromises()
+      // The Host's facts take longer to read than the shell motion lasts: the chat lands once they are read.
+      const slow = twoDwarfs().getHostSnapshot!
+      const { root } = mountValle({ preset: 'control', pins: [] }, undefined, {
+        getHostSnapshot: (params) =>
+          new Promise((resolve) => setTimeout(() => resolve(slow(params)), 500)) as never,
+        onModeTransition: early.onModeTransition,
+        modeTransitionDone: early.modeTransitionDone,
+        getUiSession: early.getUiSession
+      })
+      await vi.waitFor(
+        () => expect(root.find('.dm-cstack__open').attributes('data-pin')).toBe(DAIN),
+        { timeout: 3_000 }
+      )
+      await vi.waitFor(
+        () =>
+          expect((composer(root, DAIN).element as HTMLTextAreaElement).value).toBe('carried words'),
+        { timeout: 3_000 }
+      )
+    } finally {
+      modeTransitionPart().dispose()
+    }
+  })
+
   it("[US-SHELL-001.AC05] in Valle the nav draws no mode lever and no app mark, and Valle's top bar carries ▼ Panel and ▼ Veta", async () => {
     const { root, moves } = mountValle({ preset: 'control' })
     await flushPromises()

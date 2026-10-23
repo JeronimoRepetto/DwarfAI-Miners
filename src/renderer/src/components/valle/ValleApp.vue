@@ -306,6 +306,11 @@ const held = computed(() => String(model.held.value))
 
 /** Whether the Host's facts were read once: the pins and the mosaic order restore against them (S29.02, S32.02). */
 const factsRead = shallowRef(false)
+/** Settles once the first read of the Host's facts did, read or not. */
+let settleFacts: () => void = () => {}
+const factsSettled = new Promise<void>((resolve) => {
+  settleFacts = resolve
+})
 /** S35.01 from the pins: a focused chat's mine, handed to the current mine once it is composed below. */
 let focusChat = (mineId: MineId): void => {
   void mineId
@@ -416,9 +421,10 @@ const chat = computed((): { mineId: string; dwarfId: DwarfId } | null => {
 /**
  * A chat carried into Valle by a mode run (07 S29.23, machine 9; ISSUE-311): pinned when absent and focused, its mine
  * made current, once the Host's facts are read and the pins restored; the run then restores its draft and view into
- * that chat, the one in focus. A dwarf no longer present is not pinned.
+ * that chat, the one in focus. A dwarf no longer present is not pinned. Answers once it landed, or once the first read
+ * of the Host's facts settled without them, so the hand-off waits for the chat's panel from then.
  */
-function carriedIn(chat: CarriedChat): void {
+function carriedIn(chat: CarriedChat): Promise<void> | void {
   const land = (): void => {
     split.sendPin({
       kind: 'carried',
@@ -431,10 +437,10 @@ function carriedIn(chat: CarriedChat): void {
     land()
     return
   }
-  const stop = watch(factsRead, (read) => {
-    if (!read) return
-    stop()
-    void nextTick(land)
+  // The pins restore once the facts are read (a watcher of their own): the carried chat lands after them.
+  return factsSettled.then(async () => {
+    await nextTick()
+    if (factsRead.value) land()
   })
 }
 const stopArrival = modeTransitionPart().onArrival(carriedIn)
@@ -729,6 +735,7 @@ onMounted(() => {
   if (rootEl.value !== null) removeGate = createInputGate(rootEl.value, gated)
   void model.start().then((read) => {
     if (read) factsRead.value = true
+    settleFacts()
   })
   // The hosted pages' board and remembered projects (ISSUE-304).
   void board.start({ announce: false }).then(() => mapPage.loaded())

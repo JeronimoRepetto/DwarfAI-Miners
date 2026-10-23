@@ -18,6 +18,8 @@
  * progress is ended, so what it held travels as draft text (S9.02, US-DLG-006.AC03). A target carrying a chat first
  * opens it (`onArrival`: the Panel's mine column and chat), and restores the draft and view into that chat alone. A
  * window that hears the carried chat after landing (`onLanded`: Veta's rise, S24.18) is told M + 60 ms after `t0`. A
+ * carried chat heard before the window could open it (Valle's root mounts once its stores were read, S39.03; ISSUE-311)
+ * is kept and opened when `onArrival` registers, its draft and view restored into it then; the run never waits for it. A
  * run into the Panel carrying no chat opens the mine the session store names as the Panel's current mine
  * (`onMineArrival`, ISSUE-295; S27.01, S22.13), since A-N14 carries no mine of its own. A
  * window that left a run (`onLeft`) is told once its source half ended, its content veiled: a hidden frameless window
@@ -109,6 +111,8 @@ export function useModeTransition(deps: ModeTransitionDeps): ModeTransitionPart 
   let mineArrival: ((mineId: MineId) => void) | null = null
   let landed: ((chat: CarriedChat) => void) | null = null
   let left: ((t: ModeTransition) => void) | null = null
+  /** A carried chat heard before this window registered how to open it (`onArrival`), opened once it does. */
+  let unopened: CarriedChat | null = null
   /** A carried chat opened here whose panel has not registered yet, and what its registration settles. */
   let awaited: { dwarfId: DwarfId; registered: () => void } | null = null
   /** The runs this renderer took part in: one answer each. */
@@ -142,18 +146,36 @@ export function useModeTransition(deps: ModeTransitionDeps): ModeTransitionPart 
     const chat = t.chat
     if (chat === undefined) return openNamedMine(t)
     // S27.01: the window opens on the carried chat first (the Panel's mine column and chat, US-MSG-010.AC01).
+    if (handoff?.open() !== chat.dwarfId && arrival === null) unopened = chat
     if (handoff?.open() !== chat.dwarfId && arrival !== null) {
-      try {
-        await arrival(chat)
-        // The chat's panel may mount a moment after it opened: the content waits for it, at most the shell motion's
-        // length. A window that opens nothing here (Veta, whose chat rises once landed) waits for nothing.
-        if (handoff?.open() !== chat.dwarfId) {
-          await registration(chat.dwarfId, t.t0 + MODE_MOTION_MS)
-        }
-      } catch {
-        // The chat could not be opened here: the window shows what it shows, and the run still plays.
-      }
+      await open(arrival, chat, t.t0 + MODE_MOTION_MS)
     }
+    await restoreInto(chat)
+  }
+
+  /**
+   * Opens the carried chat here; its panel may mount a moment after it opened, so this waits for its registration until
+   * `until` at most: during a run, the shell motion's end; after it (`null`, a chat opened late), the shell motion's
+   * length from the moment it opened. A window that opens nothing here (Veta, whose chat rises once landed) waits for
+   * nothing.
+   */
+  async function open(
+    opening: (chat: CarriedChat) => Promise<void> | void,
+    chat: CarriedChat,
+    until: number | null
+  ): Promise<void> {
+    try {
+      await opening(chat)
+      if (handoff?.open() !== chat.dwarfId) {
+        await registration(chat.dwarfId, until ?? clock.now() + MODE_MOTION_MS)
+      }
+    } catch {
+      // The chat could not be opened here: the window shows what it shows, and the run still plays.
+    }
+  }
+
+  /** Restores the carried draft and view into the carried chat, once it is the one open here. */
+  async function restoreInto(chat: CarriedChat): Promise<void> {
     // The carried draft and view belong to that chat alone, never to another dwarf's open here.
     if (handoff === null || handoff.open() !== chat.dwarfId) return
     try {
@@ -249,10 +271,16 @@ export function useModeTransition(deps: ModeTransitionDeps): ModeTransitionPart 
         if (handoff === next) handoff = null
       }
     },
-    onArrival(open) {
-      arrival = open
+    onArrival(opening) {
+      arrival = opening
+      // A chat carried here before this window could open it (ISSUE-311): opened now, its draft and view restored.
+      const chat = unopened
+      unopened = null
+      if (chat !== null) {
+        void open(opening, chat, null).then(() => restoreInto(chat))
+      }
       return () => {
-        if (arrival === open) arrival = null
+        if (arrival === opening) arrival = null
       }
     },
     onMineArrival(open) {
