@@ -14,8 +14,36 @@ export interface Bounds {
   height: number
 }
 
-/** The Valle window's page, once UI main shows it. Polled, never found once: the window may still be loading. */
+/**
+ * Mutes every page of the app, and every page created after, in the main process (Electron `setAudioMuted`): the Valle
+ * window plays its current mine's room tone from ISSUE-307 on, and an L9 case never sounds on the machine running it.
+ */
+export async function muteAppAudio(app: ElectronApplication): Promise<void> {
+  await app.evaluate(({ app: electronApp, webContents }) => {
+    for (const contents of webContents.getAllWebContents()) contents.setAudioMuted(true)
+    const marked = electronApp as unknown as { dwarfaiE2eMuted?: boolean }
+    if (marked.dwarfaiE2eMuted === true) return
+    marked.dwarfaiE2eMuted = true
+    electronApp.on('web-contents-created', (_event, contents) => contents.setAudioMuted(true))
+  })
+}
+
+/** Whether the Valle window's page is muted (`muteAppAudio`), read in the main process. */
+export function valleAudioMuted(app: ElectronApplication): Promise<boolean> {
+  return app.evaluate(({ webContents }) =>
+    webContents
+      .getAllWebContents()
+      .filter((contents) => contents.getURL().includes('mode=valle'))
+      .every((contents) => contents.isAudioMuted())
+  )
+}
+
+/**
+ * The Valle window's page, once UI main shows it. Polled, never found once: the window may still be loading.
+ * AMENDED for ISSUE-307: every page is muted first (`muteAppAudio`), so the Valle window's sound is never heard.
+ */
 export async function showValle(app: ElectronApplication, from: Page): Promise<Page> {
+  await muteAppAudio(app)
   const moved = (await from.evaluate("window.api.moveToMode({ mode: 'valle' })")) as {
     ok: boolean
   }

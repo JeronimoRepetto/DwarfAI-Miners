@@ -13,12 +13,17 @@
  * - Each zone registers with the on-screen report (`VALLE_TRACK_ZONE`, S39.05): only a zone showing its mine counts.
  * - The scroller is the one whose sideways scroll a dive saves and a climb restores (S28.03, S28.12): `mosaic` exposes
  *   it.
+ * - The current mine (07 machine 35; ISSUE-307): the host names it; its zone carries `aria-current` and ", current" in
+ *   its name, and its body the corner brackets (`CurrentMineMark`), inside the needs-you ring the zone hosts
+ *   (`data-needs`; the ring itself is ISSUE-306's). A single click on a zone's painting or header, no dwarf and no
+ *   control touched, reports the mine (S35.02); a double-click on the art still dives.
  */
 import type { MineId, ZoneContent } from '@dwarfai/contracts'
 import { inject, onMounted, onUnmounted, onUpdated, shallowRef } from 'vue'
 import type { SlotEntry } from '../../lib/valle/mosaic'
 import type { ZoneMenuEntry, ZoneMenuItemId } from '../../lib/valle/zone'
 import AddMineSlot from './AddMineSlot.vue'
+import CurrentMineMark from './CurrentMineMark.vue'
 import ZoneHeader from './ZoneHeader.vue'
 import ZoneMenu from './ZoneMenu.vue'
 import { VALLE_TRACK_ZONE } from './valleZones'
@@ -28,7 +33,16 @@ const props = defineProps<{
    * The mosaic's columns in order, each with its mine's name, whether it can be entered and what its zone shows (its
    * mine when not said).
    */
-  columns: readonly { mineId: MineId; name: string; enterable: boolean; content?: ZoneContent }[]
+  columns: readonly {
+    mineId: MineId
+    name: string
+    enterable: boolean
+    content?: ZoneContent
+    /** The current mine (07 machine 35): at most one column. */
+    current?: boolean
+    /** A dwarf of this mine waits on the person: the zone hosts the needs-you ring. */
+    needs?: boolean
+  }[]
   /** The zone menu open on a column, with its entries, or `null`. */
   menu?: { mineId: MineId; entries: readonly ZoneMenuEntry[] } | null
   /** The add slot's menu, open, or `null`. */
@@ -46,6 +60,8 @@ const emit = defineEmits<{
   'slot-dismiss': []
   'slot-pick': [mineId: MineId]
   'slot-new': []
+  /** S35.02: a single click on the mine's painting or header. */
+  current: [mineId: MineId]
 }>()
 
 /** A dwarf's sprite inside the art: a double-click there never dives. */
@@ -58,6 +74,15 @@ function artDoubleClick(event: MouseEvent, column: { mineId: MineId; enterable: 
     return
   }
   emit('dive', column.mineId)
+}
+
+/** A control in the header or the art (⤢, "⋯", a menu): its press is its own, never a click on the painting. */
+const CONTROL = 'button, a, input, [role="menu"], [role="menuitem"]'
+
+function zoneClick(event: MouseEvent, mineId: MineId): void {
+  const target = event.target
+  if (target instanceof Element && target.closest(`${SPRITE}, ${CONTROL}`) !== null) return
+  emit('current', mineId)
 }
 
 const mosaic = shallowRef<HTMLElement | null>(null)
@@ -103,10 +128,13 @@ onUnmounted(() => {
         :data-valle-column="column.mineId"
         data-valle-zone
         :data-content="column.content ?? 'mine'"
-        :aria-label="`Mine ${column.name}`"
+        :data-current="column.current ? 'true' : 'false'"
+        :data-needs="column.needs ? 'true' : 'false'"
+        :aria-current="column.current ? 'true' : undefined"
+        :aria-label="`Mine ${column.name}${column.current ? ', current' : ''}`"
       >
         <div class="dm-vz__bg" aria-hidden="true"></div>
-        <div class="dm-vz__head">
+        <div class="dm-vz__head" @click="zoneClick($event, column.mineId)">
           <ZoneHeader
             :name="column.name"
             :content="column.content ?? 'mine'"
@@ -136,12 +164,15 @@ onUnmounted(() => {
         <div
           v-if="(column.content ?? 'mine') === 'mine'"
           class="dm-vz__well"
+          @click="zoneClick($event, column.mineId)"
           @dblclick="artDoubleClick($event, column)"
         >
           <slot name="art" :mine-id="column.mineId" />
+          <CurrentMineMark :current="column.current === true" size="zone" />
         </div>
         <div v-else class="dm-vz__well" :data-zone-content="column.content">
           <slot name="content" :mine-id="column.mineId" :content="column.content" />
+          <CurrentMineMark :current="column.current === true" size="zone" />
         </div>
       </section>
       <AddMineSlot

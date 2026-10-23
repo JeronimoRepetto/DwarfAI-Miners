@@ -24,6 +24,8 @@ import {
   mineWire,
   snapshotPage
 } from '../../lib/veta/testing/vetaFixtures'
+import { AMBIENCE_SRC, UI_SFX_SRC } from '../../lib/audio/audioAssets'
+import { createFakeAudioPlayer, type FakeAudioPlayer } from '../../lib/audio/fakeAudioPlayer'
 import { DEFAULT_AUDIO_PREFERENCES, type ProjectSummary } from '../../types'
 import HistoryPanel from '../history/HistoryPanel.vue'
 import AddPanel from '../launch/AddPanel.vue'
@@ -137,6 +139,9 @@ function mountValle(
     ...overrides
   })
   Object.defineProperty(window, 'api', { configurable: true, writable: true, value: api })
+  // AMENDED for ISSUE-307: the window's sound engine (US-VALLE-016) plays through the transplanted fake player, never
+  // through an `Audio` element.
+  const player = createFakeAudioPlayer()
   root = mount(ValleApp, {
     attachTo: document.body,
     props: {
@@ -145,12 +150,13 @@ function mountValle(
       observer: () => new InertObserver(),
       // jsdom has no ResizeObserver: unless a test measures the body, it never is, and the split stays off.
       bodyObserver,
-      clock
+      clock,
+      audioPlayer: player
     }
   })
   /** A-N02: one batch of Host frames, to every listener. */
   const push = (frames: HostFrame[]): void => hostListeners.forEach((listener) => listener(frames))
-  return { root, writes, moves, patches, clock, push }
+  return { root, writes, moves, patches, clock, push, player }
 }
 
 /** The projects the Mines page reads (A-34): both fixture mines, remembered. */
@@ -351,8 +357,10 @@ describe('the dive and the climb in the Valle root (ISSUE-301)', () => {
       clock.advance(10)
       await flushPromises()
       expect(valle.attributes('data-motion')).toBe('none')
+      // AMENDED for ISSUE-307 (US-VALLE-013.AC05, .AC09): the Work front's one mine is the current mine, so its name ends
+      // with ", current".
       expect(root.get(`[data-valle-front-mine="${EREBOR}"]`).attributes('aria-label')).toBe(
-        'Mine erebor'
+        'Mine erebor, current'
       )
       expect(writes.filter((write) => write.key === 'valleLayout')).toEqual([])
 
@@ -707,10 +715,12 @@ describe('the Settings page over Valle (ISSUE-304)', () => {
   })
 
   // Owner decision 2026-10-22: no playback and no audio engine in the Valle window until US-VALLE-016.
+  // AMENDED for ISSUE-307 (US-VALLE-016: the Valle window now has its one engine, for the current mine): the Settings
+  // rows still only write the preference; the change itself opens no clip, and the page builds no engine of its own.
   it('[S28.19, US-SET-004.AC03] a volume changed in Valle’s Settings is written as a preference and starts no playback', async () => {
     const audio = countAudio()
     const written: unknown[] = []
-    const { root } = mountValle({ preset: 'control', mosaicOrder: [MORIA] }, undefined, {
+    const { root, player } = mountValle({ preset: 'control', mosaicOrder: [MORIA] }, undefined, {
       getAudioPreferences: () => Promise.resolve({ ...DEFAULT_AUDIO_PREFERENCES }) as never,
       setAudioPreferences: (preferences) => {
         written.push(preferences)
@@ -721,13 +731,16 @@ describe('the Settings page over Valle (ISSUE-304)', () => {
     await root.get('[data-slot="settings"]').trigger('click')
     await flushPromises()
     await root.get('[role="tab"][data-s="Sound"]').trigger('click')
+    const opened = player.clips.length
     const music = root.get('input[aria-label="Music volume"]')
     await music.setValue('30')
     await flushPromises()
     expect(written).toHaveLength(1)
     expect(written[0]).toMatchObject({ musicVolume: 0.3 })
-    // No engine in the Valle window: not one Audio element was made, so nothing could play.
+    // The window's one engine plays through its injected player: not one Audio element was made, and the change
+    // itself opened no clip, music included.
     expect(audio.made).toBe(0)
+    expect(player.clips.length).toBe(opened)
   })
 })
 
@@ -1056,5 +1069,103 @@ describe("the chats inside Valle's pins and panes (TVC)", () => {
     push([frame(11, 'dwarf.arrived', { dwarf: dwarfWire(NALI, EREBOR), announce: true })])
     await flushPromises()
     expect(startedIn() - before).toBe(1)
+  })
+})
+
+// APPENDED for ISSUE-307: the current mine and its sound in the Valle root (07 machine 35; UC-060; US-VALLE-013,
+// US-VALLE-016).
+describe('the current mine and its sound in the Valle root (ISSUE-307)', () => {
+  const BEDS = new Set<string>(Object.values(AMBIENCE_SRC))
+  const beds = (player: FakeAudioPlayer) => player.live().filter((clip) => BEDS.has(clip.src))
+  const current = (root: VueWrapper): string[] =>
+    root
+      .findAll('[data-valle-zone][aria-current="true"]')
+      .map((zone) => zone.attributes('aria-label')!)
+
+  it("[US-VALLE-013.AC02, US-VALLE-016.AC02, S35.02] a single click on a column's painting makes its mine current, marked and heard by the window's one engine, the chat in focus unchanged", async () => {
+    const { root, patches, player } = mountValle({
+      preset: 'control',
+      mosaicOrder: [MORIA, EREBOR]
+    })
+    await flushPromises()
+    // Nothing picked: the first column (S35.06), marked, written for the Valle host and heard.
+    expect(current(root)).toEqual(['Mine moria, current'])
+    expect(patches).toContainEqual({ kind: 'current-mine', host: 'valle', mineId: MORIA })
+    expect(beds(player)).toHaveLength(1)
+    const before = beds(player)[0]!
+    const chats = patches.filter((patch) => patch.kind === 'open-chat').length
+
+    await root.get(`[data-valle-column="${EREBOR}"] .dm-vz__well`).trigger('click')
+    expect(current(root)).toEqual(['Mine erebor, current'])
+    expect(patches.at(-1)).toEqual({ kind: 'current-mine', host: 'valle', mineId: EREBOR })
+    // The previous mine's bed went silent and the new one's started: one bed, so one engine in the window.
+    expect(before.stopped).toBe(true)
+    expect(beds(player)).toHaveLength(1)
+    expect(patches.filter((patch) => patch.kind === 'open-chat')).toHaveLength(chats)
+    // A press on a control in the header is that control's, not a click on the painting.
+    await root.get(`[data-valle-column="${MORIA}"] [data-zone-more]`).trigger('click')
+    expect(current(root)).toEqual(['Mine erebor, current'])
+  })
+
+  it('[US-VALLE-013.AC03, US-VALLE-013.AC05, US-VALLE-013.AC06, S35.03, S35.05] a dive makes its mine current, the climb keeps it, and closing its column falls back to the first column', async () => {
+    const { root, clock } = mountValle({ preset: 'control', mosaicOrder: [MORIA, EREBOR] })
+    await flushPromises()
+    await root.get(`[data-valle-column="${EREBOR}"] button.dm-vz__dive`).trigger('click')
+    clock.advance(330)
+    await flushPromises()
+    expect(current(root)).toEqual(['Mine erebor, current'])
+    esc()
+    clock.advance(330)
+    await flushPromises()
+    expect(root.get('[data-valle-root]').attributes('data-preset')).toBe('control')
+    expect(current(root)).toEqual(['Mine erebor, current'])
+
+    await root.get(`[data-valle-column="${EREBOR}"] [data-zone-more]`).trigger('click')
+    const close = root
+      .findAll('[data-zone-menu] [role="menuitem"]')
+      .find((item) => item.text().startsWith('Close this column'))
+    await close!.trigger('click')
+    await flushPromises()
+    expect(current(root)).toEqual(['Mine moria, current'])
+  })
+
+  it('[S35.08, NFR-SND-07] a hidden Valle plays nothing and keeps its current mine for its next show', async () => {
+    const { root, player } = mountValle({ preset: 'control', mosaicOrder: [MORIA, EREBOR] })
+    await flushPromises()
+    await root.get(`[data-valle-column="${EREBOR}"] .dm-vz__well`).trigger('click')
+    expect(beds(player)).toHaveLength(1)
+    const visibility = (state: 'hidden' | 'visible'): void => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state })
+      document.dispatchEvent(new Event('visibilitychange'))
+    }
+    try {
+      visibility('hidden')
+      await flushPromises()
+      expect(player.live()).toHaveLength(0)
+      visibility('visible')
+      await flushPromises()
+      expect(beds(player)).toHaveLength(1)
+      expect(current(root)).toEqual(['Mine erebor, current'])
+    } finally {
+      delete (document as { visibilityState?: unknown }).visibilityState
+    }
+  })
+
+  it('[US-VALLE-016.AC04, S35.07] a finished turn in a mine that is not current plays its cue in Valle', async () => {
+    const { root, push, player } = mountValle({ preset: 'control', mosaicOrder: [MORIA, EREBOR] })
+    await flushPromises()
+    await root.get(`[data-valle-column="${EREBOR}"] .dm-vz__well`).trigger('click')
+    // Borin works in Moria, which is not current.
+    push([
+      frame(11, 'turn.ended', {
+        dwarfId: BORIN,
+        turnKey: 't-1',
+        kind: 'concluded',
+        reliability: 'reliable',
+        cancelledFromApp: false
+      })
+    ])
+    await flushPromises()
+    expect(player.liveOf(UI_SFX_SRC.finished)).toHaveLength(1)
   })
 })
