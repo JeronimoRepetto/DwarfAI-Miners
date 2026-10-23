@@ -62,6 +62,11 @@
  *   chat tabs and panes, rising with a fade, the chats above never moved; its own close sinks it with a fade. A climb
  *   out, leaving Valle or a hidden window closes it at once, a swap keeps it on the new mine, its mine removed closes
  *   it. The same request from a chat in the Control room stack shows the history in that mine's zone instead (S31.11).
+ * - Reset preset (`useValleResetPreset`, 07 machine 37; ISSUE-309): the top bar's "⋯" holds "Reset preset", not offered
+ *   during a dive or a climb. It puts the preset shown back to its defaults alone: both layouts written through the
+ *   preset's one writer with the other preset copied, the splitter at rest (S33.10), the Control room's mosaic
+ *   recomputed (S32.15) or the Work front's split turned off (S30.11), the zones' content FLIPping to the default layout
+ *   and the toast through the window's one queue (BR-23). Pins are never touched. Esc closes its menu first (NFR-A11Y-02).
  *
  * The bridge is the composition root's (`valleBridgeOf(window.api)`, R13); the observer is the browser's own unless a
  * test hands one.
@@ -86,6 +91,7 @@ import {
   useValleSplit,
   type ValleBodyObserver
 } from '../../composables/useValleSplit'
+import { useValleResetPreset } from '../../composables/useValleResetPreset'
 import { useValleSplitter } from '../../composables/useValleSplitter'
 import { useValleStores, type ValleStores } from '../../composables/useValleStores'
 import { useToasts } from '../../composables/useToasts'
@@ -520,6 +526,47 @@ const splitter = useValleSplitter({
 })
 const chatWidth = computed(() => `${splitter.width.value}px`)
 
+/** "Reset preset" in the top bar's "⋯" menu (07 machine 37; ISSUE-309). */
+const resetPreset = useValleResetPreset({
+  view: () => view.value,
+  resetLayouts: (layouts) => preset.resetLayouts(layouts),
+  recomputeMosaic: () => {
+    mosaic.resetPreset()
+  },
+  splitOff: () => {
+    split.send({ kind: 'reset-preset' })
+  },
+  splitterRest: () => {
+    splitter.send({ kind: 'reset' })
+  },
+  showToast: (text) => showToast(text),
+  motion: {
+    clock: props.clock ?? BROWSER_CLOCK,
+    reduced,
+    // The zones' content the reset moves: every zone drawn, the chat zone and the splitter beside it.
+    targets: () =>
+      [
+        ...(rootEl.value?.querySelectorAll('[data-valle-zone]') ?? []),
+        chatsEl.value,
+        splitterEl.value?.$el ?? null
+      ].filter((element): element is Element => element instanceof Element),
+    box: (element) => element.getBoundingClientRect(),
+    animate: (element, frames, timing) => {
+      void parts.run(element, frames, timing)
+    },
+    afterRender: (run) => {
+      void nextTick(run)
+    }
+  }
+})
+// A dive or a climb starting with the menu open closes it, as an outside press does (S37.02).
+watch(
+  () => resetPreset.offered.value,
+  (offered) => {
+    if (!offered) resetPreset.dismiss()
+  }
+)
+
 /** A nav slot: its page over the main zone (S28.19); the Mines page reads the remembered projects again, as the Panel's. */
 function nav(page: ValleNavPage): void {
   if (page === 'mines') void minesPage.load()
@@ -529,8 +576,8 @@ function nav(page: ValleNavPage): void {
 function onKey(event: KeyboardEvent): void {
   if (event.key !== 'Escape') return
   // Esc closes the topmost layer first (NFR-A11Y-02): a menu that already took it, an open zone or slot menu, the
-  // worktree question; then a page, then the Work front.
-  if (event.defaultPrevented || mosaic.dismiss()) return
+  // worktree question, the "⋯" preset menu; then a page, then the Work front.
+  if (event.defaultPrevented || resetPreset.dismiss() || mosaic.dismiss()) return
   preset.send({ kind: 'escape', layerOpen: mosaic.worktree.value !== null })
 }
 const resized = (): void => {
@@ -615,9 +662,14 @@ onUnmounted(() => {
     <ValleTopBar
       :preset="view.preset"
       :chat="chat"
+      :menu-open="resetPreset.menuOpen.value"
+      :offered="resetPreset.offered.value"
       @tab="(target) => preset.send({ kind: 'tab', preset: target })"
       @arrow="(key) => preset.send({ kind: 'arrow', key })"
       @leave="leave"
+      @menu="resetPreset.toggle()"
+      @reset="resetPreset.reset()"
+      @menu-dismiss="resetPreset.dismiss()"
     />
     <div ref="body" class="dm-valle__body" :style="{ '--chat-w': chatWidth }">
       <nav class="dm-valle__nav" aria-label="Valle">

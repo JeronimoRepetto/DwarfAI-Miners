@@ -2,23 +2,35 @@
 /*
  * Valle's top bar (`organisms/valle-bar`; 07 S28.06, S28.11, S28.21; US-VALLE-001.AC01, .AC05; ISSUE-300): the preset
  * tabs, a tablist whose ← and → move between the presets as a click does, and the mode lever, "▼ Panel" and "▼ Veta",
- * which leave Valle for that mode carrying the chat in focus, as the Panel's lever does (US-SHELL-001). The needs-you
- * counter and the "⋯" preset menu are their issues' (slots). The top bar never moves (07 machine 28, VA3).
+ * which leave Valle for that mode carrying the chat in focus, as the Panel's lever does (US-SHELL-001), and the "⋯" preset
+ * menu holding "Reset preset" (`ValleTopBarMenu`, 07 machine 37; ISSUE-309). The needs-you counter is its issue's (slot).
+ * The top bar never moves (07 machine 28, VA3).
  */
 import type { DwarfId, MineId, MoveToModeParams } from '@dwarfai/contracts'
 import { nextTick, ref, watch } from 'vue'
 import type { VallePreset } from '../../lib/valle/preset'
+import ValleTopBarMenu from './ValleTopBarMenu.vue'
 
-const props = defineProps<{
-  preset: VallePreset
-  /** The chat in focus, carried by the lever (machine 9), or none. */
-  chat: { mineId: string; dwarfId: string } | null
-}>()
+const props = withDefaults(
+  defineProps<{
+    preset: VallePreset
+    /** The chat in focus, carried by the lever (machine 9), or none. */
+    chat: { mineId: string; dwarfId: string } | null
+    /** The "⋯" menu is open (machine 37 `menu-open`). */
+    menuOpen?: boolean
+    /** "Reset preset" is offered: no dive or climb is running (S37.01). */
+    offered?: boolean
+  }>(),
+  { menuOpen: false, offered: true }
+)
 
 const emit = defineEmits<{
   tab: [preset: VallePreset]
   arrow: [key: 'ArrowLeft' | 'ArrowRight']
   leave: [move: MoveToModeParams]
+  menu: []
+  reset: []
+  menuDismiss: []
 }>()
 
 const TABS: readonly { preset: VallePreset; label: string }[] = [
@@ -79,7 +91,13 @@ function leave(mode: 'panel' | 'veta'): void {
       </button>
     </div>
     <slot name="counter" />
-    <slot name="menu" />
+    <ValleTopBarMenu
+      :open="menuOpen"
+      :offered="offered"
+      @toggle="emit('menu')"
+      @reset="emit('reset')"
+      @dismiss="emit('menuDismiss')"
+    />
     <div class="dm-vbar__mode" aria-label="Mode">
       <span class="dm-vbar__mode-label">MODE</span>
       <button

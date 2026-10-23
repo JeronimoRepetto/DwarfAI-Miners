@@ -1214,3 +1214,152 @@ describe('the current mark during a dive and a climb (ISSUE-307)', () => {
     }
   })
 })
+
+// APPENDED for ISSUE-309: "Reset preset" in the top bar's "⋯" menu in the Valle root (07 machine 37; UC-062).
+describe('Reset preset in the Valle root (ISSUE-309)', () => {
+  /** Both presets changed from their defaults: a width, a split, a folded list, a zone swapped to something else. */
+  const CHANGED = (): ValleStores['layout'] => ({
+    control: {
+      chatWidth: 520,
+      split: false,
+      foldedList: false,
+      zones: { [MORIA]: { content: 'map' } }
+    },
+    front: { chatWidth: 610, split: true, foldedList: true, zone: { content: 'history' } }
+  })
+  const PINS = [
+    { dwarfId: BORIN, mineId: MORIA, order: 0 },
+    { dwarfId: DAIN, mineId: EREBOR, order: 1 }
+  ]
+  const pinned = (root: VueWrapper) =>
+    root.findAll('[data-pin]').map((pin) => pin.attributes('data-pin'))
+
+  /** The "⋯" pressed and Reset preset picked, then the FLIP let to end. */
+  async function reset(root: VueWrapper, clock: { advance(ms: number): void }): Promise<void> {
+    await root.get('[data-preset-more]').trigger('click')
+    await root.get('[data-preset-menu] [role="menuitem"]').trigger('click')
+    await flushPromises()
+    clock.advance(200)
+    await flushPromises()
+  }
+
+  it('[US-VALLE-010.AC01, US-VALLE-010.AC02, US-VALLE-010.AC03, US-VALLE-010.AC04, S37.03] resetting the Control room puts it at its defaults alone: the mosaic recomputed, the pins and the Work front as they were', async () => {
+    const { root, writes, clock } = mountValle({
+      preset: 'control',
+      layout: CHANGED(),
+      mosaicOrder: [EREBOR, MORIA],
+      pins: PINS
+    })
+    await flushPromises()
+    const stack = pinned(root)
+    expect(stack).toEqual([BORIN, DAIN])
+    expect(root.get('.dm-valle__body').attributes('style')).toContain('--chat-w: 520px')
+    expect(writes).toEqual([])
+
+    await reset(root, clock)
+
+    const after = CHANGED()!
+    expect(writes).toEqual([
+      { key: 'valleLayout', value: { control: defaultValleLayouts().control, front: after.front } },
+      // The mine with a crew in data order, not the order the person had left (Erebor first).
+      { key: 'valleMosaicOrder', value: [MORIA] }
+    ])
+    expect(
+      root.findAll('[data-valle-column]').map((column) => column.attributes('data-valle-column'))
+    ).toEqual([MORIA])
+    expect(root.get('.dm-valle__body').attributes('style')).toContain('--chat-w: 440px')
+    // Every zone shows its mine again.
+    expect(root.find('[data-zone-content]').exists()).toBe(false)
+    // Pins: never written, never reordered.
+    expect(writes.filter((write) => write.key === 'pins')).toEqual([])
+    expect(pinned(root)).toEqual(stack)
+    expect(root.get('.dm-toasts').text()).toContain('Control room is back to its preset')
+    expect(root.get('[data-valle-root]').attributes('data-motion')).toBe('none')
+    expect(root.find('[data-preset-menu]').exists()).toBe(false)
+  })
+
+  it("[US-VALLE-010.AC01, US-VALLE-010.AC02, US-VALLE-010.AC04, S37.04] resetting the Work front unfolds the list, turns the split off and shows the mine, the Control room's layout and the pins as they were", async () => {
+    const { root, writes, clock } = mountValle({
+      preset: 'front',
+      layout: CHANGED(),
+      mosaicOrder: [MORIA],
+      pins: PINS
+    })
+    await flushPromises()
+    expect(root.get('.dm-valle__main').attributes('style')).toContain('--list-w: 44px')
+    const stack = pinned(root)
+
+    await reset(root, clock)
+
+    const after = CHANGED()!
+    expect(writes.filter((write) => write.key === 'valleLayout')).toEqual([
+      { key: 'valleLayout', value: { control: after.control, front: defaultValleLayouts().front } }
+    ])
+    expect(root.get('.dm-valle__main').attributes('style')).toContain('--list-w: 232px')
+    expect(root.find('[data-zone-content]').exists()).toBe(false)
+    // The Work front keeps no mosaic: nothing of the Control room's order is written.
+    expect(writes.filter((write) => write.key === 'valleMosaicOrder')).toEqual([])
+    expect(writes.filter((write) => write.key === 'pins')).toEqual([])
+    expect(pinned(root)).toEqual(stack)
+    expect(root.get('[data-valle-root]').attributes('data-preset')).toBe('front')
+    expect(root.get('.dm-toasts').text()).toContain('Work front is back to its preset')
+  })
+
+  it('[S37.06] a failed layout store write still applies the defaults for the session', async () => {
+    const writes: UiPreferenceWrite[] = []
+    const { root, clock } = mountValle(
+      { preset: 'front', layout: CHANGED(), mosaicOrder: [MORIA] },
+      undefined,
+      {
+        setUiPreference: ((write: UiPreferenceWrite) => {
+          writes.push(write)
+          return write.key === 'valleLayout'
+            ? Promise.reject(new Error('store down'))
+            : Promise.resolve(write)
+        }) as never
+      }
+    )
+    await flushPromises()
+    await reset(root, clock)
+    expect(writes.filter((write) => write.key === 'valleLayout')).toHaveLength(1)
+    expect(root.get('.dm-valle__main').attributes('style')).toContain('--list-w: 232px')
+    expect(root.get('.dm-toasts').text()).toContain('Work front is back to its preset')
+    expect(root.get('[data-valle-root]').attributes('data-motion')).toBe('none')
+  })
+
+  it('[S37.01] Reset preset is not offered while a dive or a climb plays', async () => {
+    const { root, clock } = mountValle({ preset: 'control', mosaicOrder: [MORIA, EREBOR] })
+    await flushPromises()
+    const more = () => root.get('[data-preset-more]')
+    expect(more().attributes('disabled')).toBeUndefined()
+    await root.get(`[data-valle-column="${EREBOR}"] button.dm-vz__dive`).trigger('click')
+    expect(root.get('[data-valle-root]').attributes('data-motion')).toBe('diving')
+    expect(more().attributes('disabled')).toBeDefined()
+    await more().trigger('click')
+    expect(root.find('[data-preset-menu]').exists()).toBe(false)
+    clock.advance(330)
+    await flushPromises()
+    expect(more().attributes('disabled')).toBeUndefined()
+    // Climbing: the same.
+    esc()
+    await flushPromises()
+    expect(root.get('[data-valle-root]').attributes('data-motion')).toBe('climbing')
+    expect(more().attributes('disabled')).toBeDefined()
+  })
+
+  it('[S37.02, NFR-A11Y-02] Esc closes the menu first and the Work front stays; a second Esc climbs out', async () => {
+    const { root, writes } = mountValle({ preset: 'front', mosaicOrder: [MORIA] })
+    await flushPromises()
+    const before = writes.length
+    await root.get('[data-preset-more]').trigger('click')
+    expect(root.find('[data-preset-menu]').exists()).toBe(true)
+    esc()
+    await flushPromises()
+    expect(root.find('[data-preset-menu]').exists()).toBe(false)
+    expect(root.get('[data-valle-root]').attributes('data-preset')).toBe('front')
+    expect(writes.length).toBe(before)
+    esc()
+    await flushPromises()
+    expect(root.get('[data-valle-root]').attributes('data-preset')).toBe('control')
+  })
+})
