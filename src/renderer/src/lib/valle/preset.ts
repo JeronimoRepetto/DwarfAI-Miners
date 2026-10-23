@@ -354,8 +354,25 @@ export function stepValle(view: ValleView, input: ValleInput, facts: ValleFacts)
   if (input.kind === 'leave') return taken('S28.21', view, [{ kind: 'move', move: input.move }])
 
   if (view.page !== null) {
-    // `page`: Esc with no other layer open returns to the preset beneath (S28.20).
-    if (input.kind === 'escape' && !input.layerOpen) return taken('S28.20', { ...view, page: null })
+    const beneath: ValleView = { ...view, page: null }
+    // `page`: Esc with no other layer open, or the slot of the page shown again, returns to the preset beneath (S28.20).
+    if (input.kind === 'escape' && !input.layerOpen) return taken('S28.20', beneath)
+    /*
+     * A package gap resolved in development (owner live check 2026-10-23): machine 28 lists S28.19 from `control` and
+     * `front` alone, and the design's Valle lets every nav slot and both preset tabs act while a page is shown
+     * (`DS/prototype/screens/valle/valle.js` `showPage`, `setPreset`). Another slot switches the page (S28.19); a preset
+     * tab or its arrow key leaves the page and acts as it does at rest, or only leaves it when it asks for the preset
+     * beneath (S28.20).
+     */
+    if (input.kind === 'nav') {
+      return input.page === view.page
+        ? taken('S28.20', beneath)
+        : taken('S28.19', { ...view, page: input.page })
+    }
+    if (askedPreset(input) !== null) {
+      const atRest = stepValle(beneath, input, facts)
+      return atRest.ok ? atRest : taken('S28.20', beneath)
+    }
     return REFUSED
   }
 

@@ -258,9 +258,9 @@ describe('machine 28 diagram conformance (presets)', () => {
       [front, { kind: 'arrow', key: 'ArrowRight' }],
       [control, { kind: 'escape', layerOpen: false }],
       [control, { kind: 'unfold' }],
-      [paged, { kind: 'tab', preset: 'front' }],
+      // AMENDED (owner live check 2026-10-23): a preset tab and another nav slot act on a page as the design's Valle
+      // does (the cases at the end of this file); were `[paged, tab front]` and `[paged, nav settings]` refused.
       [paged, { kind: 'fold' }],
-      [paged, { kind: 'nav', page: 'settings' }],
       [paged, { kind: 'resize' }]
     ]
     for (const [at, input] of refused) {
@@ -1192,5 +1192,48 @@ describe('machine 28 diagram conformance (dive and climb)', () => {
         JSON.stringify([at.preset, at.motion, input])
       ).toEqual({ ok: false, reason: 'not-listed' })
     }
+  })
+})
+
+/*
+ * APPENDED (owner live check 2026-10-23: "every button works once"): a nav page never traps the person. The design's
+ * Valle (`DS/prototype/screens/valle/valle.js` `showPage`, `setPreset`) lets every nav slot and both preset tabs act
+ * while a page is shown; 07 machine 28 lists S28.19 from `control` and `front` alone and S28.20 as "Esc ... or the mines
+ * again", so page → page and a tab on a page are a package gap resolved in development, consistent with the prototype.
+ */
+describe('a nav page over the main zone gives way to every nav slot and preset tab', () => {
+  it('[S28.19, S28.20] another nav slot switches the page, and the slot of the page shown returns to the preset beneath', () => {
+    for (const preset of ['control', 'front'] as const) {
+      const start = view({ preset, layouts: CHANGED })
+      const map = take(start, { kind: 'nav', page: 'map' }, ENTERABLE)
+      const mines = take(map.view, { kind: 'nav', page: 'mines' }, ENTERABLE)
+      expect(mines.id).toBe('S28.19')
+      expect(mines.view).toEqual({ ...start, page: 'mines' })
+      const settings = take(mines.view, { kind: 'nav', page: 'settings' }, ENTERABLE)
+      expect(settings.view).toEqual({ ...start, page: 'settings' })
+      // The slot of the page shown again: "the mines again", back to the preset beneath.
+      const back = take(settings.view, { kind: 'nav', page: 'settings' }, ENTERABLE)
+      expect(back.id).toBe('S28.20')
+      expect(back.view).toEqual(start)
+      expect([mines, settings, back].flatMap((step) => step.effects)).toEqual([])
+    }
+  })
+
+  it('[US-VALLE-001.AC01, S28.20, S28.06, S28.11] a preset tab or its arrow key on a page leaves the page and takes effect as at rest', () => {
+    // The other preset's tab: the page gives way and the dive runs, as the tab at rest would.
+    const paged = view({ page: 'map' })
+    const dived = take(paged, { kind: 'tab', preset: 'front' }, ENTERABLE)
+    expect(dived.view).toEqual(take(view(), { kind: 'tab', preset: 'front' }, ENTERABLE).view)
+    expect(dived.view.page).toBeNull()
+    expect(dived.view.motion?.kind).toBe('diving')
+    // The arrow key on a focused tab, from a page over the Work front: the climb out.
+    const front = view({ preset: 'front', page: 'settings', mineId: MORIA })
+    const climbed = take(front, { kind: 'arrow', key: 'ArrowLeft' }, ENTERABLE)
+    expect(climbed.view.page).toBeNull()
+    expect(climbed.view.motion?.kind).toBe('climbing')
+    // The tab of the preset beneath: the page gives way, the preset unchanged.
+    const same = take(view({ page: 'mines' }), { kind: 'tab', preset: 'control' }, ENTERABLE)
+    expect(same.id).toBe('S28.20')
+    expect(same.view).toEqual(view())
   })
 })

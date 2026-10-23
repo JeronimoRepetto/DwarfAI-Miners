@@ -1486,6 +1486,40 @@ describe('the needs-you counter and queue in the Valle root (ISSUE-306)', () => 
     expect(root.get('.dm-ctab.is-focus-pane').attributes('data-pin')).toBe(BORIN)
     expect(writes.filter((write) => write.key === 'vallePreset')).toHaveLength(presetWrites)
   })
+
+  // APPENDED (owner live check 2026-10-23): a jump from a nav page gives way to the mines first, as the reveal does.
+  it('[US-VALLE-004.AC01, S34.05, S34.06, S28.20] the counter and an entry pressed over a nav page leave the page and jump', async () => {
+    const { root, writes, clock } = mountValle(
+      { preset: 'control', mosaicOrder: [MORIA], pins: [], lastFrontMineId: EREBOR },
+      undefined,
+      { getHostSnapshot: () => Promise.resolve(snapshot()) as never }
+    )
+    await flushPromises()
+    await root.get('[data-slot="map"]').trigger('click')
+    await flushPromises()
+    expect(root.find('[data-valle-page="map"]').exists()).toBe(true)
+
+    // The Control room under the Map: the page gives way, DAIN's column is added and his chat expanded.
+    await root.get('[data-needs-counter]').trigger('click')
+    await flushPromises()
+    expect(root.find('[data-valle-page]').exists()).toBe(false)
+    expect(writes).toContainEqual({ key: 'valleMosaicOrder', value: [MORIA, EREBOR] })
+    expect(root.get('.dm-cstack__open').attributes('data-pin')).toBe(DAIN)
+
+    // The Work front under Settings: BORIN's entry gives way to the mines and swaps to MORIA.
+    await root.get('[data-preset-tab="front"]').trigger('click')
+    clock.advance(400)
+    await flushPromises()
+    await root.get('[data-slot="settings"]').trigger('click')
+    await flushPromises()
+    expect(root.find('[data-valle-page="settings"]').exists()).toBe(true)
+    await root.get(`.dm-vq__entry[data-id="${BORIN}"]`).trigger('click')
+    clock.advance(400)
+    await flushPromises()
+    expect(root.find('[data-valle-page]').exists()).toBe(false)
+    expect(root.find(`[data-valle-front-mine="${MORIA}"]`).exists()).toBe(true)
+    expect(root.get('.dm-ctab.is-focus-pane').attributes('data-pin')).toBe(BORIN)
+  })
 })
 
 // APPENDED for ISSUE-311: Valle's part in a mode run (07 machine 9, S28.21, S29.23), the reveal of a notification click

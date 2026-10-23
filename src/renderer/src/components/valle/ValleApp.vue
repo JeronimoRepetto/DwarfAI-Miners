@@ -567,6 +567,15 @@ const needsYou = useValleNeedsYou({
     swap: (mineId, dwarfId) => preset.send({ kind: 'pick', mineId, dwarfId })
   }
 })
+/**
+ * A needs-you jump, the counter's or an entry's (S34.05, S34.06): a nav page over the main zone gives way to the mines
+ * first (S28.20), as the reveal does, so the jump lands where the person sees it (owner live check 2026-10-23).
+ */
+function jumpNeed(entry?: Parameters<typeof needsYou.pressEntry>[0]): void {
+  if (view.value.page !== null) preset.send({ kind: 'escape', layerOpen: false })
+  if (entry === undefined) needsYou.press()
+  else needsYou.pressEntry(entry)
+}
 /** The mosaic's scroller, read from the drawn Control room. */
 const mosaicEl = (): HTMLElement | null => room.value?.mosaic ?? null
 /**
@@ -871,7 +880,7 @@ onUnmounted(() => {
         <VaultStrip :ore="oreTotals" label="Ore" :max="6" />
       </template>
       <template #counter>
-        <NeedsYouCounter :view="needsYou.counter.value" :still="still" @press="needsYou.press()" />
+        <NeedsYouCounter :view="needsYou.counter.value" :still="still" @press="jumpNeed()" />
       </template>
     </ValleTopBar>
     <div ref="body" class="dm-valle__body" :style="{ '--chat-w': chatWidth }">
@@ -1096,10 +1105,7 @@ onUnmounted(() => {
         <ToastHost />
       </div>
     </div>
-    <NeedsYouQueue
-      :entries="needsYou.entries.value"
-      @press="(entry) => needsYou.pressEntry(entry)"
-    />
+    <NeedsYouQueue :entries="needsYou.entries.value" @press="(entry) => jumpNeed(entry)" />
     <div class="dm-vghosts" aria-hidden="true"></div>
     <WorktreeDialog
       :question="mosaic.worktree.value"
