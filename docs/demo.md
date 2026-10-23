@@ -2,7 +2,7 @@
 
 `pnpm demo` starts the built app on a throwaway profile with themed mines and scripted dwarfs, so the Panel, Veta and
 Valle can be recorded working together. `pnpm demo:shots` drives the same scenario and saves a PNG of each mode.
-Everything in it is simulated: the mines are generated folders, every dwarf (worker or foreman) runs on a stub CLI, and
+Everything in it is simulated: the mines are generated folders, every dwarf (foreman, worker or worker²) runs on a stub CLI or inside one, and
 every word a dwarf says is scripted in `scripts/demo/scenarios/showcase.json`. No real provider agent ever runs, and
 nothing is spent on anyone's subscription (see "The hard guard").
 
@@ -32,45 +32,77 @@ Every run starts from a fresh profile, so a new run is the reset. A demo that wa
 ## What the showcase shows
 
 One mine per dwarf universe and one mine named like a software project, in the order Valle's Control room and Veta's
-strip show them:
+strip show them. Each mine has one foreman, the only dwarf the demo launches; its workers are the subagents its CLI
+spawns (Claude) or its sub-threads (Codex), and a worker's own subagent is a worker²:
 
-| Mine                | Tier    | Crew                                                                                                   |
-| ------------------- | ------- | ------------------------------------------------------------------------------------------------------ |
-| `Moria`             | Uranium | Balin (asks a permission), Óin, Ori (asks two questions, Codex), Gimli (finishes early), Glóin, Dwalin |
-| `Heigh-Ho Mine`     | Silver  | Doc, Grumpy (asks two questions, Codex), Happy, Sleepy (falls asleep), Bashful, Sneezy, Dopey          |
-| `Nidavellir`        | Silver  | Brokkr, Eitri, Dvalin, hard at the forge                                                               |
-| `Boatmurdered`      | Copper  | Urist McMiner, Urist McMason                                                                           |
-| `Karak Eight Peaks` | Bronze  | Gotrek, Belegar                                                                                        |
-| `Erebor`            | Gold    | Thorin, Fíli, Kíli, Bombur (falls asleep); Bofur starts there after 75 s ("started in Erebor")         |
-| `ore-ledger`        | Copper  | one dwarf under the app's own name, fixing the ledger                                                  |
+| Mine                | Tier    | Foreman                                       | Workers (worker² under its parent)                                       |
+| ------------------- | ------- | --------------------------------------------- | ------------------------------------------------------------------------ |
+| `Moria`             | Uranium | Balin, Claude: asks a permission              | Óin, Ori (finishes and walks out), Glóin (Gimli under him), Dwalin       |
+| `Heigh-Ho Mine`     | Silver  | Doc, Codex: asks two questions                | Grumpy, Happy (Dopey under him), Sleepy (falls asleep), Bashful, Sneezy  |
+| `Nidavellir`        | Silver  | Brokkr, Claude                                | Eitri, Dvalin (finishes and walks out)                                   |
+| `Boatmurdered`      | Copper  | Urist McMiner, Claude                         | Urist McMason                                                            |
+| `Karak Eight Peaks` | Bronze  | Gotrek, Claude                                | Belegar                                                                  |
+| `Erebor`            | Gold    | Thorin, Claude                                | Fíli (Kíli under him), Bombur (falls asleep), Bofur (arrives after 75 s) |
+| `ore-ledger`        | Copper  | the app's own name, Codex: asks two questions | one worker under the app's own name                                      |
 
-Each dwarf is launched through the app and then given its name with the app's own Rename. The asks open after the
-dwarfs have worked for half a minute or so. Bombur and Sleepy finish in a few seconds and are left alone, so the Host
-puts them to sleep after 60 s. After the timeline the demo holds the scene: a dwarf whose turn ended a while ago gets a
-follow-up and works again, and an asking dwarf whose ask was answered asks again later, so the needs-you counter and
-the queue keep coming back. The data is the app's own (the profile's database and Host), so everything carries from one
-mode to the next.
+The foremen are launched one after the other through the app and given their names with the app's own Rename. Each
+foreman's stub, from its first turn on, spawns its workers one by one, as the real CLI does: it writes each subagent's
+transcript (and, for Claude, its sidecar, which names a worker²'s parent) under the profile's provider home, and the
+Host observes them, ranks them from their parent and shows them arriving. The demo names each worker as it appears.
+Workers keep working, finish and walk out (their foreman's transcript gets the task notification that ends them), or
+do one short job and fall asleep (Sleepy, Bombur). The asks open after the foremen have worked for half a minute or so.
+After the timeline the demo holds the scene: a foreman whose turn ended a while ago gets a follow-up and works again,
+and an asking foreman whose ask was answered asks again later. The data is the app's own (the profile's database and
+Host), so everything carries from one mode to the next.
+
+### Arrivals
+
+A dwarf walks in from its mine's entrance only when the app sees it arrive while it is drawn. The demo arrives every
+dwarf after the windows are up and the mines are measured, and opens the first mine's column before anyone arrives:
+
+- Panel: a mine column walks in a dwarf that turns up after the column opened, or one the Panel saw arrive by frame
+  (`src/renderer/src/components/scene/MineColumn.vue:89-118`, `src/renderer/src/lib/scene/sceneMotion.ts:239-268`;
+  the arrival set is `src/renderer/src/composables/useMines.ts:45-46`: a `dwarf.arrived` frame, never a snapshot).
+- Veta: each arrival walks in from its chamber's entrance (`src/renderer/src/components/veta/VetaChamber.vue:27-31`,
+  machine 26).
+- Valle: arrivals and departures are placed at once, not walked
+  (`src/renderer/src/components/valle/ValleMineArt.vue:16-17`, "a known difference"): a product change, outside the
+  demo.
+- A viewer whose OS asks for less motion gets every dwarf placed, in every mode.
+
+### Why the workers are subagents and not DwarfAI delegations
+
+DwarfAI's own delegation (the `delegate_subtask` tool) always asks Jev, the TypeSafe API, which provider runs the
+subtask; with no key the subtask fails as `jev-could-not-choose` and no worker is launched
+(`src/host/wiring/bridges/subtaskRouter.ts:34-49`, `src/host/modules/jev/adapters/typesafe/TypesafeJevRouter.ts:223`),
+and the TypeSafe address cannot be pointed elsewhere (`TypesafeJevRouter.ts:9-10, 60`). A delegation is also only
+opened for a launch made with "Let Jev choose" (`src/host/modules/delegation/domain/delegationGate.ts`), and a
+delegated worker never delegates in turn (depth 1, `src/host/modules/delegation/domain/limits.ts:30-35`), so a worker²
+cannot come from it. The demo never makes a network call, so it launches every foreman without Jev
+(`launchParamsOf`, unit-tested) and shows workers and worker² through the provider subagents the app observes
+(`src/host/wiring/routes/crew.ts:256-260`). A delegated worker started from the UI during the demo still resolves only
+the demo's stubs (see "The hard guard").
 
 ### Changing names and words
 
-`scripts/demo/scenarios/showcase.json` holds every mine name, tier, crew, dwarf name, prompt, reply, question and
-timing; no code changes are needed to rename a mine or a dwarf. Set a dwarf's `name` to `null` to keep the name the app
-gives it. `pnpm vitest run scripts/demo` checks the file still keeps the showcase's promises (asks in the richest mine,
-sleepers, the late start off screen, crews of many sizes, exactly one mine named like a software project). A mine name
-is letters, digits, spaces, hyphens and apostrophes.
+`scripts/demo/scenarios/showcase.json` holds every mine name, tier, foreman, worker, parent, name, prompt, reply,
+question and timing; no code changes are needed to rename a mine or a dwarf. Set a dwarf's `name` to `null` to keep the
+name the app gives it. `pnpm vitest run scripts/demo` checks the file still keeps the showcase's promises (one foreman
+per mine, workers and worker², asks only from foremen, questions only from Codex, sleepers, a late arrival off screen,
+exactly one mine named like a software project). A mine name is letters, digits, spaces, hyphens and apostrophes.
 
 ### A flow to record
 
-1. Start on the Panel's Map: the markers appear as the mines are measured, then the dwarfs arrive one by one.
-2. Open Moria from the Mines page and Ori's chat: the question card. Answer it on camera.
-3. Move to Veta: the strip with every crew, the same dwarfs working; raise Gimli's chat and hand it off to the Panel or
-   Valle.
-4. Move to Valle's Control room: every tier side by side, the needs-you counter with Balin's permission and Grumpy's
-   questions. Click the counter to jump to the oldest ask and answer it.
-5. Stay in Valle past 75 s: Bofur starts in Erebor (the sixth column, off screen at four columns) and the "started in"
-   notice shows.
+1. Start on the Panel: Moria's column is open, and Balin arrives, then his workers walk in one by one.
+2. Open Heigh-Ho Mine from the Mines page and Doc's chat: the question card. Answer it on camera.
+3. Move to Veta: the strip with every crew, workers walking in; raise a chat and hand it off to the Panel or Valle.
+4. Move to Valle's Control room: every tier side by side, one foreman per mine with its crew, the needs-you counter with
+   Balin's permission and the Codex foremen's questions. Click the counter to jump to the oldest ask and answer it.
+5. Stay past 75 s: Bofur arrives in Erebor (the sixth column, off screen at four columns) and the "started in" notice
+   shows.
 6. Dive into Moria (the Work front), split two chats, open the History drawer.
-7. Back to the Panel: the answers given in Veta and Valle are there; Bombur and Sleepy are asleep.
+7. Back to the Panel: the answers given in Veta and Valle are there; Bombur and Sleepy are asleep; Ori and Dvalin have
+   walked out.
 
 Window sizes that read well on video: Valle at 1600 x 960 or larger, so four columns fit and Erebor is off screen; Veta
 at its default height along the bottom edge; the Panel docked at its default width.
@@ -81,30 +113,31 @@ at its default height along the bottom edge; the Panel docked at its default wid
 pnpm demo:shots --out <folder>   # default: a new dwarfai-demo-shots-* folder in the OS temp folder
 ```
 
-It plays the same scenario, waits until a question and a permission are open and the late dwarf started, then saves
-page captures (no OS title bar, nothing behind the window):
+It plays the same scenario and saves page captures (no OS title bar, nothing behind the window). The Panel walk-in is
+caught as it happens; the rest once a question and a permission are open:
 
-| File                           | What it shows                                                    |
-| ------------------------------ | ---------------------------------------------------------------- |
-| `panel-map.png`                | The Panel's Map with every mine                                  |
-| `panel-mines.png`              | The Panel's Mines page with every tier                           |
-| `panel-mine-question.png`      | Moria's column with Ori's question card                          |
-| `panel-settings.png`           | The Panel's Settings                                             |
-| `veta-strip.png`               | Veta's strip with the crews                                      |
-| `veta-risen-chat.png`          | A chat risen from Veta                                           |
-| `valle-control-room.png`       | Valle's Control room: the tiers, the waiting dwarfs, the counter |
-| `valle-work-front-split.png`   | Valle's Work front on Moria, two chats split                     |
-| `valle-work-front-history.png` | The same, with the History drawer open                           |
+| File                           | What it shows                                                   |
+| ------------------------------ | --------------------------------------------------------------- |
+| `panel-walk-in.png`            | Moria's column with a worker walking in from the entrance       |
+| `panel-map.png`                | The Panel's Map with every mine                                 |
+| `panel-mines.png`              | The Panel's Mines page with every tier and crew                 |
+| `panel-mine-question.png`      | Heigh-Ho Mine's column with Doc's question card                 |
+| `panel-settings.png`           | The Panel's Settings                                            |
+| `veta-strip.png`               | Veta's strip with the crews                                     |
+| `veta-walk-in.png`             | Veta with a worker walking into its chamber                     |
+| `veta-risen-chat.png`          | A chat risen from Veta                                          |
+| `valle-control-room.png`       | Valle's Control room: the tiers, the crews, the counter         |
+| `valle-work-front-split.png`   | Valle's Work front on Moria, the foreman's and a worker's chats |
+| `valle-work-front-history.png` | The same, with the History drawer open                          |
 
 A shot that cannot be reached is logged and skipped; the others are still taken. Nothing is committed: pick the images,
 read each one at full size (skill `privacy-guard`), and only then add the ones you want to the README.
 
 ## Timing
 
-`--speed` divides the scenario's own delays: launches, steps, the late start and the hold loop. Two clocks belong to
-the app and do not move: a dwarf is asleep after 60 s idle, and a missing mine folder is noticed within 30 s. The first
-crews are launched one after the other, each once the previous one arrived, so the 25 first launches take a minute or
-two whatever the speed.
+`--speed` divides the scenario's own delays: launches, steps, worker arrivals and the hold loop. Two clocks belong to
+the app and do not move: a dwarf is asleep after 60 s idle, and a missing mine folder is noticed within 30 s. A Codex
+worker that finished stays until the Host closes its quiet thread (300 s); a Claude worker leaves at its notification.
 
 ## The hard guard
 
@@ -121,7 +154,7 @@ The demo refuses to start, naming every reason, unless only its own stubs can be
   other folder outside the profile, holds a provider CLI at all, for example a global `claude-agent-acp` installed next
   to node.
 - The Host starts from the app's environment, so every launch it makes later resolves on the same PATH: a dwarf a
-  person launches from the UI, a foreman's delegated worker, a relaunch. None can reach a real CLI. The stubs run
+  person launches from the UI, a delegated worker (if a person turns delegation on), a relaunch. None can reach a real CLI. The stubs run
   nothing but the DwarfAI relay the Host hands them for asks; they read no credential, open no connection and write
   only their transcripts under the profile's provider homes.
 
@@ -159,11 +192,14 @@ material, so ore shows in every tier.
 ## Limits
 
 - The stubs script Claude (stream-json) and Codex (app-server) only; OpenCode, Antigravity and the other providers are
-  absent from the demo. Claude's stream-json driver asks no questions (`--disallowedTools AskUserQuestion`), so the
-  question cards come from Codex dwarfs.
-- The scripted dwarfs never delegate on their own; a delegation started from the UI during the demo launches stubs too.
-- A dwarf's Stop and interrupt work, but a stopped scripted dwarf is not relaunched by the hold loop.
-- About 26 stub processes run at once, each a small Node process: expect a few hundred MB of memory.
+  absent from the demo. Claude's stream-json driver asks no questions (`--disallowedTools AskUserQuestion`), and a
+  subagent's ask is never matched by the app (`src/host/modules/asking/adapters/observedClaude/transcriptTail.ts:8-9`),
+  so every ask comes from a launched foreman, the question cards from Codex foremen.
+- Workers are the foremen's provider subagents, not DwarfAI delegations: see "Why the workers are subagents".
+- Valle places arrivals at once instead of walking them (a product change, see "Arrivals").
+- A dwarf's Stop and interrupt work, but a stopped scripted foreman is not relaunched by the hold loop, and its workers
+  end with it.
+- Seven stub processes run, one per foreman; the workers run inside them.
 - The scenario supports a crewless mine whose folder is removed (`enterable: false`, shown unenterable); the showcase
   has none, since every mine on the owner's list has a crew.
 
@@ -174,5 +210,6 @@ material, so ore shows in every tier.
   actions through the app's `window.api`; `shots.mjs`: the captures.
 - `scripts/demo/scenarios/showcase.json`: the mines, crews, names, prompts and scripted turns; `scenario.mjs` reads it.
 - `scripts/demo/isolation.mjs`: the isolation checks and the hard guard.
-- `scripts/demo/stubs/`: the Claude and Codex stub CLIs and their install into the profile.
+- `scripts/demo/stubs/`: the Claude and Codex stub CLIs, the subagent files they write (`subagents.mjs`) and their
+  install into the profile.
 - `scripts/demo/*.test.mjs`: the unit tests (`pnpm vitest run scripts/demo`), run by `pnpm test`.

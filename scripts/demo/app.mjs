@@ -96,14 +96,7 @@ export async function launchDwarf(window, mineId, provider, prompt) {
   const providerId = PROVIDER_IDS[provider]
   const before = new Set((await dwarfsOf(window)).map((d) => d.id))
   const accepted = await window.evaluate(
-    `window.api.launchAgent(${JSON.stringify({
-      mineId,
-      way: { kind: 'supplier', providerId },
-      prompt,
-      jevOn: false,
-      jevAutoAccept: false,
-      requestId: uuidv7()
-    })})`
+    `window.api.launchAgent(${JSON.stringify(launchParamsOf(mineId, provider, prompt, uuidv7()))})`
   )
   if (!accepted?.ok)
     throw new Error(`the ${provider} launch was refused: ${JSON.stringify(accepted)}`)
@@ -196,4 +189,32 @@ export async function showMode(app, from, mode) {
   )
   await page.waitForSelector(mode === 'valle' ? '[data-valle-root]' : '[data-veta-root]')
   return page
+}
+
+/**
+ * The A-35 `launchAgent` request of a foreman: its provider's supplier way, never "Let Jev choose" (`jevOn: false`).
+ * So no launch asks Jev, nothing reaches TypeSafe, and the delegation gate (`delegation/domain/delegationGate.ts`:
+ * a launch made with Let Jev choose) never opens.
+ */
+export function launchParamsOf(mineId, provider, prompt, requestId) {
+  return {
+    mineId,
+    way: { kind: 'supplier', providerId: PROVIDER_IDS[provider] },
+    prompt,
+    jevOn: false,
+    jevAutoAccept: false,
+    requestId
+  }
+}
+
+/**
+ * Opens a mine's column in the Panel, as a person does from its card on the Mines page (the docked Panel can be too
+ * narrow for every Map marker). The press goes to the card's own button.
+ */
+export async function openMineColumn(window, mineId) {
+  await window.locator('.dm-nav .dm-slot[data-label="Mines"]').click({ timeout: 15_000 })
+  const card = window.locator(`.dm-card[data-mine="${mineId}"] .dm-card__hit`)
+  await card.waitFor({ state: 'attached', timeout: 15_000 })
+  await card.dispatchEvent('click')
+  await window.locator('.shell-mine').waitFor({ timeout: 30_000 })
 }

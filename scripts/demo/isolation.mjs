@@ -178,3 +178,14 @@ export function resolutionProblems(pathValue, profile, options) {
   }
   return problems
 }
+
+/**
+ * The CLIs each catalog provider can run as (`src/contracts/catalog/ids.mjs`), its ACP adapters included: whatever
+ * provider a worker or a delegation lands on, its CLI is one the guard resolves.
+ */
+export const CATALOG_PROVIDER_CLIS = Object.freeze({
+  claude: ['claude', 'claude-agent-acp', 'claude-code-acp'],
+  codex: ['codex', 'codex-acp'],
+  antigravity: ['antigravity', 'agy', 'gemini'],
+  opencode: ['opencode']
+})

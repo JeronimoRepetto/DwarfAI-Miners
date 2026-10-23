@@ -1,7 +1,7 @@
 {
   "name": "showcase",
-  "about": "The demo's showcase: one mine per dwarf universe, plus one mine named like a software project. Edit names, prompts and replies here; scenario.mjs and its tests check the shape. Every dwarf runs on a stub CLI.",
-  "launchEveryMs": 1500,
+  "about": "The demo's showcase: one mine per dwarf universe, plus one mine named like a software project. Each mine has ONE launched foreman; its workers and worker2 are the foreman CLI's own subagents (Claude) or sub-threads (Codex), written by the stub as the real CLI writes them. Edit names, prompts and replies here; scenario.mjs and its tests check the shape. Every dwarf runs on a stub CLI.",
+  "launchEveryMs": 2500,
   "removeFolderAtMs": 8000,
   "holdIdleMs": 25000,
   "holdEveryMs": 5000,
@@ -12,56 +12,65 @@
       "name": "Moria",
       "tier": "uranium",
       "enterable": true,
-      "crew": [
-        {
-          "key": "balin",
-          "name": "Balin",
-          "provider": "claude",
-          "behavior": "permission",
-          "asks": true,
-          "prompt": "Reopen the east gate wiring and log every door that still sticks.",
-          "reply": "The east gate wiring is back and the door log is written. Two doors still stick; both are marked in the log."
-        },
+      "foreman": {
+        "key": "balin",
+        "name": "Balin",
+        "provider": "claude",
+        "behavior": "permission",
+        "asks": true,
+        "prompt": "Reopen the east gate wiring and log every door that still sticks.",
+        "reply": "The east gate wiring is back and the door log is written. Two doors still stick; both are marked in the log."
+      },
+      "workers": [
         {
           "key": "oin",
           "name": "Óin",
-          "provider": "claude",
           "behavior": "survey",
           "prompt": "Map the lower halls and list every tunnel that still needs shoring.",
-          "reply": "Seven tunnels in the lower halls still need shoring. They are listed in `docs/halls.md` with their depth, and the survey test now fails if a new one is left unmarked."
+          "reply": "Seven tunnels in the lower halls still need shoring. They are listed in `docs/halls.md` with their depth, and the survey test now fails if a new one is left unmarked.",
+          "parent": "balin",
+          "startMs": 8000,
+          "end": "loop"
         },
         {
           "key": "ori",
           "name": "Ori",
-          "provider": "codex",
-          "behavior": "question",
-          "asks": true,
-          "prompt": "Move the chronicle entries into the record keeper's database.",
-          "reply": "Going with {answer}. The migration is written and the chronicle reads its entries from the database now."
-        },
-        {
-          "key": "gimli",
-          "name": "Gimli",
-          "provider": "claude",
-          "behavior": "refactor",
-          "prompt": "Refactor the cart scheduler so two carts never share a rail.",
-          "reply": "Done. A rail is now reserved before a cart leaves and released when it arrives. **12 tests** pass, including one with two carts racing for the same rail."
+          "behavior": "docs",
+          "prompt": "Copy the chronicle entries into the record keeper's index.",
+          "reply": "The chronicle index is complete: 412 entries, each with its date and keeper.",
+          "parent": "balin",
+          "startMs": 16000,
+          "end": "complete"
         },
         {
           "key": "gloin",
           "name": "Glóin",
-          "provider": "codex",
           "behavior": "profile",
           "prompt": "Profile the mithril sorter and find the slowest stage.",
-          "reply": "The weighing stage is the slowest: it reads the scale once per nugget. Batching the reads cut the sorter from 41 ms to 9 ms per cart on the bench."
+          "reply": "The weighing stage is the slowest: it reads the scale once per nugget. Batching the reads cut the sorter from 41 ms to 9 ms per cart on the bench.",
+          "parent": "balin",
+          "startMs": 24000,
+          "end": "loop"
+        },
+        {
+          "key": "gimli",
+          "name": "Gimli",
+          "behavior": "refactor",
+          "prompt": "Refactor the cart scheduler so two carts never share a rail.",
+          "reply": "Done. A rail is now reserved before a cart leaves and released when it arrives. **12 tests** pass, including one with two carts racing for the same rail.",
+          "parent": "gloin",
+          "startMs": 36000,
+          "end": "loop"
         },
         {
           "key": "dwalin",
           "name": "Dwalin",
-          "provider": "claude",
           "behavior": "tests",
           "prompt": "Write tests for the guard rotation timer.",
-          "reply": "Added nine tests for the guard rotation: shift changes, a missed handover, and the midnight rollover that used to skip a watch."
+          "reply": "Added nine tests for the guard rotation: shift changes, a missed handover, and the midnight rollover that used to skip a watch.",
+          "parent": "balin",
+          "startMs": 48000,
+          "end": "loop"
         }
       ]
     },
@@ -70,63 +79,75 @@
       "name": "Heigh-Ho Mine",
       "tier": "silver",
       "enterable": true,
-      "crew": [
-        {
-          "key": "doc",
-          "name": "Doc",
-          "provider": "claude",
-          "behavior": "docs",
-          "prompt": "Document the gem sorting steps for the new hands.",
-          "reply": "Wrote `docs/sorting.md`: the five sorting steps, what each sieve does, and the two gems that must never share a basket."
-        },
+      "foreman": {
+        "key": "doc",
+        "name": "Doc",
+        "provider": "codex",
+        "behavior": "question-roster",
+        "prompt": "Rework the shift roster so nobody digs two nights in a row.",
+        "reply": "Going with {answer}. The roster is reworked and nobody digs two nights in a row now.",
+        "asks": true
+      },
+      "workers": [
         {
           "key": "grumpy",
           "name": "Grumpy",
-          "provider": "codex",
-          "behavior": "question-roster",
-          "asks": true,
-          "prompt": "Rework the shift roster so nobody digs two nights in a row.",
-          "reply": "Going with {answer}. The roster is reworked and nobody digs two nights in a row now."
+          "behavior": "check",
+          "prompt": "Check every pickaxe handle for cracks.",
+          "reply": "Three handles were cracked; they are replaced and logged in `reports/handles.md`.",
+          "parent": "doc",
+          "startMs": 8000,
+          "end": "loop"
         },
         {
           "key": "happy",
           "name": "Happy",
-          "provider": "claude",
           "behavior": "tune",
           "prompt": "Tune the pickaxe swing timings in the work song.",
-          "reply": "The swing timings follow the song now: one swing per beat, a rest on every fourth."
-        },
-        {
-          "key": "sleepy",
-          "name": "Sleepy",
-          "provider": "claude",
-          "behavior": "nap",
-          "prompt": "Rename the lantern helper to something clearer.",
-          "reply": "Renamed `lampThing` to `lanternHelper` in three files."
-        },
-        {
-          "key": "bashful",
-          "name": "Bashful",
-          "provider": "codex",
-          "behavior": "check",
-          "prompt": "Check the ore carts for loose wheels.",
-          "reply": "Two carts had a loose wheel; both are tightened and noted in `reports/carts.md`."
-        },
-        {
-          "key": "sneezy",
-          "name": "Sneezy",
-          "provider": "claude",
-          "behavior": "tests",
-          "prompt": "Add tests for the dust filter alarm.",
-          "reply": "Added six tests for the dust filter alarm, including the one that rang every time someone sneezed."
+          "reply": "The swing timings follow the song now: one swing per beat, a rest on every fourth.",
+          "parent": "doc",
+          "startMs": 14000,
+          "end": "loop"
         },
         {
           "key": "dopey",
           "name": "Dopey",
-          "provider": "claude",
           "behavior": "map",
           "prompt": "Add markers for every lantern to the mine map.",
-          "reply": "Every lantern has a marker on the map, and the legend explains the three lantern colours."
+          "reply": "Every lantern has a marker on the map, and the legend explains the three lantern colours.",
+          "parent": "happy",
+          "startMs": 26000,
+          "end": "loop"
+        },
+        {
+          "key": "sleepy",
+          "name": "Sleepy",
+          "behavior": "nap",
+          "prompt": "Rename the lantern helper to something clearer.",
+          "reply": "Renamed `lampThing` to `lanternHelper` in three files.",
+          "parent": "doc",
+          "startMs": 20000,
+          "end": "stay"
+        },
+        {
+          "key": "bashful",
+          "name": "Bashful",
+          "behavior": "check",
+          "prompt": "Check the ore carts for loose wheels.",
+          "reply": "Two carts had a loose wheel; both are tightened and noted in `reports/carts.md`.",
+          "parent": "doc",
+          "startMs": 32000,
+          "end": "complete"
+        },
+        {
+          "key": "sneezy",
+          "name": "Sneezy",
+          "behavior": "tests",
+          "prompt": "Add tests for the dust filter alarm.",
+          "reply": "Added six tests for the dust filter alarm, including the one that rang every time someone sneezed.",
+          "parent": "doc",
+          "startMs": 40000,
+          "end": "loop"
         }
       ]
     },
@@ -135,30 +156,35 @@
       "name": "Nidavellir",
       "tier": "silver",
       "enterable": true,
-      "crew": [
-        {
-          "key": "brokkr",
-          "name": "Brokkr",
-          "provider": "claude",
-          "behavior": "survey",
-          "prompt": "Keep the bellows log and flag every gap in the airflow.",
-          "reply": "The bellows log is complete. Three gaps in the airflow, all under two seconds, are flagged in `logs/bellows.md`."
-        },
+      "foreman": {
+        "key": "brokkr",
+        "name": "Brokkr",
+        "provider": "claude",
+        "behavior": "survey",
+        "prompt": "Keep the bellows log and flag every gap in the airflow.",
+        "reply": "The bellows log is complete. Three gaps in the airflow, all under two seconds, are flagged in `logs/bellows.md`.",
+        "asks": false
+      },
+      "workers": [
         {
           "key": "eitri",
           "name": "Eitri",
-          "provider": "codex",
           "behavior": "tune",
           "prompt": "Tune the forge heat curve for the hammer casting.",
-          "reply": "The heat curve is tuned: the casting holds its temperature within five degrees from start to quench."
+          "reply": "The heat curve is tuned: the casting holds its temperature within five degrees from start to quench.",
+          "parent": "brokkr",
+          "startMs": 8000,
+          "end": "loop"
         },
         {
           "key": "dvalin",
           "name": "Dvalin",
-          "provider": "claude",
           "behavior": "profile",
           "prompt": "Profile the rune stamping press and find the slowest stage.",
-          "reply": "The alignment stage is the slowest. Caching the die positions cut each stamp from 120 ms to 35 ms."
+          "reply": "The alignment stage is the slowest. Caching the die positions cut each stamp from 120 ms to 35 ms.",
+          "parent": "brokkr",
+          "startMs": 18000,
+          "end": "complete"
         }
       ]
     },
@@ -167,22 +193,25 @@
       "name": "Boatmurdered",
       "tier": "copper",
       "enterable": true,
-      "crew": [
-        {
-          "key": "urist",
-          "name": "Urist McMiner",
-          "provider": "claude",
-          "behavior": "check",
-          "prompt": "Check the floodgates before the next magma test.",
-          "reply": "All four floodgates close in under a second. The magma test can go ahead; the checklist is in `reports/floodgates.md`."
-        },
+      "foreman": {
+        "key": "urist",
+        "name": "Urist McMiner",
+        "provider": "claude",
+        "behavior": "check",
+        "prompt": "Check the floodgates before the next magma test.",
+        "reply": "All four floodgates close in under a second. The magma test can go ahead; the checklist is in `reports/floodgates.md`.",
+        "asks": false
+      },
+      "workers": [
         {
           "key": "mason",
           "name": "Urist McMason",
-          "provider": "codex",
           "behavior": "docs",
           "prompt": "Write down how the elephant fences are built.",
-          "reply": "Wrote `docs/fences.md`: the materials, the post spacing, and why the fence needs a second gate."
+          "reply": "Wrote `docs/fences.md`: the materials, the post spacing, and why the fence needs a second gate.",
+          "parent": "urist",
+          "startMs": 10000,
+          "end": "loop"
         }
       ]
     },
@@ -191,22 +220,25 @@
       "name": "Karak Eight Peaks",
       "tier": "bronze",
       "enterable": true,
-      "crew": [
-        {
-          "key": "gotrek",
-          "name": "Gotrek",
-          "provider": "claude",
-          "behavior": "tests",
-          "prompt": "Add tests for the axe sharpening schedule.",
-          "reply": "Added seven tests for the sharpening schedule, including the weekly whetstone swap."
-        },
+      "foreman": {
+        "key": "gotrek",
+        "name": "Gotrek",
+        "provider": "claude",
+        "behavior": "tests",
+        "prompt": "Add tests for the axe sharpening schedule.",
+        "reply": "Added seven tests for the sharpening schedule, including the weekly whetstone swap.",
+        "asks": false
+      },
+      "workers": [
         {
           "key": "belegar",
           "name": "Belegar",
-          "provider": "codex",
           "behavior": "map",
           "prompt": "Map the eight peaks' tunnels that are still held.",
-          "reply": "Five of the eight peaks' tunnels are still held. The map marks them and the three that need reinforcing."
+          "reply": "Five of the eight peaks' tunnels are still held. The map marks them and the three that need reinforcing.",
+          "parent": "gotrek",
+          "startMs": 10000,
+          "end": "loop"
         }
       ]
     },
@@ -215,38 +247,55 @@
       "name": "Erebor",
       "tier": "gold",
       "enterable": true,
-      "crew": [
-        {
-          "key": "thorin",
-          "name": "Thorin",
-          "provider": "claude",
-          "behavior": "map",
-          "prompt": "Index the treasury and flag every item without an owner.",
-          "reply": "The treasury index is rebuilt. 214 items had no owner; they are flagged in `reports/treasury.md`."
-        },
+      "foreman": {
+        "key": "thorin",
+        "name": "Thorin",
+        "provider": "claude",
+        "behavior": "map",
+        "prompt": "Index the treasury and flag every item without an owner.",
+        "reply": "The treasury index is rebuilt. 214 items had no owner; they are flagged in `reports/treasury.md`.",
+        "asks": false
+      },
+      "workers": [
         {
           "key": "fili",
           "name": "Fíli",
-          "provider": "codex",
           "behavior": "tune",
           "prompt": "Tune the forge cooldown table for the new anvils.",
-          "reply": "The cooldown table is tuned for the new anvils: iron cools in 4 strikes, steel in 7. The anvil bench is 18% faster."
+          "reply": "The cooldown table is tuned for the new anvils: iron cools in 4 strikes, steel in 7. The anvil bench is 18% faster.",
+          "parent": "thorin",
+          "startMs": 8000,
+          "end": "loop"
         },
         {
           "key": "kili",
           "name": "Kíli",
-          "provider": "claude",
           "behavior": "check",
           "prompt": "Check the front gate sensors after last night's storm.",
-          "reply": "All gate sensors answer. One reads high after the storm; I recalibrated it and noted it in `reports/gate.md`."
+          "reply": "All gate sensors answer. One reads high after the storm; I recalibrated it and noted it in `reports/gate.md`.",
+          "parent": "fili",
+          "startMs": 20000,
+          "end": "loop"
         },
         {
           "key": "bombur",
           "name": "Bombur",
-          "provider": "claude",
           "behavior": "nap",
           "prompt": "Fix the typo in the kitchen rota.",
-          "reply": "Fixed: \"breakfats\" became \"breakfast\" in two places of the kitchen rota."
+          "reply": "Fixed: \"breakfats\" became \"breakfast\" in two places of the kitchen rota.",
+          "parent": "thorin",
+          "startMs": 14000,
+          "end": "stay"
+        },
+        {
+          "key": "bofur",
+          "name": "Bofur",
+          "behavior": "report",
+          "prompt": "Brew a fresh status report for the mountain's kitchens.",
+          "reply": "The kitchens are fine: 14 ovens on, 2 cooling down, none smoking. The report is in `reports/kitchens.md`.",
+          "parent": "thorin",
+          "startMs": 75000,
+          "end": "loop"
         }
       ]
     },
@@ -255,28 +304,27 @@
       "name": "ore-ledger",
       "tier": "copper",
       "enterable": true,
-      "crew": [
+      "foreman": {
+        "key": "ledger",
+        "name": null,
+        "provider": "codex",
+        "behavior": "question",
+        "asks": true,
+        "prompt": "Move the ore totals into the ledger database.",
+        "reply": "Going with {answer}. The migration is written and the ledger reads its totals from the database now."
+      },
+      "workers": [
         {
-          "key": "ledger",
+          "key": "ledger-tests",
           "name": null,
-          "provider": "claude",
-          "behavior": "refactor",
-          "prompt": "Make the ledger refuse to credit ore while the tier is still a guess.",
-          "reply": "Done. The ledger reads the measured tier only, so a mine that has never been walked credits nothing. Added a regression test."
+          "parent": "ledger",
+          "startMs": 12000,
+          "end": "loop",
+          "behavior": "tests",
+          "prompt": "Write tests for the totals migration.",
+          "reply": "Added eight tests for the totals migration, including a rollback."
         }
       ]
-    }
-  ],
-  "late": [
-    {
-      "key": "bofur",
-      "name": "Bofur",
-      "provider": "claude",
-      "behavior": "report",
-      "mine": "erebor",
-      "atMs": 75000,
-      "prompt": "Brew a fresh status report for the mountain's kitchens.",
-      "reply": "The kitchens are fine: 14 ovens on, 2 cooling down, none smoking. The report is in `reports/kitchens.md`."
     }
   ],
   "followUps": [

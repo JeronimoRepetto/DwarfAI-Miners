@@ -1,7 +1,9 @@
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
+  CATALOG_PROVIDER_CLIS,
   DEMO_PROFILE_PREFIX,
+  PROVIDER_CLIS,
   isolatedVariables,
   isolationProblems,
   mineFolderOf,
@@ -9,6 +11,8 @@ import {
   resolutionProblems,
   resolveCommand
 } from './isolation.mjs'
+import { CATALOG_PROVIDER_IDS } from '../../src/contracts/catalog/ids.mjs'
+import { launchParamsOf, PROVIDER_IDS } from './app.mjs'
 
 const win = path.win32
 const root = win.join(
@@ -181,5 +185,48 @@ describe('the hard guard: every provider CLI the app can find is a demo stub', (
       'codex does not resolve to the demo stub',
       `opencode resolves to ${win.join(node, 'opencode.cmd')}, not to a demo stub`
     ])
+  })
+})
+
+describe('the hard guard covers every worker, delegated or spawned', () => {
+  it('names a guarded CLI for every catalog provider a worker or a delegation could run on', () => {
+    for (const id of CATALOG_PROVIDER_IDS.filter((p) => p !== 'simulated')) {
+      expect(CATALOG_PROVIDER_CLIS[id], id).toBeDefined()
+      for (const name of CATALOG_PROVIDER_CLIS[id])
+        expect(PROVIDER_CLIS, `${id}: ${name}`).toContain(name)
+    }
+  })
+
+  it('resolves a worker the Host starts on the same guarded PATH: a real CLI after the stubs is still refused', () => {
+    const stubs = win.join(root, 'stubs')
+    const realOpencode = win.join('C:\\', 'Users', 'j', 'AppData', 'Roaming', 'npm')
+    const present = new Set([
+      win.join(stubs, 'claude', 'claude.cmd'),
+      win.join(stubs, 'codex', 'codex.cmd'),
+      win.join(realOpencode, 'opencode.cmd')
+    ])
+    const pathValue = [win.join(stubs, 'claude'), win.join(stubs, 'codex'), realOpencode].join(';')
+    expect(
+      resolutionProblems(pathValue, profile, {
+        ...options,
+        pathExt: '.EXE;.CMD',
+        exists: (file) => present.has(file)
+      })
+    ).toEqual([
+      `opencode resolves to ${win.join(realOpencode, 'opencode.cmd')}, not to a demo stub`
+    ])
+  })
+
+  it('launches every foreman without "Let Jev choose", so no delegation gate opens and no TypeSafe call is made', () => {
+    for (const provider of ['claude', 'codex']) {
+      expect(launchParamsOf('mine-1', provider, 'Dig.', 'request-1')).toEqual({
+        mineId: 'mine-1',
+        way: { kind: 'supplier', providerId: PROVIDER_IDS[provider] },
+        prompt: 'Dig.',
+        jevOn: false,
+        jevAutoAccept: false,
+        requestId: 'request-1'
+      })
+    }
   })
 })

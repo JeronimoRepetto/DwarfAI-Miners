@@ -23,6 +23,7 @@ import {
   dwarfsOf,
   launchDwarf,
   measuredMine,
+  openMineColumn,
   poll,
   recordNotifications,
   renameDwarf,
@@ -37,6 +38,7 @@ import {
   resolutionProblems
 } from './isolation.mjs'
 import {
+  assignWorkers,
   dwarfsOf as scenarioDwarfs,
   holdPlan,
   SCENARIOS,
@@ -44,7 +46,7 @@ import {
   stubScriptOf,
   timelineOf
 } from './scenario.mjs'
-import { captureShots } from './shots.mjs'
+import { captureShots, shooter, shotsFolder, watchPanelWalk } from './shots.mjs'
 import { installStub } from './stubs/install.mjs'
 import { tierFilePlan, writeTierFiles } from './tierFiles.mjs'
 
@@ -193,6 +195,32 @@ async function playTimeline({
   return ids
 }
 
+/**
+ * Names the workers as the Host observes them (`assignWorkers`): every half second, each new worker under a known
+ * parent gets its scripted name through the app's own rename, so it walks in already named, or nearly.
+ */
+async function nameWorkers({ scenario, window, ids, log, stopped }) {
+  const everyone = scenarioDwarfs(scenario)
+  while (!stopped()) {
+    let rows
+    try {
+      rows = await dwarfsOf(window)
+    } catch {
+      return // The window is gone: the app is ending.
+    }
+    for (const [key, id] of Object.entries(assignWorkers(scenario, ids, rows))) {
+      ids[key] = id
+      const worker = everyone.find((d) => d.key === key)
+      const mine = scenario.mines.find((m) => m.key === worker.mine)
+      if (worker.name !== null && !(await renameDwarf(window, id, worker.name))) {
+        log(`${worker.name}: the app kept its own name`)
+      }
+      log(`${worker.name ?? key} (${worker.rank}) arrived in ${mine.name}`)
+    }
+    await sleep(500)
+  }
+}
+
 /** The hold loop: keeps the scene alive until `stopped()`. */
 async function hold({ scenario, speed, window, ids, busy, log, stopped }) {
   const idleSince = new Map()
@@ -304,12 +332,29 @@ export async function runDemo(
       log(`${mine.name}: ${row.tier ?? '?'} (planned ${mine.tier})`)
     }
 
+    // The first mine's column open before anyone arrives: the Panel walks in only a dwarf that turns up after its
+    // column opened (MineColumn.vue, sceneMotion.ts createWalkBoard), so its crew is seen walking in.
+    await openMineColumn(window, mineIds[scenario.mines[0].key]).catch((error) =>
+      log(`the first mine's column did not open: ${error.message}`)
+    )
     log('playing the timeline')
     // The hold loop runs beside the timeline, so the first crews keep working while the later ones arrive.
     const ids = {}
     let shotsDone = false
     // When each dwarf's last scripted turn can have ended, by scenario key.
     const busy = new Map()
+    const naming = nameWorkers({
+      scenario,
+      window,
+      ids,
+      log,
+      stopped: () => stopped() || shotsDone
+    })
+    const shots = options.shots ? shooter(shotsFolder(options.out), log, stopped) : null
+    const panelWalk =
+      shots === null
+        ? Promise.resolve()
+        : watchPanelWalk({ window, shoot: shots.shoot, log, stopped })
     const holding = hold({
       busy,
       scenario,
@@ -332,23 +377,15 @@ export async function runDemo(
       stopped
     })
     if (options.shots) {
-      const out = await captureShots({
-        app,
-        window,
-        scenario,
-        ids,
-        mineIds,
-        out: options.out,
-        speed: options.speed,
-        log,
-        stopped
-      })
-      log(`shots written to ${out}`)
+      await panelWalk
+      await captureShots({ app, window, scenario, ids, mineIds, ...shots, log, stopped })
+      log(`shots written to ${path.dirname(shots.taken[0] ?? '.')}`)
       shotsDone = true
     } else if (!stopped()) {
       log('holding the scene: Ctrl+C, or Stop everything and quit in the app, ends the demo')
     }
     await holding
+    await naming
   } catch (error) {
     if (!stopped()) {
       exitCode = 1

@@ -17,11 +17,18 @@
  */
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { createInterface } from 'node:readline'
 import { playStub } from '../../../fixtures/bin/_kit/stubCli.mjs'
 import { behaviorFor } from './behavior.mjs'
+import {
+  agentIdOf,
+  claudeSessionFile,
+  claudeSidecar,
+  claudeSubagentFiles,
+  taskNotification
+} from './subagents.mjs'
 
 /** The kit script whose `--version` and `--help` answers this stub gives. */
 const KIT_SCRIPT = 'claude-stream-json-simple-turn'
@@ -207,6 +214,104 @@ function transcriptWriter(sessionId) {
   }
 }
 
+/**
+ * The foreman's subagents, as Claude Code runs them in the background (`Agent` tool, docs/provider-formats.md §1.4):
+ * each, `startMs` after the foreman's first turn began, gets its sidecar and its own transcript under the session
+ * (`stubs/subagents.mjs`), then reports one tool step every `stepMs` with its usage, and its reply. `complete` ends it
+ * with the task notification in the session's transcript (the Host closes it and it walks out), `stay` falls silent
+ * (it falls asleep), `loop` keeps working. Written only under `CLAUDE_CONFIG_DIR`; nothing else is started.
+ */
+function startSubagents(sessionId, spawns) {
+  const home = process.env.CLAUDE_CONFIG_DIR
+  if (home === undefined || home === '') return
+  const cwd = process.cwd()
+  const write = (file, record) => {
+    try {
+      mkdirSync(path.dirname(file), { recursive: true })
+      appendFileSync(file, `${JSON.stringify(record)}\n`)
+    } catch {
+      // A subagent that cannot be written is only not seen.
+    }
+  }
+  const idOf = (key) => agentIdOf(`${sessionId}:${key}`)
+  for (const spawn of spawns) {
+    setTimeout(() => {
+      void runSubagent(spawn)
+    }, spawn.startMs)
+  }
+  async function runSubagent(spawn) {
+    const agentId = idOf(spawn.key)
+    const files = claudeSubagentFiles(home, cwd, sessionId, agentId)
+    const parentAgentId = spawn.parent === null ? null : idOf(spawn.parent)
+    try {
+      mkdirSync(path.dirname(files.sidecar), { recursive: true })
+      writeFileSync(
+        files.sidecar,
+        JSON.stringify(
+          claudeSidecar(spawn.description, `toolu_demo_spawn_${spawn.key}`, parentAgentId)
+        )
+      )
+    } catch {
+      return
+    }
+    let parentUuid = null
+    let messages = 0
+    const line = (type, message) => {
+      const record = {
+        parentUuid,
+        isSidechain: true,
+        userType: 'external',
+        cwd,
+        sessionId,
+        version: '2.1.301',
+        gitBranch: 'main',
+        agentId,
+        type,
+        message,
+        uuid: randomUUID(),
+        timestamp: new Date().toISOString()
+      }
+      parentUuid = record.uuid
+      write(files.transcript, record)
+    }
+    const said = (content, stopReason) => {
+      messages += 1
+      line('assistant', {
+        id: `msg_demo_${agentId}_${messages}`,
+        type: 'message',
+        role: 'assistant',
+        model: 'claude-demo',
+        content,
+        stop_reason: stopReason,
+        usage: { input_tokens: spawn.tokens, output_tokens: Math.round(spawn.tokens / 8) }
+      })
+    }
+    line('user', { role: 'user', content: spawn.prompt })
+    for (let pass = 0; ; pass++) {
+      for (const [index, step] of spawn.steps.entries()) {
+        await pause(spawn.stepMs)
+        const id = `toolu_demo_${agentId}_${pass}_${index}`
+        said([{ type: 'tool_use', id, name: step.tool, input: toolInput(step) }], 'tool_use')
+        line('user', {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: id, content: toolResult(step), is_error: false }
+          ]
+        })
+      }
+      await pause(Math.min(spawn.stepMs, 1_500))
+      said([{ type: 'text', text: spawn.reply }], 'end_turn')
+      if (spawn.end !== 'loop') break
+    }
+    if (spawn.end === 'complete') {
+      write(
+        claudeSessionFile(home, cwd, sessionId),
+        taskNotification(sessionId, cwd, agentId, spawn.reply, Date.now())
+      )
+    }
+  }
+}
+
 /** One stream-json session, until stdin ends. */
 function runSession(worldDir, argv) {
   const resumed = optionValue(argv, '--resume')
@@ -219,6 +324,7 @@ function runSession(worldDir, argv) {
   }
   let messages = 0
   let turns = 0
+  let spawned = false
   let relay = null
 
   const assistant = (content, stopReason, tokens) => {
@@ -267,6 +373,10 @@ function runSession(worldDir, argv) {
     // The person's line under the uuid the driver sent, as Claude Code keeps it: the Host matches the two.
     transcribe({ type: 'user', uuid: record.uuid, message: record.message })
     const behavior = behaviorFor(script, text)
+    if (!spawned && (behavior.spawns ?? []).length > 0) {
+      spawned = true
+      startSubagents(sessionId, behavior.spawns)
+    }
     // Each assistant message is one usage unit the Host credits on its own (ADR-006 item 4).
     const share = Math.max(1, behavior.tokens)
     for (const [index, step] of behavior.steps.entries()) {

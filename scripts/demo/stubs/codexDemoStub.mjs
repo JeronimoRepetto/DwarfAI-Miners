@@ -20,6 +20,7 @@ import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import { behaviorFor } from './behavior.mjs'
 import { readScript } from './claudeDemoStub.mjs'
+import { codexRolloutFile, codexSubthreadMeta, threadIdOf } from './subagents.mjs'
 
 const VERSION = 'codex-cli 0.153.4'
 const HELP_FILE = path.resolve(
@@ -91,6 +92,92 @@ function rolloutWriter(threadId, cwd) {
   return write
 }
 
+/**
+ * The foreman's sub-threads, as Codex spawns them: each, `startMs` after the foreman's first turn began, is a rollout
+ * of its own under `CODEX_HOME` whose head names the thread that spawned it (`stubs/subagents.mjs`). One turn: the
+ * task, one command step every `stepMs` with the thread's usage, then its reply. `loop` keeps the turn open and
+ * working; `complete` and `stay` close the turn (the Host closes a quiet thread after 300 s). Nothing is started.
+ */
+function startSubthreads(parentThreadId, cwd, spawns) {
+  const home = process.env.CODEX_HOME
+  if (home === undefined || home === '' || parentThreadId === null) return
+  const idOf = (key) => threadIdOf(`${parentThreadId}:${key}`)
+  for (const spawn of spawns) {
+    setTimeout(() => {
+      void runSubthread(spawn)
+    }, spawn.startMs)
+  }
+  async function runSubthread(spawn) {
+    const threadId = idOf(spawn.key)
+    const parent = spawn.parent === null ? parentThreadId : idOf(spawn.parent)
+    const file = codexRolloutFile(home, threadId, Date.now())
+    const write = (type, payload) => {
+      try {
+        mkdirSync(path.dirname(file), { recursive: true })
+        appendFileSync(
+          file,
+          `${JSON.stringify({ timestamp: new Date().toISOString(), type, payload })}\n`
+        )
+      } catch {
+        // A sub-thread that cannot be written is only not seen.
+      }
+    }
+    try {
+      mkdirSync(path.dirname(file), { recursive: true })
+      appendFileSync(
+        file,
+        `${JSON.stringify(codexSubthreadMeta(threadId, parent, cwd, Date.now()))}\n`
+      )
+    } catch {
+      return
+    }
+    const turnId = randomUUID()
+    let input = 0
+    let output = 0
+    write('event_msg', { type: 'task_started', turn_id: turnId })
+    write('response_item', {
+      type: 'message',
+      id: randomUUID(),
+      role: 'user',
+      content: [{ type: 'input_text', text: spawn.prompt }]
+    })
+    const spend = () => {
+      input += spawn.tokens
+      output += Math.round(spawn.tokens / 8)
+      write('event_msg', {
+        type: 'token_count',
+        info: {
+          total_token_usage: {
+            input_tokens: input,
+            cached_input_tokens: 0,
+            output_tokens: output,
+            reasoning_output_tokens: 0,
+            total_tokens: input + output
+          },
+          model_context_window: 258400
+        },
+        rate_limits: null
+      })
+    }
+    for (;;) {
+      for (let step = 0; step < spawn.steps.length; step++) {
+        await pause(spawn.stepMs)
+        spend()
+      }
+      await pause(Math.min(spawn.stepMs, 1_500))
+      write('response_item', {
+        type: 'message',
+        id: randomUUID(),
+        role: 'assistant',
+        content: [{ type: 'output_text', text: spawn.reply }],
+        phase: spawn.end === 'loop' ? 'commentary' : 'final_answer'
+      })
+      if (spawn.end !== 'loop') break
+    }
+    write('event_msg', { type: 'task_complete', turn_id: turnId, last_agent_message: spawn.reply })
+  }
+}
+
 function runServer(worldDir) {
   const script = readScript(worldDir)
   const write = (message) => process.stdout.write(`${JSON.stringify(message)}\n`)
@@ -100,6 +187,7 @@ function runServer(worldDir) {
   let threadId = null
   let open = null
   let rollout = () => {}
+  let spawned = false
   const total = {
     totalTokens: 0,
     inputTokens: 0,
@@ -187,6 +275,10 @@ function runServer(worldDir) {
     open = { id: turnId, interrupted: false }
     const mine = open
     const behavior = behaviorFor(script, text)
+    if (!spawned && (behavior.spawns ?? []).length > 0) {
+      spawned = true
+      startSubthreads(threadId, cwd, behavior.spawns)
+    }
     // Each usage update is one model call the Host credits on its own.
     const share = Math.max(1, behavior.tokens)
     notify('thread/status/changed', { threadId, status: { type: 'active', activeFlags: [] } })
