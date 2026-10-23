@@ -43,6 +43,7 @@ import {
   messagePanelMenu,
   messagePanelMenuAction,
   messagePanelOutcome,
+  type OutcomeAsk,
   stopDwarfTitle,
   type BubbleMark
 } from '../../lib/message/panelChrome'
@@ -613,6 +614,18 @@ const grouped = computed(() => groupActivity(rows.value, { ended: runsHaveEnded(
 const entries = computed(() => mergeEchoes(grouped.value, echoRows.value))
 
 /*
+ * What the status line says the dwarf waits on (VQA-03): the kind of its front Host ask, never the legacy
+ * `pendingQuestion` a Host ask does not set. A question counts its steps, as the card's "1 / 2" does.
+ */
+function hostAskOutcome(front: ReturnType<typeof frontAsk>): OutcomeAsk | undefined {
+  if (front === undefined) return undefined
+  const { ask } = front
+  return ask.kind === 'permission'
+    ? { kind: 'permission' }
+    : { kind: 'question', questions: 'steps' in ask.payload ? ask.payload.steps.length : 0 }
+}
+
+/*
  * The turn outcome line under the header, with its status square: the open run's steps while the
  * dwarf works, the whole turn's once it has finished (MESSAGE-QUESTIONS 11), read off the
  * transcript's own entries, since a message still on its way started no turn yet.
@@ -621,7 +634,8 @@ const outcome = computed(() =>
   messagePanelOutcome(
     props.dwarf,
     outcomeSteps(grouped.value, sceneDwarfStatus(props.dwarf) === 'working'),
-    now.value
+    now.value,
+    hostAskOutcome(frontAsk(props.dwarf.id))
   )
 )
 
