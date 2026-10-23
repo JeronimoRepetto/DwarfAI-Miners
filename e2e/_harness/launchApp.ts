@@ -142,9 +142,13 @@ const APP_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..',
 /** Variables of the test runner's environment that would change how Electron itself starts. */
 const DROPPED_ENV = new Set(['ELECTRON_RUN_AS_NODE', 'ELECTRON_NO_ATTACH_CONSOLE'])
 
-/** A fresh isolated profile: the one `launchApp` makes for each launch, or one a case owns (`LaunchOptions.profile`). */
-export function createIsolatedProfile(): IsolatedProfile {
-  const root = mkdtempSync(path.join(tmpdir(), 'dwarfai-e2e-'))
+/**
+ * A fresh isolated profile: the one `launchApp` makes for each launch, or one a case owns (`LaunchOptions.profile`).
+ * `prefix` names its temp folder; the demo (`scripts/demo`) passes its own, so the E2E run's sweep of stale
+ * `dwarfai-e2e-*` folders (`tempSweep.ts`) never removes a running demo's profile.
+ */
+export function createIsolatedProfile(prefix = 'dwarfai-e2e-'): IsolatedProfile {
+  const root = mkdtempSync(path.join(tmpdir(), prefix))
   const profile = {
     root,
     userDataDir: path.join(root, 'userData'),
