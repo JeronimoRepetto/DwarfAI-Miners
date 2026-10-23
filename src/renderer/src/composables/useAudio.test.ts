@@ -402,4 +402,56 @@ describe('useAudio', () => {
     stop()
     surface.dispose()
   })
+
+  /*
+   * APPENDED for ISSUE-307 (US-VALLE-016; 07 S35.08): the Valle window has its own engine, the window's own visibility
+   * as its gate (the Panel's A-P1 push says nothing about Valle), no Panel cue, no music, and a mine's mute set from
+   * outside (the zone menu's `mutedMineIds`, read for the current mine).
+   */
+  it('[S35.08, NFR-SND-07] a window that reads its own visibility plays nothing while hidden and its current mine again when shown', async () => {
+    let visible = false
+    let push: ((shown: boolean) => void) | undefined
+    const surface = useAudio({
+      player,
+      random: () => 0.5,
+      music: false,
+      panelCue: false,
+      visibility: {
+        read: () => Promise.resolve(visible),
+        listen: (listener) => {
+          push = listener
+          return () => {
+            push = undefined
+          }
+        }
+      }
+    })
+    await surface.sync()
+    const stop = surface.listen()
+    surface.setScene('mine-a')
+    // Hidden: nothing, music included, whatever the Panel's own push says.
+    expect(player.live()).toHaveLength(0)
+    expect(surface.windowShown.value).toBe(false)
+    pushVisibility?.(true)
+    expect(player.live()).toHaveLength(0)
+
+    visible = true
+    push!(true)
+    // The room tone alone: no music, no Panel cue.
+    expect(player.live()).toHaveLength(1)
+    push!(false)
+    expect(player.live()).toHaveLength(0)
+    // No Panel cue on either side of the hide or the show.
+    push!(true)
+    expect(player.live()).toHaveLength(1)
+
+    surface.setAmbienceMuted(true)
+    expect(player.live()).toHaveLength(0)
+    surface.setAmbienceMuted(false)
+    expect(player.live()).toHaveLength(1)
+
+    stop()
+    expect(push).toBeUndefined()
+    surface.dispose()
+  })
 })
