@@ -39,7 +39,7 @@ async function bundledPackages(asarFile, archive) {
     manifests.push({ file, read: () => readFile(path.join(unpacked, ...file.split('/')), 'utf8') })
   }
   const packages = []
-  for (const { file, read } of manifests) {
+  for (const { read } of manifests) {
     try {
       const { name, version } = JSON.parse(await read())
       if (typeof name === 'string' && typeof version === 'string') packages.push({ name, version })
