@@ -269,6 +269,29 @@ describe('the chat hand-off of a run (ISSUE-293)', () => {
     expect(left).toEqual(['veta->panel'])
   })
 
+  it("[US-VALLE-010.AC01, S39.05] a window that plays a run's target half is told it entered at t0, as its content is unveiled; a source half tells nothing of the kind", async () => {
+    const s = setup()
+    const entered: string[] = []
+    s.transition.onEntered((t) => entered.push(`${t.from}->${t.to}`))
+    s.push({ role: 'target', from: 'panel', to: 'valle' })
+    await flush()
+    // Before t0 the window is still veiled: not entered yet.
+    expect(entered).toEqual([])
+    s.clock.advance(16)
+    await flush()
+    expect(s.events).toContain('veil false')
+    expect(entered).toEqual(['panel->valle'])
+    s.finish()
+    await flush()
+    // A source half, with or without a chat, never says it entered.
+    s.push({ role: 'source', transitionId: 't-2', from: 'valle', to: 'panel' })
+    s.clock.advance(16)
+    await flush()
+    s.finish()
+    await flush()
+    expect(entered).toEqual(['panel->valle'])
+  })
+
   it('[US-MSG-010.AC01, S27.01] a target opens the carried chat before it restores it, and never restores a draft into another chat', async () => {
     const s = setup({
       session: { drafts: { [DWARF]: 'carried text' }, chatViews: { [DWARF]: VIEW } }

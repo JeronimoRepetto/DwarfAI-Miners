@@ -54,7 +54,7 @@
  *   dive, swap or list pick (S35.03), else the fallback (S35.06), written through A-N18 and marked by the brackets.
  *   The window's one sound engine (`useAudio`, owner decision 2026-10-22 lifted by US-VALLE-016) plays only that
  *   mine's room tone, bed and crew, silenced by its own mute; the attention cues (`useAttentionCues`) and a dwarf's
- *   voice are never gated on it. It follows the page's own visibility (a hidden window plays nothing, S35.08), plays
+ *   voice are never gated on it. It follows Valle's shown state (a hidden window plays nothing, S35.08; VQA-09), plays
  *   the music the nav's Music slot toggles (as the Panel's, EPIC-20 visual parity) and no Panel cue, and adopts the stored Sound settings again on every show and when Valle's Settings page
  *   closes (the page's rows write the preference alone).
  * - The history drawer (`useValleHistoryDrawer`, 07 machine 36; ISSUE-308): "Mine history" in the Work front's mine
@@ -260,29 +260,42 @@ const view = preset.view
 const gated = (): boolean =>
   view.value.motion?.kind === 'diving' || view.value.motion?.kind === 'climbing'
 
-/** Whether Valle is the shown mode window: a hidden window's page is hidden (ADR-025 item 7). */
-const shown = shallowRef(document.visibilityState === 'visible')
-const visibilityChanged = (): void => {
-  shown.value = document.visibilityState === 'visible'
+/*
+ * Whether Valle is the shown mode window (ADR-025 item 7): its page visible, and not left since a run last entered it.
+ * A hidden frameless window does not reliably report itself hidden (VQA-09), so the runs say it as they say it to Veta:
+ * a run Valle leaves hides it once its half ended, its content veiled (`onLeft`), and a run entering it shows it again
+ * at `t0` (`onEntered`). The page's own `visibilitychange` still counts where the OS does report it (a minimized window).
+ */
+const pageVisible = (): boolean => document.visibilityState === 'visible'
+let left = false
+const shown = shallowRef(pageVisible())
+const showingChanged = (): void => {
+  const now = pageVisible() && !left
+  if (now === shown.value) return
+  shown.value = now
   // A reveal heard while hidden plays once the window is shown again (S10.11).
-  if (shown.value) valleReveal.shownChanged()
+  if (now) valleReveal.shownChanged()
   // A hidden window freezes timelines: the run resolves at once (S28.22); the history drawer closes at once (S36.04).
-  if (!shown.value) historyDrawer.send({ kind: 'hidden' })
-  if (!shown.value) preset.send({ kind: 'hidden' })
+  if (!now) historyDrawer.send({ kind: 'hidden' })
+  if (!now) preset.send({ kind: 'hidden' })
   // S35.08: the current mine is kept for the next show, where the stored Sound settings are adopted again.
-  if (!shown.value) currentMine.send({ kind: 'hidden' })
+  if (!now) currentMine.send({ kind: 'hidden' })
   else void audio.sync()
 }
-document.addEventListener('visibilitychange', visibilityChanged)
+document.addEventListener('visibilitychange', showingChanged)
+const stopLeft = modeTransitionPart().onLeft(() => {
+  left = true
+  showingChanged()
+})
+const stopEntered = modeTransitionPart().onEntered(() => {
+  left = false
+  showingChanged()
+})
 
-/** The Valle page's own visibility, the sound engine's gate (S35.08): the Panel's A-P1 push says nothing of Valle. */
+/** Valle's own shown state, the sound engine's gate (S35.08): the Panel's A-P1 push says nothing of Valle. */
 const pageVisibility: AudioVisibility = {
-  read: () => Promise.resolve(document.visibilityState === 'visible'),
-  listen: (listener) => {
-    const heard = (): void => listener(document.visibilityState === 'visible')
-    document.addEventListener('visibilitychange', heard)
-    return () => document.removeEventListener('visibilitychange', heard)
-  }
+  read: () => Promise.resolve(shown.value),
+  listen: (listener) => watch(shown, (now) => listener(now))
 }
 /**
  * The window's one sound engine (US-VALLE-016): the music the nav's Music slot plays, as the Panel's (`DS` valle.js
@@ -880,7 +893,9 @@ onUnmounted(() => {
   currentMine.stop()
   historyDrawer.stop()
   audio.dispose()
-  document.removeEventListener('visibilitychange', visibilityChanged)
+  document.removeEventListener('visibilitychange', showingChanged)
+  stopLeft()
+  stopEntered()
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('resize', resized)
   removeGate?.()
