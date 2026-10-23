@@ -13,6 +13,7 @@ import { sceneDwarfStatus } from '../scene/sceneDwarf'
 import { trimGraphemes } from '../text/graphemes'
 import { dwarfWorkplaceLabel } from '../worktree'
 import { finishedTurnWord } from './turnOutcome'
+import type { BoardDwarf } from '../scene/boardDwarf'
 import type { Dwarf } from '../../types'
 
 /**
@@ -81,6 +82,24 @@ function outcomeTip(lastTurn: Dwarf['lastTurn']): string | undefined {
   return words === '' ? undefined : trimGraphemes(words, OUTCOME_TIP_MAX_CHARS)
 }
 
+/** What the dwarf's open ask is, as the Host's ask data says it: a question of N steps, or a permission. */
+export type OutcomeAsk = { kind: 'question'; questions: number } | { kind: 'permission' }
+
+/*
+ * What the line says the dwarf waits on. The Host's ask data decides (a Host ask never sets the legacy
+ * `pendingQuestion`, VQA-03); the legacy fields answer only for a dwarf the Host holds no ask of, and
+ * a dwarf asking with neither says nothing of what, rather than guess "permission".
+ */
+function askWords(
+  dwarf: Pick<BoardDwarf, 'waitingReason' | 'pendingQuestion'>,
+  ask: OutcomeAsk | undefined
+): string | undefined {
+  if (ask?.kind === 'permission') return 'permission'
+  const count = ask?.kind === 'question' ? ask.questions : dwarf.pendingQuestion?.questions.length
+  if (count !== undefined) return count === 1 ? '1 question' : count + ' questions'
+  return dwarf.waitingReason === 'approval' ? 'permission' : undefined
+}
+
 /*
  * The turn outcome line (screens/message.md, W4·2; decision log, Turn outcome line): built only
  * from what the app observes, in up to three parts joined by " · ", and a part the app cannot stand
@@ -99,20 +118,17 @@ function outcomeTip(lastTurn: Dwarf['lastTurn']): string | undefined {
  * `now` is the caller's clock, so the idle time is as fresh as the caller keeps it.
  */
 export function messagePanelOutcome(
-  dwarf: Pick<Dwarf, 'status' | 'waitingReason' | 'pendingQuestion' | 'lastTurn'>,
+  dwarf: Pick<
+    BoardDwarf,
+    'status' | 'waitingReason' | 'pendingQuestion' | 'lastTurn' | 'hostStatus'
+  >,
   steps: number | undefined,
-  now: number
+  now: number,
+  ask?: OutcomeAsk
 ): MessagePanelOutcome {
   const scene = sceneDwarfStatus(dwarf)
   if (scene === 'asking') {
-    const count = dwarf.pendingQuestion?.questions.length ?? 0
-    const what =
-      dwarf.pendingQuestion === undefined
-        ? 'permission'
-        : count === 1
-          ? '1 question'
-          : count + ' questions'
-    return { status: 'asking', text: 'Waiting on you · ' + what }
+    return { status: 'asking', text: joinParts(['Waiting on you', askWords(dwarf, ask)]) }
   }
   const counted = steps === undefined ? undefined : steps + (steps === 1 ? ' step' : ' steps')
   if (scene === 'working') {

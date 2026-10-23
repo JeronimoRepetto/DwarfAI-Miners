@@ -205,6 +205,15 @@ test.describe('Valle on the mode lever and in the reveal (ISSUE-311)', () => {
     await expect(panelChat).toBeVisible({ timeout: 15_000 })
     await panelChat.locator('.dm-composer textarea').fill('half a thought')
 
+    // AMENDED for owner ruling 2026-10-23 (VQA-07) (was: nothing, a first visit's mosaic never took a later mine): the
+    // person's own Control room holds alpha alone, so the second mine below stays out of it until the reveal adds its
+    // column. Without an arranged order every new mine with a crew joins by itself (the ruling), and the reveal would
+    // have no column to add.
+    const arranged = (await window.evaluate(
+      `window.api.setUiPreference(${JSON.stringify({ key: 'valleMosaicOrder', value: [alpha] })})`
+    )) as unknown
+    expect(arranged, 'A-N21 takes the mosaic order').toBeTruthy()
+
     // Valle's on-screen reports, from its first.
     await watchValleReports(app)
     // "▲ Valle": the app moves into Valle, the chat in focus pinned and focused there with its draft (S29.23).

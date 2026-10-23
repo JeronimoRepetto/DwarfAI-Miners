@@ -4088,6 +4088,28 @@ describe('DwarfMessagePanel Host asks (ISSUE-138)', () => {
     expect(wrapper.find('.dm-composer').exists()).toBe(false)
   })
 
+  it('[VQA-03] the status line tells a Host question from a Host permission by the ask the Host holds', async () => {
+    await followHostAsks([hostAsk()])
+    const asking = { id: DWARF, textDelivery: 'terminal', status: 'waiting', hostStatus: 'asking' }
+    const question = panel({ dwarf: defaultDwarf(asking as never) })
+    await flushPromises()
+    expect(question.find('.dm-msg__outcome').text()).toContain('Waiting on you · 2 questions')
+    question.unmount()
+
+    useDwarfQuestion().stopAsks()
+    await followHostAsks([
+      hostAsk({
+        kind: 'permission',
+        channel: 'hook-decision',
+        payload: { toolName: 'Bash', requestText: 'npm test' },
+        currentStep: 0
+      })
+    ])
+    const permission = panel({ dwarf: defaultDwarf(asking as never) })
+    await flushPromises()
+    expect(permission.find('.dm-msg__outcome').text()).toContain('Waiting on you · permission')
+  })
+
   it('[US-ASK-006.AC06] an ask.closed frame lets the card give way to the composer with no notice', async () => {
     await followHostAsks([hostAsk()])
     const wrapper = panel({ dwarf: defaultDwarf({ id: DWARF, textDelivery: 'terminal' }) })

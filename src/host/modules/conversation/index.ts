@@ -372,13 +372,14 @@ export function createConversation(deps: ConversationDeps): Conversation {
   // The launch prompt (GitHub #1430) is the dwarf's first message, and the driver echoes it with no
   // `echoOf` (a launch has no receipt). The driver's events held until the session was bound reach
   // ingest before `DwarfLaunched` does (suppliers `bind`), so the echo can come first: then the
-  // dwarf, brand new, already holds that live-stream row and the prompt keeps only its key.
-  // Otherwise the prompt is written and waits for its echo like a sent message.
+  // dwarf, brand new, already holds that echo's row and the prompt keeps only its key. The echo may
+  // be the transcript's (VQA-05: `claude -p` writes the prompt's line as soon as it reads stdin).
+  // Otherwise the prompt is written and waits for its echo, live or transcript, like a sent message.
   const echoes = new SentEchoes()
   const echoedFirst = (dwarfId: DwarfId, text: string): boolean =>
     log
       .page(dwarfId, { limit: MESSAGES_PER_DWARF })
-      .some((m) => m.role === 'person' && m.origin === 'live-stream' && m.text.trim() === text)
+      .some((m) => m.role === 'person' && m.origin !== 'dwarfai' && m.text.trim() === text)
   const stored = (
     dwarfId: DwarfId,
     entries: readonly ConversationEntry[],

@@ -4,10 +4,12 @@
  * guard reads, and carries out the effects (the A-N21 `valleMosaicOrder` write, the toast, A-30's folder flow, the
  * scroll).
  *
- * - The first order (S32.01): every mine with at least one dwarf, in the Host's data order, written at once. A stored
- *   order is restored as stored, an entry whose mine no longer exists dropped and the store never rewritten (S32.02).
- *   After the first visit a mine whose first dwarf arrives does not join by itself (OQ-77 A; 07 I-31): nothing here
- *   recomputes the order from the crews again.
+ * - The first order (S32.01): every mine with at least one dwarf, in the Host's data order. Owner ruling 2026-10-23
+ *   (VQA-07): until the person arranges the order themselves it is computed live, so every new mine with a crew joins,
+ *   and it is never written; a stored `null` or `[]` reads as not arranged (`[]` is what a first visit with no mine
+ *   wrote). The person's first close, pick, reveal, declare or Reset preset writes the order shown and arranges it.
+ *   An arranged order is restored as stored, an entry whose mine no longer exists dropped and the store never rewritten
+ *   (S32.02); then a mine whose first dwarf arrives does not join by itself (OQ-77 A; 07 I-31).
  * - "Close this column" (S32.03) takes the mine out of the order with its toast, and nothing else: the mine, its dwarfs
  *   and their sessions are untouched, nothing goes to the Host (TC-304-02).
  * - The dashed "Add a mine here" slot (`slotMenu`): every mine not in the mosaic with its tier, or disabled and "not
@@ -27,6 +29,11 @@ export type MosaicState = 'idle' | 'slot-menu' | 'choosing-folder' | 'declaring'
 /** The mosaic: its state and its columns' mines, in order. */
 export interface Mosaic {
   readonly state: MosaicState
+  /**
+   * `order` as the person arranged it: their close, pick, reveal, declare or Reset preset wrote it. `false` before that:
+   * the order is computed live from the mines (`mosaicOrder`) and never written (owner ruling 2026-10-23, VQA-07).
+   */
+  readonly arranged: boolean
   readonly order: readonly MineId[]
 }
 
@@ -134,12 +141,28 @@ function taken(
   return { ok: true, id, mosaic, effects }
 }
 
-const idle = (order: readonly MineId[]): Mosaic => ({ state: 'idle', order })
+/** At rest, keeping whether the person arranged it. */
+const idle = (mosaic: Mosaic, order: readonly MineId[] = mosaic.order): Mosaic => ({
+  state: 'idle',
+  arranged: mosaic.arranged,
+  order
+})
+
+/** The person arranged it: `order`, at rest, written at once (VQA-07: from then on theirs). */
+function written(
+  id: string,
+  order: readonly MineId[],
+  more: readonly MosaicEffect[] = []
+): MosaicStep {
+  return taken(id, { state: 'idle', arranged: true, order }, [
+    { kind: 'write-order', order },
+    ...more
+  ])
+}
 
 /** The order with `mineId` at its end, written at once. */
 function appended(id: string, mosaic: Mosaic, mineId: MineId): MosaicStep {
-  const order = [...mosaic.order, mineId]
-  return taken(id, idle(order), [{ kind: 'write-order', order }])
+  return written(id, [...mosaic.order, mineId])
 }
 
 /** S32.01: every mine with at least one dwarf, in the Host's data order. */
@@ -148,23 +171,39 @@ export function firstMosaicOrder(facts: MosaicFacts): MineId[] {
 }
 
 /**
- * Valle opens the mosaic: S32.01 with no stored order (`null`, never written), computed and written; S32.02 with one,
- * restored as stored, an entry whose mine no longer exists dropped without rewriting the store. `[]` is an emptied
- * mosaic, the person's own, and stays empty.
+ * The columns shown: the person's order once arranged, else every mine with a crew now, live (owner ruling 2026-10-23,
+ * VQA-07). Every step reads this, so a step on a mosaic never arranged starts from what the person sees.
+ */
+export function mosaicOrder(mosaic: Mosaic, facts: MosaicFacts): readonly MineId[] {
+  return mosaic.arranged ? mosaic.order : firstMosaicOrder(facts)
+}
+
+/** Whether a stored order is the person's (VQA-07): `null` was never written, `[]` a first visit with no mine wrote. */
+const arrangedOf = (stored: readonly MineId[] | null): stored is readonly MineId[] =>
+  stored !== null && stored.length > 0
+
+/**
+ * Valle opens the mosaic: S32.01 with an order the person never arranged (`null`, or `[]`, VQA-07), computed live and
+ * not written; S32.02 with theirs, restored as stored, an entry whose mine no longer exists dropped without rewriting
+ * the store.
  */
 export function openMosaic(stored: readonly MineId[] | null, facts: MosaicFacts): MosaicStep {
-  if (stored === null) {
-    const order = firstMosaicOrder(facts)
-    return taken('S32.01', idle(order), [{ kind: 'write-order', order }])
+  if (!arrangedOf(stored)) {
+    return taken('S32.01', { state: 'idle', arranged: false, order: firstMosaicOrder(facts) })
   }
   const exists = (mineId: MineId): boolean => facts.mines.some((mine) => mine.mineId === mineId)
-  return taken('S32.02', idle(restoreMosaicOrder([...stored], exists) ?? []))
+  return taken('S32.02', {
+    state: 'idle',
+    arranged: true,
+    order: restoreMosaicOrder([...stored], exists) ?? []
+  })
 }
 
 /** The add slot's menu: every mine not in the mosaic, in data order, a rule, then "A new project…" (S32.04). */
 export function slotMenu(mosaic: Mosaic, facts: MosaicFacts): SlotEntry[] {
+  const shown = mosaicOrder(mosaic, facts)
   const mines: SlotEntry[] = facts.mines
-    .filter((mine) => !mosaic.order.includes(mine.mineId))
+    .filter((mine) => !shown.includes(mine.mineId))
     .map((mine) => ({
       kind: 'mine',
       mineId: mine.mineId,
@@ -181,17 +220,16 @@ function stepIdle(mosaic: Mosaic, input: MosaicInput, facts: MosaicFacts): Mosai
       if (!mosaic.order.includes(input.mineId)) return REFUSED
       const order = mosaic.order.filter((mineId) => mineId !== input.mineId)
       const name = facts.mines.find((mine) => mine.mineId === input.mineId)?.name ?? ''
-      return taken('S32.03', idle(order), [
-        { kind: 'write-order', order },
-        { kind: 'toast', text: closedToast(name) }
-      ])
+      return written('S32.03', order, [{ kind: 'toast', text: closedToast(name) }])
     }
     case 'slot':
       return taken('S32.04', { ...mosaic, state: 'slot-menu' })
     case 'mine-removed': {
       if (!mosaic.order.includes(input.mineId)) return REFUSED
       const order = mosaic.order.filter((mineId) => mineId !== input.mineId)
-      return taken('S32.13', idle(order), [{ kind: 'write-order', order }])
+      // Never arranged: the live order loses it by itself, nothing written (VQA-07).
+      if (!mosaic.arranged) return taken('S32.13', idle(mosaic, order))
+      return written('S32.13', order)
     }
     case 'reveal': {
       if (facts.preset !== 'control' || mosaic.order.includes(input.mineId)) return REFUSED
@@ -203,8 +241,7 @@ function stepIdle(mosaic: Mosaic, input: MosaicInput, facts: MosaicFacts): Mosai
     case 'reset-preset': {
       // S32.15: the Control room's own; the order is every mine with a crew again, not the person's arrangement.
       if (facts.preset !== 'control') return REFUSED
-      const order = firstMosaicOrder(facts)
-      return taken('S32.15', idle(order), [{ kind: 'write-order', order }])
+      return written('S32.15', firstMosaicOrder(facts))
     }
     default:
       return REFUSED
@@ -223,7 +260,7 @@ function stepSlotMenu(mosaic: Mosaic, input: MosaicInput, facts: MosaicFacts): M
       return appended('S32.05', mosaic, input.mineId)
     }
     case 'dismiss':
-      return taken('S32.07', idle(mosaic.order))
+      return taken('S32.07', idle(mosaic))
     case 'new-project':
       return taken('S32.08', { ...mosaic, state: 'choosing-folder' }, [{ kind: 'pick-folder' }])
     default:
@@ -231,23 +268,28 @@ function stepSlotMenu(mosaic: Mosaic, input: MosaicInput, facts: MosaicFacts): M
   }
 }
 
-export function stepMosaic(mosaic: Mosaic, input: MosaicInput, facts: MosaicFacts): MosaicStep {
+export function stepMosaic(shown: Mosaic, input: MosaicInput, facts: MosaicFacts): MosaicStep {
   // Any state: Reset metrics (S32.16). UI main rewrote the store to "never written": nothing is written back.
   if (input.kind === 'reset-metrics') return taken('S32.16', null)
+  // A mosaic never arranged steps from the columns shown now (VQA-07).
+  const mosaic = shown.arranged ? shown : { ...shown, order: mosaicOrder(shown, facts) }
   switch (mosaic.state) {
     case 'idle':
       return stepIdle(mosaic, input, facts)
     case 'slot-menu':
       return stepSlotMenu(mosaic, input, facts)
     case 'choosing-folder':
-      if (input.kind === 'folder-cancelled') return taken('S32.09', idle(mosaic.order))
+      if (input.kind === 'folder-cancelled') return taken('S32.09', idle(mosaic))
       if (input.kind === 'folder-picked') return taken('S32.10', { ...mosaic, state: 'declaring' })
       return REFUSED
     case 'declaring':
-      if (input.kind === 'declare-failed') return taken('S32.12', idle(mosaic.order))
+      if (input.kind === 'declare-failed') return taken('S32.12', idle(mosaic))
       if (input.kind !== 'declared') return REFUSED
       // An existing mine already shown keeps its column; the Add panel never opens for it (S32.11, US-VALLE-006.AC07).
-      if (mosaic.order.includes(input.mineId)) return taken('S32.11', idle(mosaic.order))
+      // VQA-07: a declare is the person's own; a mosaic never arranged takes the order shown as theirs.
+      if (mosaic.order.includes(input.mineId)) {
+        return mosaic.arranged ? taken('S32.11', idle(mosaic)) : written('S32.11', mosaic.order)
+      }
       return appended('S32.11', mosaic, input.mineId)
   }
 }

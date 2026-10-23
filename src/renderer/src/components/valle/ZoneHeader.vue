@@ -49,9 +49,9 @@ watch(
     <div class="dm-vz__title">
       <TierChip v-if="tier" :tier="tier" />
       <span class="dm-vz__name" :title="name"
-        ><bdi>{{ name }}</bdi
-        ><span v-if="suffix !== ''" class="dm-vz__suffix" data-zone-suffix>{{ suffix }}</span></span
+        ><bdi>{{ name }}</bdi></span
       >
+      <span v-if="suffix !== ''" class="dm-vz__suffix" data-zone-suffix>{{ suffix }}</span>
     </div>
     <div class="dm-vz__tools">
       <slot name="tools" />
@@ -106,9 +106,12 @@ watch(
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* `.dm-vz__what`: what the zone shows when it is not its mine. */
+/*
+ * `.dm-vz__what`: what the zone shows when it is not its mine. The name's sibling and `flex: none`, so a
+ * long name gives way with its ellipsis and this stays whole (VQA-14).
+ */
 .dm-vz__suffix {
-  margin-inline-start: 6px;
+  flex: none;
   font: 400 var(--fs-meta) / 1 var(--f-meta);
   color: var(--ink-faint);
 }

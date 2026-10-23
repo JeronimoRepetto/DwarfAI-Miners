@@ -23,6 +23,7 @@
 import { vaultRows } from '../vault/vault'
 import { designTierLabel } from '../presentation'
 import { dwarfNeedsYou } from '../shell/panelNav'
+import { sceneDwarfStatus } from '../scene/sceneDwarf'
 import { needsYouCount } from '../shell/navSlot'
 import type { TierProgressOptions } from './tierProgress'
 import { cardTierFor } from './browseCards'
@@ -71,7 +72,9 @@ export interface MineCardView {
 /**
  * The crew line: "N working", "N need you", "N asleep", each only when non-zero; "No dwarfs" for
  * no crew; one "idle", with no count, when nobody is working, asking or asleep (components.md,
- * Mine card, As built). Asleep is a session at rest that asked nobody anything.
+ * Mine card, As built). Asleep is a session at rest that asked nobody anything. Each dwarf is
+ * bucketed by the status the scene draws (sceneDwarfStatus: the Host's own word, so an idle or
+ * asking dwarf is never counted asleep; VQA-04).
  */
 export function crewPills(dwarfs: readonly Dwarf[]): CrewPill[] {
   if (dwarfs.length === 0) return [{ text: 'No dwarfs' }]
@@ -79,9 +82,10 @@ export function crewPills(dwarfs: readonly Dwarf[]): CrewPill[] {
   let needs = 0
   let asleep = 0
   for (const dwarf of dwarfs) {
-    if (dwarfNeedsYou(dwarf)) needs++
-    else if (dwarf.status === 'working') working++
-    else if (dwarf.status === 'waiting') asleep++
+    const status = sceneDwarfStatus(dwarf)
+    if (status === 'asking') needs++
+    else if (status === 'working') working++
+    else if (status === 'asleep') asleep++
   }
   const pills: CrewPill[] = []
   if (working) pills.push({ text: working + ' working' })
@@ -133,7 +137,9 @@ export function mineCardView(row: BrowseRow, mines: readonly Mine[]): MineCardVi
   // Not live: nobody is working it, which the board can say. Live but not on the board yet: the
   // board is a poll behind, and a count it does not have is not a count of zero.
   const crew = !row.live ? crewPills([]) : onBoard ? crewPills(onBoard.dwarfs) : []
-  const needsCount = onBoard ? onBoard.dwarfs.filter(dwarfNeedsYou).length : 0
+  const needsCount = onBoard
+    ? onBoard.dwarfs.filter((dwarf) => sceneDwarfStatus(dwarf) === 'asking').length
+    : 0
   return {
     id: row.id,
     name: row.name,

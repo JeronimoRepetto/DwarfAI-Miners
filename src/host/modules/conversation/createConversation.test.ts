@@ -114,6 +114,96 @@ describe('createConversation', () => {
     expect(bus.ofType('MessagesAppended').map((e) => e.payload.messages.length)).toEqual([1])
   })
 
+  // VQA-05: `claude -p` writes the prompt's transcript line as soon as it reads stdin, so the
+  // transcript echo can land before or after the `dwarfai:launch:…:prompt` row. The driver's echo
+  // carries the same key as the transcript line (the uuid DwarfAI wrote, 15 §4.1 Keys).
+  const promptEcho = (): ConversationEntry => ({
+    sourceKey: 'claude:claude:session-0:prompt-uuid',
+    role: 'person',
+    text: 'Survey the north seam',
+    providerTime: T0
+  })
+
+  it('[INV-60, US-LAUNCH-005.AC07] a launch prompt whose transcript echo came first, then its driver echo, is stored once', () => {
+    const { conversation, bus, dwarf, count } = setUp()
+    const launchId = '00000000-0000-7000-8000-000000001430' as LaunchId
+
+    conversation.commands.ingest(dwarf, [promptEcho()], 'transcript')
+    conversation.commands.ingest(
+      dwarf,
+      [launchPromptEntry(launchId, 'Survey the north seam')],
+      'live-stream'
+    )
+    conversation.commands.ingest(dwarf, [{ ...promptEcho(), providerTime: null }], 'live-stream')
+
+    expect(count('messages')).toBe(1)
+    expect(count('message_keys')).toBe(2)
+    expect(bus.ofType('MessagesAppended').map((e) => e.payload.messages.length)).toEqual([1])
+  })
+
+  it('[INV-60, US-LAUNCH-005.AC07] a launch prompt written first, then its transcript echo, then its driver echo, is stored once', () => {
+    const { conversation, bus, dwarf, count } = setUp()
+    const launchId = '00000000-0000-7000-8000-000000001430' as LaunchId
+
+    conversation.commands.ingest(
+      dwarf,
+      [launchPromptEntry(launchId, 'Survey the north seam')],
+      'live-stream'
+    )
+    conversation.commands.ingest(dwarf, [promptEcho()], 'transcript')
+    conversation.commands.ingest(dwarf, [{ ...promptEcho(), providerTime: null }], 'live-stream')
+
+    expect(count('messages')).toBe(1)
+    expect(count('message_keys')).toBe(2)
+    expect(bus.ofType('MessagesAppended').map((e) => e.payload.messages.length)).toEqual([1])
+  })
+
+  it('[INV-60, US-LAUNCH-005.AC07] the person writing the launch prompt again keeps both rows, whichever echo came first', () => {
+    const again: ConversationEntry = {
+      ...promptEcho(),
+      sourceKey: 'claude:claude:session-0:again-uuid',
+      providerTime: T0 + 5_000
+    }
+    for (const order of ['echo-first', 'prompt-first'] as const) {
+      const { conversation, dwarf, count } = setUp()
+      const launchId = '00000000-0000-7000-8000-000000001430' as LaunchId
+      const prompt = launchPromptEntry(launchId, 'Survey the north seam')
+
+      if (order === 'echo-first') {
+        conversation.commands.ingest(dwarf, [promptEcho()], 'transcript')
+        conversation.commands.ingest(dwarf, [prompt], 'live-stream')
+      } else {
+        conversation.commands.ingest(dwarf, [prompt], 'live-stream')
+        conversation.commands.ingest(dwarf, [promptEcho()], 'transcript')
+      }
+      conversation.commands.ingest(dwarf, [again], 'transcript')
+      conversation.commands.ingest(dwarf, [{ ...again, providerTime: null }], 'live-stream')
+
+      expect(count('messages'), order).toBe(2)
+    }
+  })
+
+  // VQA-06: a launched Codex dwarf's reply reaches ingest from the live stream and from its rollout,
+  // both keyed `codex:codex:<threadId>:<itemId>` (15 §1.5, §4.4), in either order.
+  it('[INV-60, ADR-006] a Codex reply keyed alike on both paths is stored once in either order, and two identical replies stay two', () => {
+    const reply = (item: string): ConversationEntry => ({
+      sourceKey: `codex:codex:019a0000-0000-7000-8000-00000000c0de:${item}`,
+      role: 'dwarf',
+      text: 'All checks passed.',
+      providerTime: T0
+    })
+    for (const order of [
+      ['transcript', 'live-stream'],
+      ['live-stream', 'transcript']
+    ] as const) {
+      const { conversation, dwarf, count } = setUp()
+      for (const origin of order) conversation.commands.ingest(dwarf, [reply('item-1')], origin)
+      expect(count('messages'), order.join(' → ')).toBe(1)
+      for (const origin of order) conversation.commands.ingest(dwarf, [reply('item-2')], origin)
+      expect(count('messages'), order.join(' → ')).toBe(2)
+    }
+  })
+
   it('[ADR-007] a 65 537-byte text fails the messages CHECK and rolls back the whole batch with nothing published', () => {
     const { conversation, bus, dwarf, count } = setUp()
 

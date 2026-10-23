@@ -58,6 +58,25 @@ describe('messagePanelOutcome', () => {
     })
   })
 
+  // VQA-03: a Host ask never sets the legacy `pendingQuestion`, so the Host's own ask data tells the two apart.
+  it('[VQA-03] reads a Host question as its questions, not as a permission', () => {
+    const dwarf = defaultDwarf({ status: 'waiting', hostStatus: 'asking' } as Partial<Dwarf>)
+    expect(messagePanelOutcome(dwarf, undefined, NOW, { kind: 'question', questions: 2 })).toEqual({
+      status: 'asking',
+      text: 'Waiting on you · 2 questions'
+    })
+    expect(
+      messagePanelOutcome(dwarf, undefined, NOW, { kind: 'question', questions: 1 }).text
+    ).toBe('Waiting on you · 1 question')
+  })
+
+  it('[VQA-03] reads a Host permission as a permission', () => {
+    const dwarf = defaultDwarf({ status: 'waiting', hostStatus: 'asking' } as Partial<Dwarf>)
+    expect(messagePanelOutcome(dwarf, undefined, NOW, { kind: 'permission' }).text).toBe(
+      'Waiting on you · permission'
+    )
+  })
+
   it('counts the questions an ask carries', () => {
     const question = (text: string) => ({ question: text, multiSelect: false, options: [] })
     const dwarf = defaultDwarf({
