@@ -10,9 +10,13 @@
  * for a mine just added ("starts Bronze, score 0, state Measuring"). That is `tierOf()`'s
  * provisional bronze, for drawing only — it never reaches anything that records a decision. A
  * mine measured before is measuring too while it is re-measured, and keeps its last tier, which
- * is known rather than a placeholder (PANEL-QUESTIONS 29; isMeasuring in browseCards.ts). The
- * progress bar, the ore and the crew claim only what was measured or seen: no weight, no bar; no
- * ledger row, no capsules; a live mine the board has not caught up with, no pills at all.
+ * is known rather than a placeholder (PANEL-QUESTIONS 29). The progress bar, the ore and the crew
+ * claim only what was measured or seen: no score, no bar; no ore on the board, no capsules; a live
+ * mine the board has not caught up with, no pills at all.
+ *
+ * The list row says a mine's tier (`mines.list`, 14 B-M19); the board says everything else the
+ * Host knows of it — its ore (`MineWire.totals`), its score (`MineWire.score`, AMENDMENT-26) and
+ * whether it is being measured (`MineWire.state`) — so the card reads those off the board.
  *
  * Units are per material and never summed or converted (vault.ts).
  */
@@ -21,10 +25,10 @@ import { designTierLabel } from '../presentation'
 import { dwarfNeedsYou } from '../shell/panelNav'
 import { needsYouCount } from '../shell/navSlot'
 import type { TierProgressOptions } from './tierProgress'
-import { cardTierFor, isMeasuring, nextLevelFor } from './browseCards'
+import { cardTierFor } from './browseCards'
 import type { PillTone } from '../dwarf/badge'
 import type { MenuItem } from '../overlay/menu'
-import { MINE_TIERS, TIER_WEIGHT_THRESHOLDS_KB } from '../../types'
+import { MINE_TIERS } from '../../types'
 import type { BrowseRow, Dwarf, Material, Mine, MineTier } from '../../types'
 
 export { dwarfNeedsYou }
@@ -86,29 +90,23 @@ export function crewPills(dwarfs: readonly Dwarf[]): CrewPill[] {
   return pills.length ? pills : [{ text: 'idle' }]
 }
 
-// The tier whose floor a boundary is, so the bar is filled in the colour of the tier it leads to.
-function tierAtFloor(floorKb: number): MineTier | undefined {
-  const { copperKb, silverKb, goldKb, uraniumKb } = TIER_WEIGHT_THRESHOLDS_KB
-  const floors: Record<number, MineTier> = {
-    [copperKb]: 'copper',
-    [silverKb]: 'silver',
-    [goldKb]: 'gold',
-    [uraniumKb]: 'uranium'
-  }
-  return floors[floorKb]
-}
-
-function progressFor(row: BrowseRow, state: MineCardState): TierProgressOptions | undefined {
+/*
+ * The tier progress, off the board's mine (AMENDMENT-26, owner-approved 2026-10-23): the Host's score, in KB, over
+ * the next tier's KB floor under the Host's active thresholds, which the renderer cannot know (06 §4.1: environment
+ * overrides). The next tier is the one after the mine's own; the top tier has none and reads "Max tier" with its
+ * score. No board mine or no score, no bar: a bar with an invented denominator is worse than none (#90).
+ */
+function progressFor(
+  onBoard: Mine | undefined,
+  state: MineCardState
+): TierProgressOptions | undefined {
   if (state === 'measuring') return { measuring: true }
-  const level = nextLevelFor(row.weightBytes)
-  if (level === undefined) return undefined
-  if (level.nextBoundaryKb === undefined) return { maxTier: true, value: level.currentKb }
-  const nextTier = tierAtFloor(level.nextBoundaryKb)
-  return {
-    value: level.currentKb,
-    max: level.nextBoundaryKb,
-    ...(nextTier === undefined ? {} : { nextTier })
-  }
+  const score = onBoard?.score
+  if (onBoard === undefined || score === undefined) return undefined
+  const value = Math.round(score.kb)
+  if (score.nextTierKb === null) return { maxTier: true, value }
+  const nextTier = MINE_TIERS[MINE_TIERS.indexOf(onBoard.tier) + 1]
+  return { value, max: score.nextTierKb, ...(nextTier === undefined ? {} : { nextTier }) }
 }
 
 /*
@@ -123,14 +121,15 @@ export function mineRefusalToast(name: string): string {
 }
 
 export function mineCardView(row: BrowseRow, mines: readonly Mine[]): MineCardView {
+  const onBoard = mines.find((mine) => mine.id === row.id)
+  // Measuring is the Host's `MineWire.state` (US-MINES-008.AC03, AC04), which the board carries.
   const state: MineCardState = row.folderMissing
     ? 'unenterable'
     : row.unrecorded
       ? 'unrecorded'
-      : isMeasuring(row)
+      : onBoard?.measuring === true
         ? 'measuring'
         : 'active'
-  const onBoard = mines.find((mine) => mine.id === row.id)
   // Not live: nobody is working it, which the board can say. Live but not on the board yet: the
   // board is a poll behind, and a count it does not have is not a count of zero.
   const crew = !row.live ? crewPills([]) : onBoard ? crewPills(onBoard.dwarfs) : []
@@ -141,18 +140,22 @@ export function mineCardView(row: BrowseRow, mines: readonly Mine[]): MineCardVi
     tier: cardTierFor(row) ?? MINE_TIERS[0]!,
     measured: cardTierFor(row) !== undefined,
     state,
-    ore: vaultRows(row.materials).map(({ material, units }) => ({ material, units })),
+    // The ore is the board's `MineWire.totals`, per material and never summed (INV-93); a list row carries none.
+    ore: vaultRows(onBoard?.materials ?? row.materials).map(({ material, units }) => ({
+      material,
+      units
+    })),
     crew,
     needs: needsCount > 0,
     needsCount,
     progress:
-      state === 'unrecorded' || state === 'unenterable' ? undefined : progressFor(row, state),
+      state === 'unrecorded' || state === 'unenterable' ? undefined : progressFor(onBoard, state),
     // Only a missing folder refuses entry (PANEL-QUESTIONS 5 and 6, design lead ruling 2026-09-27):
     // a remembered mine nobody is working opens too, onto the empty roster and + Dwarf.
     enterable: state !== 'unenterable',
     ...(state === 'unenterable' ? { reason: MINE_UNENTERABLE_REASON } : {}),
     removable: row.unrecorded !== true,
-    ...(row.weightBytes === undefined ? {} : { score: row.weightBytes / 1024 })
+    ...(onBoard?.score === undefined ? {} : { score: onBoard.score.kb })
   }
 }
 

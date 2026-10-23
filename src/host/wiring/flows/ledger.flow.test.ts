@@ -41,7 +41,7 @@ import type { TransactionScope } from '../../kernel/ports/transactionScope'
 import type { BackfillReport } from '../../modules/ledger'
 import { ProviderHistoryScanner } from '../../modules/ledger/adapters/ProviderHistoryScanner'
 import { SqliteLedgerRepository } from '../../modules/ledger/adapters/SqliteLedgerRepository'
-import { createMines } from '../../modules/mines'
+import { createMines, DEFAULT_TIER_THRESHOLDS } from '../../modules/mines'
 import { createHostGitRepoInspector } from '../../modules/mines/adapters/FsGitRepoInspector'
 import { FsSourceWeightScanner } from '../../modules/mines/adapters/FsSourceWeightScanner'
 import { OBSERVATION_POLL_MS, createSqliteObservationStores } from '../../modules/observation'
@@ -534,6 +534,7 @@ describe('the ledger wired into the Host (ISSUE-096)', () => {
     const seedTransactions = new SqliteTransactionRunner(w.db)
     const seedClock = new FakeClock(T0)
     await createMines({
+      thresholds: DEFAULT_TIER_THRESHOLDS,
       db: w.db,
       transactions: seedTransactions,
       mapSites: [],

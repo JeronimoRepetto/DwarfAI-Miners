@@ -31,7 +31,7 @@ import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import { createCrew, type CrewEvent } from '../../modules/crew'
 import { createLedger, type HistoricalUsageScanner, type LedgerEvent } from '../../modules/ledger'
 import { SqliteLedgerRepository } from '../../modules/ledger/adapters/SqliteLedgerRepository'
-import { createMines, type MinesEvent } from '../../modules/mines'
+import { createMines, type MinesEvent, DEFAULT_TIER_THRESHOLDS } from '../../modules/mines'
 import {
   OBSERVATION_POLL_MS,
   createObservation,
@@ -186,6 +186,7 @@ async function host() {
     epoch += 1
     const hostEpoch = `epoch-0078-${epoch}`
     const mines = createMines({
+      thresholds: DEFAULT_TIER_THRESHOLDS,
       db,
       transactions,
       mapSites: [{ xPct: 10, yPct: 20 }],

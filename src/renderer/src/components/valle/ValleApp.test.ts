@@ -33,6 +33,7 @@ import {
   AMBIENCE_SRC,
   CREW_SFX_SRC,
   DWARF_VOICE_SRC,
+  MUSIC_TRACK_SRC,
   UI_SFX_SRC
 } from '../../lib/audio/audioAssets'
 import { createFakeAudioPlayer, type FakeAudioPlayer } from '../../lib/audio/fakeAudioPlayer'
@@ -1162,7 +1163,10 @@ describe('the current mine and its sound in the Valle root (ISSUE-307)', () => {
     try {
       visibility('hidden')
       await flushPromises()
-      expect(player.live()).toHaveLength(0)
+      // AMENDED for the nav's Music slot (EPIC-20 visual parity): the music the window now plays is paused across a hide
+      // so it resumes where it was (#174), its clip kept open and silent; was `player.live()` empty.
+      expect(player.live().filter((clip) => clip.playing)).toHaveLength(0)
+      expect(beds(player)).toHaveLength(0)
       visibility('visible')
       await flushPromises()
       expect(beds(player)).toHaveLength(1)
@@ -1486,6 +1490,40 @@ describe('the needs-you counter and queue in the Valle root (ISSUE-306)', () => 
     expect(root.get('.dm-ctab.is-focus-pane').attributes('data-pin')).toBe(BORIN)
     expect(writes.filter((write) => write.key === 'vallePreset')).toHaveLength(presetWrites)
   })
+
+  // APPENDED (owner live check 2026-10-23): a jump from a nav page gives way to the mines first, as the reveal does.
+  it('[US-VALLE-004.AC01, S34.05, S34.06, S28.20] the counter and an entry pressed over a nav page leave the page and jump', async () => {
+    const { root, writes, clock } = mountValle(
+      { preset: 'control', mosaicOrder: [MORIA], pins: [], lastFrontMineId: EREBOR },
+      undefined,
+      { getHostSnapshot: () => Promise.resolve(snapshot()) as never }
+    )
+    await flushPromises()
+    await root.get('[data-slot="map"]').trigger('click')
+    await flushPromises()
+    expect(root.find('[data-valle-page="map"]').exists()).toBe(true)
+
+    // The Control room under the Map: the page gives way, DAIN's column is added and his chat expanded.
+    await root.get('[data-needs-counter]').trigger('click')
+    await flushPromises()
+    expect(root.find('[data-valle-page]').exists()).toBe(false)
+    expect(writes).toContainEqual({ key: 'valleMosaicOrder', value: [MORIA, EREBOR] })
+    expect(root.get('.dm-cstack__open').attributes('data-pin')).toBe(DAIN)
+
+    // The Work front under Settings: BORIN's entry gives way to the mines and swaps to MORIA.
+    await root.get('[data-preset-tab="front"]').trigger('click')
+    clock.advance(400)
+    await flushPromises()
+    await root.get('[data-slot="settings"]').trigger('click')
+    await flushPromises()
+    expect(root.find('[data-valle-page="settings"]').exists()).toBe(true)
+    await root.get(`.dm-vq__entry[data-id="${BORIN}"]`).trigger('click')
+    clock.advance(400)
+    await flushPromises()
+    expect(root.find('[data-valle-page]').exists()).toBe(false)
+    expect(root.find(`[data-valle-front-mine="${MORIA}"]`).exists()).toBe(true)
+    expect(root.get('.dm-ctab.is-focus-pane').attributes('data-pin')).toBe(BORIN)
+  })
 })
 
 // APPENDED for ISSUE-311: Valle's part in a mode run (07 machine 9, S28.21, S29.23), the reveal of a notification click
@@ -1569,11 +1607,14 @@ describe('Valle in the mode lever, the reveal and reduced motion (ISSUE-311)', (
     const { root, moves } = mountValle({ preset: 'control' })
     await flushPromises()
     const nav = root.get('nav.dm-valle__nav')
-    // The nav holds its page slots alone: no lever, no MODE label, no app mark, not even a disabled one.
+    // The nav holds its page slots and the Music toggle alone: no lever, no MODE label, no app mark, not even a disabled
+    // one. AMENDED for the nav's Music slot (EPIC-20 visual parity; `DS` valle.js `DM.ui.nav({ music: true })`): was
+    // Map, Mines, Settings.
     expect(nav.findAll('.dm-slot').map((slot) => slot.attributes('data-label'))).toEqual([
       'Map',
       'Mines',
-      'Settings'
+      'Settings',
+      'Music'
     ])
     expect(nav.find('[aria-label="Mode"]').exists()).toBe(false)
     expect(nav.find('.dm-nav__mark').exists()).toBe(false)
@@ -2033,5 +2074,243 @@ describe("the pinned chats' portraits in Valle (EPIC-20 package gap)", () => {
     const tabs = front.findAll('.dm-cdeck [role="tab"]')
     expect(tabs.length).toBeGreaterThan(0)
     expect(tabs.every((tab) => tab.find('.dm-portrait').exists())).toBe(true)
+  })
+})
+
+// APPENDED for the Valle visual parity (EPIC-20): the nav column is the Panel's (`DS/docs/screens/valle.md` VA1 item 3,
+// `DS/prototype/screens/valle/valle.js` `DM.ui.nav({ badge, music: true, mark: false, lever: false })`): the Mines slot
+// carries the needs-you badge and the System group the Music toggle, played by the window's one engine.
+describe("Valle's nav column, the Panel's own (EPIC-20 visual parity)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+  const MUSIC = new Set<string>(MUSIC_TRACK_SRC)
+  const music = (player: FakeAudioPlayer) => player.live().filter((clip) => MUSIC.has(clip.src))
+  /** DAIN asks in EREBOR: the Host's needs-you queue holds him alone. */
+  const asking = () => {
+    const page = snapshotPage(10, {
+      minesEverKnown: true,
+      mines: [mineWire(MORIA), mineWire(EREBOR)],
+      dwarfs: [
+        dwarfWire(BORIN, MORIA),
+        dwarfWire(DAIN, EREBOR, { needsYou: true, status: 'asking', askedAt: 1 })
+      ]
+    })
+    if (!page.ok) throw new Error('fixture')
+    return {
+      ...page,
+      value: {
+        ...page.value,
+        chunks: [
+          ...page.value.chunks,
+          {
+            section: 'asks',
+            data: {
+              asks: [],
+              needsYou: [{ dwarfId: DAIN, mineId: EREBOR, askedAt: 1 }]
+            }
+          }
+        ]
+      }
+    }
+  }
+
+  it('[US-SHELL-003.AC03] the nav column draws Map and Mines, Settings and Music, the Mines slot badged with the one dwarf waiting', async () => {
+    const { root } = mountValle({ preset: 'control', mosaicOrder: [MORIA] }, undefined, {
+      getHostSnapshot: () => Promise.resolve(asking()) as never
+    })
+    await flushPromises()
+    const nav = root.get('nav.dm-valle__nav')
+    expect(nav.findAll('.dm-slot').map((slot) => slot.attributes('data-label'))).toEqual([
+      'Map',
+      'Mines',
+      'Settings',
+      'Music'
+    ])
+    expect(nav.get('[data-slot="mines"] .dm-slot__badge').text()).toBe('1')
+    expect(nav.get('[data-slot="mines"]').attributes('aria-label')).toBe('Mines, 1 needs you')
+    expect(nav.find('[data-slot="map"] .dm-slot__badge').exists()).toBe(false)
+  })
+
+  it('[US-SHELL-005.AC02, US-SHELL-005.AC03, US-SET-004.AC05] the Music slot plays and stops the music through the window’s one engine, as the Panel’s does', async () => {
+    // Any second engine would play through its own `Audio` elements: counted, never played.
+    let made = 0
+    vi.stubGlobal(
+      'Audio',
+      class {
+        constructor() {
+          made += 1
+        }
+        play(): Promise<void> {
+          return Promise.resolve()
+        }
+        pause(): void {}
+      }
+    )
+    const { root, player } = mountValle({ preset: 'control', mosaicOrder: [MORIA] }, undefined, {
+      getAudioPreferences: () =>
+        Promise.resolve({ ...DEFAULT_AUDIO_PREFERENCES, musicAtStartup: false }) as never
+    })
+    await flushPromises()
+    const slot = () => root.get('nav.dm-valle__nav [data-label="Music"]')
+    expect(slot().attributes('aria-pressed')).toBe('false')
+    expect(music(player)).toHaveLength(0)
+    await slot().trigger('click')
+    await flushPromises()
+    expect(slot().attributes('aria-pressed')).toBe('true')
+    // One track, through the injected player: the room tone's engine is the music's too.
+    expect(music(player)).toHaveLength(1)
+    expect(root.get('[data-valle-toasts]').text()).toContain('Music on')
+    await slot().trigger('click')
+    await flushPromises()
+    expect(slot().attributes('aria-pressed')).toBe('false')
+    expect(music(player)).toHaveLength(0)
+    expect(root.get('[data-valle-toasts]').text()).toContain('Music off')
+    expect(made).toBe(0)
+  })
+})
+
+// APPENDED for the Valle visual parity (EPIC-20): the top bar's app mark hides Valle as the app mark does in every mode
+// (07 S10.08): a mode move to `hidden` through the ModeCoordinator (A-N13), with the short hide sound (`DS` valle.js
+// `hideValle`, the panel cue).
+describe("Valle's app mark (EPIC-20 visual parity)", () => {
+  it('[US-SHELL-002.AC01] the app mark hides Valle through a move to the hidden mode, and the short hide sound plays', async () => {
+    const { root, moves, player } = mountValle({ preset: 'control', mosaicOrder: [MORIA] })
+    await flushPromises()
+    const before = player.clips.filter((clip) => clip.src === UI_SFX_SRC.panel).length
+    await root.get('header.dm-vbar button.dm-vbar__mark').trigger('click')
+    await flushPromises()
+    expect(moves).toEqual([{ mode: 'hidden' }])
+    expect(player.clips.filter((clip) => clip.src === UI_SFX_SRC.panel)).toHaveLength(before + 1)
+  })
+})
+
+// APPENDED for the Valle visual parity (EPIC-20): a zone's crew walks in and out as the Panel's column does
+// (`useCrewWalk`), told by the window's board which dwarfs arrived (#156).
+describe("the walk in a Valle zone's painting (EPIC-20 visual parity)", () => {
+  it('[US-MINE-009.AC02] a dwarf arriving in a zone walks in from the spawn point, entering', async () => {
+    const { root, push } = mountValle({ preset: 'control', mosaicOrder: [MORIA], pins: [] })
+    await flushPromises()
+    push([frame(11, 'dwarf.arrived', { dwarf: dwarfWire(NALI, MORIA), announce: false })])
+    await flushPromises()
+    const nali = root
+      .findAllComponents(SceneDwarf)
+      .find((dwarf) => dwarf.props('dwarf').id === NALI)
+    expect(nali).toBeDefined()
+    expect(root.get(`[data-valle-column="${MORIA}"]`).element.contains(nali!.element)).toBe(true)
+    expect(nali!.props('entering')).toBe(true)
+    expect(nali!.props('walking')).toBe(true)
+  })
+})
+
+// APPENDED for the Valle visual parity (EPIC-20): the Work front's compact list, its sort toast through the window's one
+// queue, its "?" read from the Host's needs-you queue, and "Add a mine" running the ordinary folder flow ("A new
+// project…", S32.08…S32.11), the mine added then swapped in (S28.15; `DS` valle.js `addMine` → `pickFront`).
+describe("the Work front's mines list in the Valle root (EPIC-20 visual parity)", () => {
+  const asking = () => {
+    const page = snapshotPage(10, {
+      minesEverKnown: true,
+      mines: [mineWire(MORIA), mineWire(EREBOR)],
+      dwarfs: [
+        dwarfWire(BORIN, MORIA),
+        dwarfWire(DAIN, EREBOR, { needsYou: true, status: 'asking', askedAt: 1 })
+      ]
+    })
+    if (!page.ok) throw new Error('fixture')
+    return {
+      ...page,
+      value: {
+        ...page.value,
+        chunks: [
+          ...page.value.chunks,
+          {
+            section: 'asks',
+            data: { asks: [], needsYou: [{ dwarfId: DAIN, mineId: EREBOR, askedAt: 1 }] }
+          }
+        ]
+      }
+    }
+  }
+
+  it('[US-MINES-003.AC07, US-VALLE-004.AC03] the list lines read the Host’s needs-you queue, and a new order is said in the window’s toast', async () => {
+    const { root } = mountValle(
+      { preset: 'front', mosaicOrder: [MORIA, EREBOR], lastFrontMineId: MORIA },
+      undefined,
+      { getHostSnapshot: () => Promise.resolve(asking()) as never }
+    )
+    await flushPromises()
+    const erebor = root.get(`[data-valle-row="${EREBOR}"]`)
+    expect(erebor.attributes('aria-label')).toBe('erebor, 1 dwarf, 1 needs you')
+    expect(erebor.get('.dm-mrow__ask').text()).toBe('?')
+    // Needs you first: EREBOR leads.
+    expect(root.findAll('[data-valle-row]').map((r) => r.attributes('data-valle-row'))).toEqual([
+      EREBOR,
+      MORIA
+    ])
+    await root.get('.dm-mrows__head [data-mrows-sort]').trigger('click')
+    await flushPromises()
+    expect(root.get('[data-valle-toasts]').text()).toContain('Sorted by tier, richest first')
+  })
+
+  it('[US-MINES-001.AC01, S32.08, S32.11, S28.15] "Add a mine" in the list runs the folder flow, and the mine added is swapped in', async () => {
+    let asked = 0
+    const { root, writes, clock } = mountValle(
+      { preset: 'front', mosaicOrder: [MORIA], lastFrontMineId: MORIA },
+      undefined,
+      {
+        declareMine: () => {
+          asked += 1
+          return Promise.resolve({ outcome: 'added', mineId: EREBOR }) as never
+        }
+      }
+    )
+    await flushPromises()
+    await root.get('.dm-mrows__head button[title="Add a mine"]').trigger('click')
+    await flushPromises()
+    clock.advance(400)
+    await flushPromises()
+    expect(asked).toBe(1)
+    expect(writes).toContainEqual({ key: 'valleMosaicOrder', value: [MORIA, EREBOR] })
+    expect(root.find(`[data-valle-front-mine="${EREBOR}"]`).exists()).toBe(true)
+  })
+})
+
+// APPENDED for the Valle visual parity (EPIC-20): the Work front mine's toolbar leads with ♪, the mine's ambience
+// (`DS` organisms/mine-zone `.dm-vz__front-only`: ♪, History, ⋯), the same mute the zone menu toggles (S31.08), written
+// through the one writer of `mutedMineIds`.
+describe("the Work front mine's ♪ ambience toggle (EPIC-20 visual parity)", () => {
+  it('[US-VALLE-009.AC05, S31.08] ♪ in the Work front mine’s toolbar mutes its ambience and back, as its menu item does', async () => {
+    const { root, writes } = mountValle({
+      preset: 'front',
+      mosaicOrder: [MORIA],
+      lastFrontMineId: MORIA,
+      mutedMineIds: []
+    })
+    await flushPromises()
+    const tools = () => root.get(`[data-valle-front-mine="${MORIA}"] .dm-vz__tools`)
+    expect(
+      tools()
+        .findAll('button')
+        .map((button) => button.attributes('title'))
+    ).toEqual(['Mine ambience', 'Mine history · opens under the chats', 'Mine options'])
+    const toggle = () => tools().get('button[title="Mine ambience"]')
+    expect(toggle().attributes('aria-pressed')).toBe('true')
+    await toggle().trigger('click')
+    await flushPromises()
+    expect(writes.at(-1)).toEqual({ key: 'mutedMineIds', value: [MORIA] })
+    expect(toggle().attributes('aria-pressed')).toBe('false')
+    expect(root.get(`[data-valle-front-mine="${MORIA}"]`).attributes('data-ambience')).toBe('off')
+    // The zone menu reads the same mute.
+    await tools().get('[data-zone-more]').trigger('click')
+    expect(
+      root
+        .findAll('[data-zone-menu] [role="menuitem"]')
+        .some((item) => item.text().startsWith('Mine ambience on'))
+    ).toBe(true)
+    await root.get('[data-zone-more]').trigger('click')
+    await toggle().trigger('click')
+    await flushPromises()
+    expect(writes.at(-1)).toEqual({ key: 'mutedMineIds', value: [] })
+    expect(toggle().attributes('aria-pressed')).toBe('true')
   })
 })

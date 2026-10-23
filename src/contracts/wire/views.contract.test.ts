@@ -573,6 +573,39 @@ describe('wire view types (14 §3.6)', () => {
     expectTypeOf<MineWire['totals'][Material]>().toEqualTypeOf<MaterialAmount>()
   })
 
+  // AMENDMENT-26 (owner-approved 2026-10-23; 06 §0.2 view note, 14 §3.6, 14 §6.5 case): a mine carries its score
+  // toward its next tier, optional (absent until measured or while unrecorded), and stays strict.
+  it('[US-MINES-008.AC01, US-MINES-008.AC02] a MineWire with its score round-trips, one without still validates, and an unknown key inside score is refused', () => {
+    const scored = { ...mineWire, score: { kb: 1630.5, nextTierKb: 12_000 } }
+    const roundTripped = mineWireSchema.safeParse(JSON.parse(JSON.stringify(scored)))
+    expect(roundTripped.success).toBe(true)
+    expect(roundTripped.data).toStrictEqual(scored)
+    // The top tier has no next tier.
+    const atTop = { ...mineWire, tier: 'uranium', score: { kb: 150_000, nextTierKb: null } }
+    expect(mineWireSchema.safeParse(atTop).success).toBe(true)
+    // Absent score: never measured, or unrecorded.
+    expect(mineWireSchema.safeParse(mineWire).success).toBe(true)
+    // Both members are required when the object is present, and a weight is never negative.
+    expect(mineWireSchema.safeParse({ ...mineWire, score: { kb: 1 } }).success).toBe(false)
+    expect(
+      mineWireSchema.safeParse({ ...mineWire, score: { kb: -1, nextTierKb: 350 } }).success
+    ).toBe(false)
+    expect(
+      mineWireSchema.safeParse({ ...mineWire, score: { kb: 1, nextTierKb: '350' } }).success
+    ).toBe(false)
+    // Still `.strict()`: an unknown key inside `score` is refused.
+    expect(
+      mineWireSchema.safeParse({
+        ...mineWire,
+        score: { kb: 1, nextTierKb: 350, bytes: 1024 }
+      }).success
+    ).toBe(false)
+
+    expectTypeOf<MineWire['score']>().toEqualTypeOf<
+      { kb: number; nextTierKb: number | null } | undefined
+    >()
+  })
+
   it('[ADR-032] DwarfWire carries no StatusFacts and no process ids', () => {
     const parsed = dwarfWireSchema.safeParse(dwarfWire)
     expect(parsed.success).toBe(true)

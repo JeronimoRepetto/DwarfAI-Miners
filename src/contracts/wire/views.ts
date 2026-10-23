@@ -72,6 +72,12 @@ export interface MineWire {
   mapSite?: { xPct: number; yPct: number }
   lastUsedAt: Instant
   totals: Record<Material, MaterialAmount>
+  /**
+   * Amended: AMENDMENT-26 (owner-approved 2026-10-23). The mine's last measured source weight in KB (06 §4.1,
+   * `bytes / 1024`) and the KB floor of its next tier under the Host's active thresholds, `nextTierKb: null` at the
+   * highest tier. Absent while the mine has never been measured (`hasBeenMeasured: false`) or is `unrecorded`.
+   */
+  score?: { kb: number; nextTierKb: number | null }
 }
 
 /** 14 §3.6 `StopUnavailableReason` (US-MSG-016.AC02; an open turn no longer disables Stop, OQ-54, AMENDMENT-2). */
@@ -212,7 +218,15 @@ export const mineWireSchema = z
     unenterableReason: z.string().optional(),
     mapSite: z.object({ xPct: z.number(), yPct: z.number() }).strict().optional(),
     lastUsedAt: instantSchema,
-    totals: materialTotalsSchema
+    totals: materialTotalsSchema,
+    // Amended: AMENDMENT-26 (owner-approved 2026-10-23)
+    score: z
+      .object({
+        kb: z.number().nonnegative(),
+        nextTierKb: z.number().int().positive().nullable()
+      })
+      .strict()
+      .optional()
   })
   .strict()
 

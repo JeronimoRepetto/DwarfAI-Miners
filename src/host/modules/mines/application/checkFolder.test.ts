@@ -116,7 +116,11 @@ function folderCheckWorld(fs: FakeFs = new FakeFs()) {
     return stored
   }
   const save = (stored: Mine) => transactions.inTransaction(() => repository.save(stored))
-  const read = new MineReadModel({ repository, presentDwarfs: repository })
+  const read = new MineReadModel({
+    thresholds: DEFAULT_TIER_THRESHOLDS,
+    repository,
+    presentDwarfs: repository
+  })
   return {
     fs,
     clock,

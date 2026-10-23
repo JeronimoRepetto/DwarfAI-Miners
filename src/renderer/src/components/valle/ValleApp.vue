@@ -55,7 +55,7 @@
  *   The window's one sound engine (`useAudio`, owner decision 2026-10-22 lifted by US-VALLE-016) plays only that
  *   mine's room tone, bed and crew, silenced by its own mute; the attention cues (`useAttentionCues`) and a dwarf's
  *   voice are never gated on it. It follows the page's own visibility (a hidden window plays nothing, S35.08), plays
- *   no music and no Panel cue, and adopts the stored Sound settings again on every show and when Valle's Settings page
+ *   the music the nav's Music slot toggles (as the Panel's, EPIC-20 visual parity) and no Panel cue, and adopts the stored Sound settings again on every show and when Valle's Settings page
  *   closes (the page's rows write the preference alone).
  * - The history drawer (`useValleHistoryDrawer`, 07 machine 36; ISSUE-308): "Mine history" in the Work front's mine
  *   toolbar, the deck's History bar, or a chat's mine-history request in the deck opens the mine's history under the
@@ -283,11 +283,13 @@ const pageVisibility: AudioVisibility = {
     return () => document.removeEventListener('visibilitychange', heard)
   }
 }
-/** The window's one sound engine (US-VALLE-016): no music and no Panel cue here. */
+/**
+ * The window's one sound engine (US-VALLE-016): the music the nav's Music slot plays, as the Panel's (`DS` valle.js
+ * `DM.ui.nav({ music: true })`; EPIC-20 visual parity), and no Panel cue here.
+ */
 const audio = useAudio({
   player: props.audioPlayer,
   visibility: pageVisibility,
-  music: false,
   panelCue: false
 })
 let stopCues: (() => void) | undefined
@@ -411,7 +413,11 @@ const listMines = computed(() =>
     mineId: mine.id,
     name: mine.name,
     tier: mine.tier,
-    crew: mineRowCrew(crewCount(mine.id), mine.state !== 'unenterable')
+    crew: mineRowCrew(crewCount(mine.id), mine.state !== 'unenterable'),
+    count: crewCount(mine.id),
+    needs: model.needsYou.value.filter((entry) => entry.mineId === mine.id).length,
+    measured: mine.hasBeenMeasured,
+    enterable: mine.state !== 'unenterable'
   }))
 )
 const shownMine = computed(() => {
@@ -567,6 +573,15 @@ const needsYou = useValleNeedsYou({
     swap: (mineId, dwarfId) => preset.send({ kind: 'pick', mineId, dwarfId })
   }
 })
+/**
+ * A needs-you jump, the counter's or an entry's (S34.05, S34.06): a nav page over the main zone gives way to the mines
+ * first (S28.20), as the reveal does, so the jump lands where the person sees it (owner live check 2026-10-23).
+ */
+function jumpNeed(entry?: Parameters<typeof needsYou.pressEntry>[0]): void {
+  if (view.value.page !== null) preset.send({ kind: 'escape', layerOpen: false })
+  if (entry === undefined) needsYou.press()
+  else needsYou.pressEntry(entry)
+}
 /** The mosaic's scroller, read from the drawn Control room. */
 const mosaicEl = (): HTMLElement | null => room.value?.mosaic ?? null
 /**
@@ -672,8 +687,12 @@ watch(
   },
   { flush: 'sync' }
 )
-/** "▼ Panel" / "▼ Veta": leaving Valle closes the drawer at once (S36.04). */
+/**
+ * "▼ Panel" / "▼ Veta", or the app mark's move to `hidden` (07 S10.08): leaving Valle closes the drawer at once (S36.04).
+ * The app mark plays the short hide sound in this, the source window (S10.08, US-SHELL-002.AC01; `DS` valle.js `hideValle`).
+ */
 function leave(move: MoveToModeParams): void {
+  if (move.mode === 'hidden') audio.playSfx('panel')
   historyDrawer.send({ kind: 'leave' })
   preset.send({ kind: 'leave', move })
 }
@@ -759,6 +778,13 @@ watch(
     if (!offered) resetPreset.dismiss()
   }
 )
+
+/** The nav's Music slot (US-SHELL-005): the window's one engine starts or stops the music and says so, as the Panel's does. */
+function toggleMusic(): void {
+  audio.toggleMusic()
+  const on = audio.musicPlaying.value
+  showToast(on ? 'Music on' : 'Music off', on ? 'music-on' : 'music-off')
+}
 
 /** A nav slot: its page over the main zone (S28.19); the Mines page reads the remembered projects again, as the Panel's. */
 function nav(page: ValleNavPage): void {
@@ -871,7 +897,7 @@ onUnmounted(() => {
         <VaultStrip :ore="oreTotals" label="Ore" :max="6" />
       </template>
       <template #counter>
-        <NeedsYouCounter :view="needsYou.counter.value" :still="still" @press="needsYou.press()" />
+        <NeedsYouCounter :view="needsYou.counter.value" :still="still" @press="jumpNeed()" />
       </template>
     </ValleTopBar>
     <div ref="body" class="dm-valle__body" :style="{ '--chat-w': chatWidth }">
@@ -890,7 +916,15 @@ onUnmounted(() => {
             :label="slot.label"
             :data-slot="slot.id"
             :current="slot.area === view.page"
+            :badge="slot.area === 'mines' ? needsYou.entries.value.length : 0"
             @click="nav(slot.area)"
+          />
+          <NavSlot
+            v-if="group.name === 'System'"
+            :icon="audio.musicPlaying.value ? 'music-on' : 'music-off'"
+            label="Music"
+            :pressed="audio.musicPlaying.value"
+            @click="toggleMusic"
           />
         </div>
       </nav>
@@ -912,6 +946,7 @@ onUnmounted(() => {
         :menu="frontMenu"
         :moving="gated()"
         :history-open="drawer !== null"
+        :muted="shownMine !== null && mosaic.isMuted(shownMine.mineId)"
         @menu="toggleMenu({ preset: 'front' })"
         @menu-pick="(id) => mosaic.pickMenu(id)"
         @menu-dismiss="mosaic.dismiss()"
@@ -921,12 +956,16 @@ onUnmounted(() => {
         @current="(mineId) => currentMine.send({ kind: 'painting', mineId })"
         @history="toggleHistory"
         @add="addPressed"
+        @ambience="(mineId) => mosaic.toggleMute(mineId)"
+        @add-mine="mosaic.addProject()"
+        @sorted="(text) => showToast(text, 'sort')"
       >
         <template #art="{ mineId }">
           <ValleMineArt
             v-if="boardMine(mineId) !== null"
             :mine="boardMine(mineId)!"
             :selected-id="focusedDwarf"
+            :arrived="board.state.arrived"
             @dwarf="(dwarf) => dwarfPressed(dwarf, mineId)"
             @crew-sound="crewSound"
           />
@@ -978,6 +1017,7 @@ onUnmounted(() => {
             v-if="boardMine(mineId) !== null"
             :mine="boardMine(mineId)!"
             :selected-id="focusedDwarf"
+            :arrived="board.state.arrived"
             @dwarf="(dwarf) => dwarfPressed(dwarf, mineId)"
             @crew-sound="crewSound"
           />
@@ -1096,10 +1136,7 @@ onUnmounted(() => {
         <ToastHost />
       </div>
     </div>
-    <NeedsYouQueue
-      :entries="needsYou.entries.value"
-      @press="(entry) => needsYou.pressEntry(entry)"
-    />
+    <NeedsYouQueue :entries="needsYou.entries.value" @press="(entry) => jumpNeed(entry)" />
     <div class="dm-vghosts" aria-hidden="true"></div>
     <WorktreeDialog
       :question="mosaic.worktree.value"

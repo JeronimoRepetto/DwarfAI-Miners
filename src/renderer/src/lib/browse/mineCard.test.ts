@@ -11,8 +11,6 @@ import {
 import { filterCards, sortCards } from './minesList'
 import type { BrowseRow, Dwarf, Mine } from '../../types'
 
-const KB = 1024
-
 const dwarf = (over: Partial<Dwarf>): Dwarf =>
   ({ id: 'd', sessionId: 'd', name: 'd', provider: 'claude', status: 'working', ...over }) as Dwarf
 
@@ -26,9 +24,25 @@ const row = (over: Partial<BrowseRow>): BrowseRow => ({
   ...over
 })
 
-const board = (dwarfs: Dwarf[]): Mine[] => [
-  { id: 'm1', path: 'm1', name: 'alpha', tier: 'bronze', dwarfs, tokensObserved: 0, updatedAt: 0 }
+const board = (dwarfs: Dwarf[], over: Partial<Mine> = {}): Mine[] => [
+  {
+    id: 'm1',
+    path: 'm1',
+    name: 'alpha',
+    tier: 'bronze',
+    dwarfs,
+    tokensObserved: 0,
+    updatedAt: 0,
+    ...over
+  }
 ]
+
+/*
+ * AMENDED for AMENDMENT-26 (owner-approved 2026-10-23; was: the weight, the ore and "declared, no weight yet" read off
+ * the list row's `weightBytes`, `materials` and `declared`). The Host's list row (`mines.list`, 14 B-M19) carries the
+ * tier only; the board's `MineWire` carries the ore (`totals`), the score (`score`) and whether the mine is being
+ * measured (`state`), so these cases put them on the board mine. Every expectation is the one it was.
+ */
 
 describe('dwarfNeedsYou', () => {
   it('is a dwarf that asked something or waits on a permission, nothing else', () => {
@@ -72,12 +86,12 @@ describe('crewPills', () => {
 describe('mineCardView', () => {
   it('states a measured mine’s tier, its ore per material, and its way to the next tier', () => {
     const view = mineCardView(
-      row({
-        knownTier: 'silver',
-        weightBytes: 1630 * KB,
+      row({ knownTier: 'silver' }),
+      board([dwarf({})], {
+        tier: 'silver',
+        score: { kb: 1630, nextTierKb: 12_000 },
         materials: { coal: 5000, bronze: 20_000, copper: 0, silver: 0, gold: 0, uranium: 0 }
-      }),
-      board([dwarf({})])
+      })
     )
     expect(view).toMatchObject({
       tier: 'silver',
@@ -94,12 +108,15 @@ describe('mineCardView', () => {
   })
 
   it('shows the top tier as Max tier with its weight, and no bar', () => {
-    const view = mineCardView(row({ knownTier: 'uranium', weightBytes: 200_000 * KB }), board([]))
+    const view = mineCardView(
+      row({ knownTier: 'uranium' }),
+      board([], { tier: 'uranium', score: { kb: 200_000, nextTierKb: null } })
+    )
     expect(view.progress).toEqual({ maxTier: true, value: 200_000 })
   })
 
   it('draws a declared mine nobody has measured as Bronze, measuring, and never as a fact', () => {
-    const view = mineCardView(row({ declared: true }), board([]))
+    const view = mineCardView(row({ declared: true }), board([], { measuring: true }))
     expect(view).toMatchObject({
       tier: 'bronze',
       measured: false,
@@ -113,7 +130,10 @@ describe('mineCardView', () => {
   // from an earlier run and a walk this run still owes it; a stale reading still counts as known
   // (#41), so the card keeps that tier, answers its tier filter and keeps its place.
   it('keeps a re-measured mine’s last tier while it shows Measuring…', () => {
-    const view = mineCardView(row({ declared: true, knownTier: 'copper' }), board([]))
+    const view = mineCardView(
+      row({ declared: true, knownTier: 'copper' }),
+      board([], { tier: 'copper', measuring: true })
+    )
     expect(view).toMatchObject({
       tier: 'copper',
       measured: true,
@@ -123,10 +143,21 @@ describe('mineCardView', () => {
   })
 
   it('ranks a re-measured mine in its tier and a never-measured one last', () => {
+    const onBoard = (id: string, over: Partial<Mine>): Mine[] =>
+      board([], { id, path: id, name: id, ...over })
     const cards = [
-      mineCardView(row({ id: 'new', name: 'new', declared: true }), board([])),
-      mineCardView(row({ id: 'low', name: 'low', knownTier: 'bronze', weightBytes: KB }), []),
-      mineCardView(row({ id: 'again', name: 'again', declared: true, knownTier: 'copper' }), [])
+      mineCardView(
+        row({ id: 'new', name: 'new', declared: true }),
+        onBoard('new', { measuring: true })
+      ),
+      mineCardView(
+        row({ id: 'low', name: 'low', knownTier: 'bronze' }),
+        onBoard('low', { score: { kb: 1, nextTierKb: 350 } })
+      ),
+      mineCardView(
+        row({ id: 'again', name: 'again', declared: true, knownTier: 'copper' }),
+        onBoard('again', { tier: 'copper', measuring: true })
+      )
     ]
     expect(sortCards(cards, 'tier').map((card) => [card.name, card.state])).toEqual([
       ['again', 'measuring'],

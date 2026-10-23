@@ -6,7 +6,7 @@
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { Instant, MineId } from '../../../kernel/domain/values'
 import type { MinePath } from './minePath'
-import { tierFor, type SourceWeight, type Tier, type TierThresholds } from './tier'
+import { BYTES_PER_KB, tierFor, type SourceWeight, type Tier, type TierThresholds } from './tier'
 
 /** The five stored states (07 §3). `removing` is a command in flight, never stored. */
 export type MineState = 'unrecorded' | 'measuring' | 'active' | 'removed' | 'unenterable'
@@ -244,6 +244,29 @@ export function transition(mine: Mine, input: MineInput, now: Instant): MineStep
       // INV-09: a window close, a UI detach, any other Reset event is not a mine input.
       return none(mine)
   }
+}
+
+/**
+ * AMENDMENT-26 (owner-approved 2026-10-23; 06 §0.2 view note, 14 §3.6 `MineWire.score`): a mine's score toward its
+ * next tier — the last measured source weight in KB (06 §4.1, `bytes / 1024`) and the KB floor of the tier after its
+ * own under the active thresholds, `null` at the highest tier.
+ */
+export interface MineScore {
+  readonly kb: number
+  readonly nextTierKb: number | null
+}
+
+/**
+ * The score of a mine, or null where there is none to show: a mine never measured, an `unrecorded` one, or one with
+ * no stored weight or tier. Derived only: a re-measure keeps the last weight (S3.10), so a measuring mine measured
+ * before keeps its score.
+ */
+export function scoreOf(mine: Mine, thresholds: TierThresholds): MineScore | null {
+  if (!mine.hasBeenMeasured || mine.state === 'unrecorded') return null
+  if (mine.sourceWeight === null || mine.tier === null) return null
+  const own = thresholds.findIndex((band) => band.tier === mine.tier)
+  const next = own < 0 ? undefined : thresholds[own + 1]
+  return { kb: mine.sourceWeight.bytes / BYTES_PER_KB, nextTierKb: next?.minKb ?? null }
 }
 
 /** The map marker of a mine, or null for a removed one (PO #14, #37). */

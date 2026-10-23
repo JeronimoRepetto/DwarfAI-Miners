@@ -44,7 +44,7 @@ import {
   type LiveMaterial
 } from '../../modules/ledger'
 import { SqliteLedgerRepository } from '../../modules/ledger/adapters/SqliteLedgerRepository'
-import { createMines, type MinesEvent } from '../../modules/mines'
+import { createMines, type MinesEvent, DEFAULT_TIER_THRESHOLDS } from '../../modules/mines'
 import {
   OBSERVATION_POLL_MS,
   createObservation,
@@ -200,6 +200,7 @@ async function host() {
   /** The walks `remeasure` queued (ISSUE-065), in order. */
   const walks: MineId[] = []
   const mines = createMines({
+    thresholds: DEFAULT_TIER_THRESHOLDS,
     db,
     transactions,
     mapSites: [

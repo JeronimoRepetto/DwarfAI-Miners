@@ -5,12 +5,17 @@
  * "MINES" whose "Show the mines list" unfolds it, beside the one mine. The flag is the Work front layout's alone; the
  * freed width goes to the chat zone through the splitter's width formula (S33.08, ISSUE-305).
  *
- * - The list's rows, one per mine, the one shown marked current: picking another swaps it in place (S28.15, 180 ms).
+ * - The list's rows, one per mine, the one shown marked current: picking another swaps it in place (S28.15, 180 ms). Its
+ *   header holds the sort, "Add a mine" and the fold, a search field lies under it, and a line with dwarfs waiting
+ *   carries the brass "?" (`DS` organisms/mine-rows; EPIC-20 visual parity): the lines are hidden and reordered, never
+ *   rebuilt; the order's toast and the add are the host's (`sorted`, `add-mine`).
  * - The one mine as its zone: the plate, the header with its name, what the zone shows when it is not its mine and the
  *   "⋯" of its zone menu (07 machine 31; ISSUE-304: no mines list and no "Close this column" here), the art, the parts
  *   the dive's FLIP moves into place (`flip.ts`). The art (`art` slot) and the roster (`roster` slot) are the host's,
  *   drawn with the Panel's own parts; "+ Dwarf" under the roster reports the mine (`add`, S29.16). What the zone shows
  *   instead of its mine is the `content` slot.
+ * - ♪ in the mine's toolbar, before History (`DS` organisms/mine-zone `.dm-vz__front-only`; EPIC-20 visual parity): the
+ *   mine's ambience muted or on again, the same mute its zone menu toggles (S31.08), reported (`ambience`).
  * - "Mine history · opens under the chats" in the mine's toolbar asks for the history drawer under the chats (07 S36.01;
  *   US-VALLE-011; ISSUE-308), reporting whether it is open (`aria-expanded`); the drawer itself is the deck's.
  * - The zone registers with the on-screen report (`VALLE_TRACK_ZONE`, S39.05): it counts only while showing its mine.
@@ -20,15 +25,27 @@
  *   header reports it (S35.02).
  */
 import type { MineId, ZoneContent } from '@dwarfai/contracts'
-import { computed, inject, onUnmounted, shallowRef, watch } from 'vue'
+import { computed, inject, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { VALLE_LIST_FOLDED_WIDTH, VALLE_LIST_WIDTH } from '../../lib/valle/preset'
 import type { ZoneMenuEntry, ZoneMenuItemId } from '../../lib/valle/zone'
 import { ADD_DWARF_LABEL } from '../../lib/scene/mineColumn'
 import { mineMinimum } from '../../lib/valle/split'
+import {
+  MINE_ROW_SORT_DEFAULT,
+  MINE_ROWS_EMPTY,
+  mineRowAsk,
+  mineRowLabel,
+  mineRowSortTitle,
+  mineRowSortToast,
+  nextMineRowSort,
+  shownMineRows,
+  type MineRowFacts
+} from '../../lib/valle/mineRows'
 import type { MineTier } from '../../types'
 import TierChip from '../controls/TierChip.vue'
 import PixelIcon from '../icon/PixelIcon.vue'
 import ActionButton from '../controls/ActionButton.vue'
+import InputField from '../controls/InputField.vue'
 import CurrentMineMark from './CurrentMineMark.vue'
 import ZoneHeader from './ZoneHeader.vue'
 import ZoneMenu from './ZoneMenu.vue'
@@ -36,8 +53,20 @@ import { VALLE_TRACK_ZONE } from './valleZones'
 
 const props = defineProps<{
   foldedList: boolean
-  /** The compact list's mines, in order. */
-  mines: readonly { mineId: MineId; name: string; tier?: MineTier | null; crew?: string }[]
+  /**
+   * The compact list's mines: each one's tier, its crew line, and the facts its order and "?" read (`count` dwarfs,
+   * `needs` of them waiting, ever `measured`, `enterable`).
+   */
+  mines: readonly {
+    mineId: MineId
+    name: string
+    tier?: MineTier | null
+    crew?: string
+    count?: number
+    needs?: number
+    measured?: boolean
+    enterable?: boolean
+  }[]
   /** The Work front's one mine, if known. */
   mine: { mineId: MineId; name: string; tier?: MineTier | null; portraits?: number } | null
   /** That mine cannot be entered (`DS` organisms/mine-zone `data-closed`): "+ Dwarf" is disabled. */
@@ -50,6 +79,8 @@ const props = defineProps<{
   moving?: boolean
   /** The history drawer under the chats is drawn (07 machine 36). */
   historyOpen?: boolean
+  /** The mine's ambience is muted (`mutedMineIds`, S31.08): ♪ reads it. */
+  muted?: boolean
 }>()
 const emit = defineEmits<{
   fold: []
@@ -64,6 +95,12 @@ const emit = defineEmits<{
   history: [mineId: MineId]
   /** S29.16: "+ Dwarf" under the roster, a new dwarf in this mine. */
   add: [mineId: MineId]
+  /** ♪ in the mine's toolbar: its ambience muted or on again (S31.08). */
+  ambience: [mineId: MineId]
+  /** "Add a mine" in the list's header. */
+  'add-mine': []
+  /** The order changed: its toast's words. */
+  sorted: [text: string]
 }>()
 
 /** A dwarf's sprite, or a control in the header or the art: its press is its own, never a click on the painting. */
@@ -99,6 +136,32 @@ watch(
 )
 onUnmounted(() => untrack?.())
 
+/** The list's search and order, the list's own view state (`DS` mine-rows.js `query`, `sortI`). */
+const query = ref('')
+const sort = ref(MINE_ROW_SORT_DEFAULT)
+const facts = computed((): MineRowFacts[] =>
+  props.mines.map((row) => ({
+    mineId: row.mineId,
+    name: row.name,
+    tier: row.tier ?? null,
+    measured: row.measured ?? (row.tier ?? null) !== null,
+    crew: row.count ?? 0,
+    enterable: row.enterable ?? true,
+    needs: row.needs ?? 0
+  }))
+)
+const rows = computed(() => {
+  const byId = new Map(props.mines.map((row) => [row.mineId, row]))
+  return shownMineRows(facts.value, query.value, sort.value).map((shown) => ({
+    ...byId.get(shown.mineId)!,
+    facts: shown
+  }))
+})
+function cycleSort(): void {
+  sort.value = nextMineRowSort(sort.value)
+  emit('sorted', mineRowSortToast(sort.value))
+}
+
 const listWidth = computed(
   () => `${props.foldedList ? VALLE_LIST_FOLDED_WIDTH : VALLE_LIST_WIDTH}px`
 )
@@ -123,6 +186,14 @@ const listWidth = computed(
           <h2 class="dm-mrows__title">Mines</h2>
           <span class="dm-mrows__grow"></span>
           <ActionButton
+            icon="sort"
+            size="sm"
+            :title="mineRowSortTitle(sort)"
+            data-mrows-sort
+            @click="cycleSort"
+          />
+          <ActionButton icon="add" size="sm" title="Add a mine" @click="emit('add-mine')" />
+          <ActionButton
             class="dm-mrows__fold"
             icon="chevron"
             size="sm"
@@ -130,23 +201,37 @@ const listWidth = computed(
             @click="emit('fold')"
           />
         </header>
+        <div class="dm-mrows__search">
+          <InputField
+            v-model:value="query"
+            search
+            placeholder="Search mines"
+            label="Search mines"
+          />
+        </div>
         <div class="dm-mrows__list">
           <button
-            v-for="row in mines"
+            v-for="row in rows"
             :key="row.mineId"
             type="button"
             class="dm-mrow"
             :data-valle-row="row.mineId"
             :data-current="row.mineId === mine?.mineId ? 'true' : 'false'"
             :aria-current="row.mineId === mine?.mineId ? 'true' : undefined"
+            :aria-label="mineRowLabel(row.facts)"
+            :data-needs="row.facts.needs > 0 ? 'true' : 'false'"
             @click="emit('pick', row.mineId)"
           >
             <TierChip v-if="row.tier" :tier="row.tier" />
             <span class="dm-mrow__name">{{ row.name }}</span>
             <span v-if="row.crew" class="dm-mrow__crew">{{ row.crew }}</span>
+            <span class="dm-mrow__ask" aria-hidden="true">{{ mineRowAsk(row.facts.needs) }}</span>
             <CurrentMineMark :current="row.mineId === mine?.mineId" size="list" />
           </button>
         </div>
+        <p v-if="rows.length === 0 && mines.length > 0" class="dm-mrows__empty">
+          {{ MINE_ROWS_EMPTY }}
+        </p>
       </div>
     </section>
     <div class="dm-vmines" role="region" aria-label="Mines">
@@ -161,6 +246,7 @@ const listWidth = computed(
         aria-current="true"
         :aria-label="`Mine ${mine.name}, current`"
         :data-closed="closed ? 'true' : 'false'"
+        :data-ambience="muted ? 'off' : 'on'"
         :style="{ '--min-front': `${mineMinimum(mine.portraits ?? 0)}px` }"
       >
         <div class="dm-vz__bg" aria-hidden="true"></div>
@@ -173,6 +259,14 @@ const listWidth = computed(
             @menu="emit('menu')"
           >
             <template #tools>
+              <ActionButton
+                :icon="muted ? 'ambience-off' : 'ambience-on'"
+                size="sm"
+                title="Mine ambience"
+                :pressed="!muted"
+                data-valle-ambience
+                @click="emit('ambience', mine.mineId)"
+              />
               <ActionButton
                 icon="history"
                 size="sm"
@@ -235,7 +329,7 @@ const listWidth = computed(
 }
 .dm-mrows__open {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   gap: 4px;
   min-width: 0;
   min-height: 0;
@@ -258,6 +352,9 @@ const listWidth = computed(
 }
 .dm-mrows__fold :deep(svg) {
   transform: scaleX(-1);
+}
+.dm-mrows__search :deep(.dm-field) {
+  margin: var(--px);
 }
 .dm-mrows__list {
   display: grid;
@@ -320,6 +417,26 @@ const listWidth = computed(
 }
 .dm-mrow[data-current='true'] .dm-mrow__crew {
   color: var(--parch-hi);
+}
+.dm-mrow__ask {
+  grid-column: 3;
+  grid-row: 1 / 3;
+  font: 400 var(--fs-meta) / 1 var(--f-meta);
+}
+.dm-mrow[data-needs='true'] .dm-mrow__ask {
+  display: grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 2px;
+  color: var(--ink-on-light);
+  background: var(--brass);
+  box-shadow: 0 0 0 var(--px) var(--rock-lo);
+}
+.dm-mrows__empty {
+  padding: 8px;
+  font: 400 var(--fs-body) / 1.3 var(--f-meta);
+  color: var(--ink-faint);
 }
 .dm-mrows__unfold {
   --mat-fill: var(--wood);
