@@ -1,10 +1,11 @@
-// The Electron fuse wire reader (ADR-019 item 5; spike S-019-2; later the fuse release check of `20` §2.3).
+// The Electron fuse wire reader (ADR-019 item 5; spike S-019-2; read by P-01, the fuse release check of `20` §2.3).
 //
 // Electron keeps its fuses in the binary as a wire: a fixed 32-byte sentinel, one byte for the wire version, one byte
 // for the number of fuses, then one byte per fuse: '0' disabled, '1' enabled, 'r' removed. On macOS the wire lives in
 // `Contents/Frameworks/Electron Framework.framework/Electron Framework`; on Windows and Linux in the app executable. A
 // universal macOS binary holds two copies, one per slice. This module reads the bytes it is given and nothing else, so
 // it needs no dependency (the format is the one @electron/fuses 1.8 writes, MIT).
+import { loadExpectedFuses } from '../fuses.mjs'
 
 /** The sentinel that precedes the fuse wire in every Electron binary since Electron 12. */
 export const FUSE_SENTINEL = 'dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX'
@@ -22,18 +23,11 @@ export const FUSE_NAMES = [
 ]
 
 /**
- * The fuse set ADR-019 item 5 records. `RunAsNode` stays enabled because the Host runs the app executable with
- * `ELECTRON_RUN_AS_NODE` (ADR-002). Asar integrity is "where supported per OS": S-019-2 records per target whether it
- * holds, so a difference there is evidence, not a failure of the reader.
+ * The fuse set ADR-019 item 5 records, read from scripts/release/fuses.expected.json (the per-target record of S-019-2
+ * that the fuse step flips and P-01 asserts). `RunAsNode` stays enabled because the Host runs the app executable with
+ * `ELECTRON_RUN_AS_NODE` (ADR-002). A target's known limits live beside it in that file (`expectedFusesFor`).
  */
-export const RECORDED_FUSE_SET = {
-  RunAsNode: 'enabled',
-  EnableCookieEncryption: 'enabled',
-  EnableNodeOptionsEnvironmentVariable: 'disabled',
-  EnableNodeCliInspectArguments: 'disabled',
-  EnableEmbeddedAsarIntegrityValidation: 'enabled',
-  OnlyLoadAppFromAsar: 'enabled'
-}
+export const RECORDED_FUSE_SET = loadExpectedFuses().fuses
 
 const STATES = { 0x30: 'disabled', 0x31: 'enabled', 0x72: 'removed' }
 
