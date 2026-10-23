@@ -37,7 +37,7 @@ DwarfAI-Miners has been rebuilt from the ground up. The app is now two parts:
 - the **window**, an Electron client of the Host. Closing it never ends a session; the Host keeps
   running, with its tray icon, until you choose **Stop everything and quit…** in the tray menu.
 
-**[v0.21.0](https://github.com/JeronimoRepetto/DwarfAI-Miners/releases/tag/v0.21.0) is the latest
+**[v0.21.1](https://github.com/JeronimoRepetto/DwarfAI-Miners/releases/tag/v0.21.1) is the latest
 preview of the rebuilt app.** It adds Veta, the compact mode you reach from the Panel's **▼ Veta**
 lever, and the **Mode at launch** choice in Settings › General. It has installers for Windows, macOS
 and Linux, plus `SHA256SUMS`.
