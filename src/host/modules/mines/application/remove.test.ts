@@ -19,6 +19,7 @@ import { InMemoryMineRepository } from '../testing/InMemoryMineRepository'
 import type { MinesEvent } from './events'
 import { MineReadModel } from './mineQueries'
 import { createRemove } from './remove'
+import { DEFAULT_TIER_THRESHOLDS } from '../domain/tier'
 
 const T0 = 1_790_000_000_000
 const T_REMOVE = T0 + 60_000
@@ -91,7 +92,11 @@ function world() {
     abortWalk: (mineId) => timeline.push(`abortWalk ${mineId}`),
     remeasure: (mineId) => remeasured.push(mineId)
   })
-  const queries = new MineReadModel({ repository, presentDwarfs: repository })
+  const queries = new MineReadModel({
+    thresholds: DEFAULT_TIER_THRESHOLDS,
+    repository,
+    presentDwarfs: repository
+  })
   /** A mine stored with `over`, with `dwarfs` seated in it, as the repository returns it. */
   const mine = (id: MineId, name: string, over: Partial<Mine>, dwarfs: DwarfId[] = []): Mine => {
     const opened = openMine(

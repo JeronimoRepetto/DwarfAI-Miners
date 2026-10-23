@@ -9,7 +9,7 @@ import {
   type MineInput
 } from '../domain/mine'
 import { canonicalMinePath } from '../domain/minePath'
-import { DEFAULT_TIER_THRESHOLDS } from '../domain/tier'
+import { DEFAULT_TIER_THRESHOLDS, tierThresholdsFrom } from '../domain/tier'
 import { InMemoryMineRepository } from '../testing/InMemoryMineRepository'
 import { MineReadModel } from './mineQueries'
 
@@ -87,8 +87,12 @@ function world() {
   repository.seatDwarf(alpha.id, true)
   repository.seatDwarf(alpha.id, false)
   repository.seatDwarf(delta.id, true)
-  const queries = new MineReadModel({ repository, presentDwarfs: repository })
-  return { queries, alpha, bravo, charlie, delta, echo }
+  const queries = new MineReadModel({
+    repository,
+    presentDwarfs: repository,
+    thresholds: DEFAULT_TIER_THRESHOLDS
+  })
+  return { repository, save, queries, alpha, bravo, charlie, delta, echo }
 }
 
 describe('MinesQueries (16 §4.1; 14 B-M19)', () => {
@@ -165,5 +169,43 @@ describe('MinesQueries (16 §4.1; 14 B-M19)', () => {
     expect(queries.folderOf(echo.id)).toBeNull()
     expect(queries.get(nextId())).toBeNull()
     expect(queries.folderOf(nextId())).toBeNull()
+  })
+
+  // AMENDMENT-26 (owner-approved 2026-10-23; 06 §0.2 view note): the Mine view carries its score, derived from the
+  // last measured `SourceWeight` and the Host's active thresholds; nothing new is stored.
+  it('[US-MINES-008.AC01, US-MINES-008.AC02] get carries a measured mine score in KB and the next tier KB floor, null at the top tier', () => {
+    const { queries, repository, save, alpha, bravo, charlie } = world()
+
+    expect(queries.get(alpha.id)?.score).toEqual({ kb: 400, nextTierKb: 1_500 })
+    expect(queries.get(bravo.id)?.score).toEqual({ kb: 2_000, nextTierKb: 12_000 })
+    // KB is `bytes / 1024`, never rounded on the Host.
+    const odd = then(declared('odd', T0), {
+      type: 'measured',
+      sourceWeight: { bytes: 1_669_632 },
+      thresholds: DEFAULT_TIER_THRESHOLDS
+    })
+    const top = measured(declared('top', T0), 150_000)
+    save(odd, top)
+    expect(queries.get(odd.id)?.score).toEqual({ kb: 1_630.5, nextTierKb: 12_000 })
+    expect(queries.get(top.id)?.score).toEqual({ kb: 150_000, nextTierKb: null })
+    // Never measured: no score (a declared mine still measuring, an observed one unrecorded).
+    expect(queries.get(charlie.id)).not.toHaveProperty('score')
+    // A re-measure keeps the last weight, so the score stays while the mine is measuring (S3.10).
+    const again = then(alpha, { type: 'remeasure-requested' })
+    save(again)
+    expect(queries.get(alpha.id)).toMatchObject({
+      state: 'measuring',
+      score: { kb: 400, nextTierKb: 1_500 }
+    })
+
+    // The thresholds are the Host's active ones (06 §4.1, environment-overridable).
+    const overridden = tierThresholdsFrom({ TIER_SILVER_KB: '1000' }).thresholds
+    const other = new MineReadModel({
+      repository,
+      presentDwarfs: repository,
+      thresholds: overridden
+    })
+    expect(other.get(bravo.id)?.score).toEqual({ kb: 2_000, nextTierKb: 12_000 })
+    expect(other.get(alpha.id)?.score).toEqual({ kb: 400, nextTierKb: 1_000 })
   })
 })

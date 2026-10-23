@@ -27,7 +27,12 @@ import { RecordingEventBus } from '../../kernel/fakes/RecordingEventBus'
 import { SequenceIdGenerator } from '../../kernel/fakes/SequenceIdGenerator'
 import type { DwarfId, EventId, FolderPath, MineId } from '../../kernel/domain/values'
 import { createCrew, type CrewEvent } from '../../modules/crew'
-import { MINE_FOLDER_CHECK_MS, createMines, type MinesEvent } from '../../modules/mines'
+import {
+  MINE_FOLDER_CHECK_MS,
+  createMines,
+  type MinesEvent,
+  DEFAULT_TIER_THRESHOLDS
+} from '../../modules/mines'
 import {
   OBSERVATION_POLL_MS,
   createObservation,
@@ -73,6 +78,7 @@ async function host() {
   const fs = new NodeFs()
 
   const mines = createMines({
+    thresholds: DEFAULT_TIER_THRESHOLDS,
     db,
     transactions,
     mapSites: [{ xPct: 10, yPct: 20 }],

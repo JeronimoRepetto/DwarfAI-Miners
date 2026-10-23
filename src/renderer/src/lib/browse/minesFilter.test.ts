@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { filterCards } from './minesList'
 import { mineCardView, type MineCardView } from './mineCard'
-import type { BrowseRow } from '../../types'
+import type { BrowseRow, Mine } from '../../types'
 
 /*
  * ISSUE-253: the Mines page's search and tier filter (US-MINES-001, US-MINES-002), over cards built
@@ -70,13 +70,19 @@ describe('ISSUE-253 mines filter', () => {
   })
 
   it('[US-MINES-002.AC06, US-MINES-002.AC07] an unmeasured mine appears only under All with the Bronze placeholder and a re-measured mine keeps answering its last known tier', () => {
-    const [fresh, again] = cardsOf([
-      { name: 'fresh' },
-      { name: 'again', knownTier: 'silver' } // declared, no weight yet: re-measured
-    ])
+    // AMENDED for AMENDMENT-26 (owner-approved 2026-10-23; was: a declared row with no weight read as measuring):
+    // measuring is the Host's `MineWire.state`, which the board carries; the list row no longer says it.
+    const measuring = (id: string, tier: Mine['tier']): Mine[] => [
+      { id, path: id, name: id, tier, dwarfs: [], tokensObserved: 0, updatedAt: 0, measuring: true }
+    ]
+    const fresh = mineCardView(row({ name: 'fresh' }), measuring('fresh', 'bronze'))
+    const again = mineCardView(
+      row({ name: 'again', knownTier: 'silver' }), // measured before, measured again now
+      measuring('again', 'silver')
+    )
     expect(fresh).toMatchObject({ tier: 'bronze', measured: false, state: 'measuring' })
     expect(again).toMatchObject({ tier: 'silver', measured: true, state: 'measuring' })
-    const cards = [...valley, fresh!, again!]
+    const cards = [...valley, fresh, again]
     for (const tier of ['bronze', 'copper', 'silver', 'gold', 'uranium'] as const) {
       expect(names(filterCards(cards, '', tier))).not.toContain('fresh')
     }

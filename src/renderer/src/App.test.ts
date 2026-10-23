@@ -4058,7 +4058,13 @@ describe('App launch view (#635, PANEL-QUESTIONS 25)', () => {
  * the person stayed on the page. The board push carries each mine's measured weight; when it
  * shows one the list has not caught, the list is read again, quietly, while it is on screen.
  */
+/*
+ * AMENDED for AMENDMENT-26 (owner-approved 2026-10-23; was: the board mine's and the row's `weightBytes`, a pair no
+ * Host wire carries): the board's reading is `score` (`MineWire.score`) with its measured tier, and the re-read row
+ * carries the tier (`mines.list`). Same flow, same answers.
+ */
 describe('App keeping the Mines list current (#635)', () => {
+  const READING = { kb: 2_930, nextTierKb: 100_000 }
   const BOARD_MINE = {
     id: 'mine:a',
     path: 'a',
@@ -4089,14 +4095,14 @@ describe('App keeping the Mines list current (#635)', () => {
     const push = publishBoard as (snapshot: unknown) => void
     queryProjects.mockResolvedValue({
       answered: true,
-      projects: [{ ...MEASURING, knownTier: 'gold', weightBytes: 3_000_000 }]
+      projects: [{ ...MEASURING, knownTier: 'gold' }]
     })
-    push({ mines: [{ ...BOARD_MINE, weightBytes: 3_000_000 }], tokensObserved: 0 })
+    push({ mines: [{ ...BOARD_MINE, score: READING }], tokensObserved: 0 })
     await flushPromises()
     expect(queryProjects.mock.calls.length).toBe(asked + 1)
     expect(wrapper.find('.dm-card').attributes('data-state')).toBe('active')
     // The list has caught up: the next poll with the same reading asks nothing.
-    push({ mines: [{ ...BOARD_MINE, weightBytes: 3_000_000 }], tokensObserved: 0 })
+    push({ mines: [{ ...BOARD_MINE, score: READING }], tokensObserved: 0 })
     await flushPromises()
     expect(queryProjects.mock.calls.length).toBe(asked + 1)
   })
@@ -4106,7 +4112,7 @@ describe('App keeping the Mines list current (#635)', () => {
     await mountOpenApp({ queryProjects })
     const asked = queryProjects.mock.calls.length
     const push = publishBoard as (snapshot: unknown) => void
-    push({ mines: [{ ...BOARD_MINE, weightBytes: 3_000_000 }], tokensObserved: 0 })
+    push({ mines: [{ ...BOARD_MINE, score: READING }], tokensObserved: 0 })
     await flushPromises()
     expect(queryProjects.mock.calls.length).toBe(asked)
   })

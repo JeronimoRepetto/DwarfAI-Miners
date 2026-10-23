@@ -81,7 +81,11 @@ export function toMineWire(view: MineView, totals: MaterialTotals): MineWire {
       silver: { tokens: totals.silver.tokens },
       gold: { tokens: totals.gold.tokens },
       uranium: { tokens: totals.uranium.tokens }
-    }
+    },
+    // Amended: AMENDMENT-26 (owner-approved 2026-10-23): the score toward the next tier, once measured.
+    ...(view.score === undefined
+      ? {}
+      : { score: { kb: view.score.kb, nextTierKb: view.score.nextTierKb } })
   }
 }
 

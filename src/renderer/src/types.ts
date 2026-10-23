@@ -1,7 +1,7 @@
 import type {
   DwarfPermissionDecision,
   MaterialTotals,
-  Mine,
+  Mine as TodayMine,
   ProjectSummary,
   LaunchView
 } from '../../contracts/wire/today'
@@ -81,7 +81,6 @@ export type {
   McpConnectionStatus,
   MessageIssuer,
   MetricsResetResult,
-  Mine,
   MineDeclareResult,
   MineHistoryResult,
   MineHistorySpeaker,
@@ -258,6 +257,22 @@ export {
   parseOpenCodeServerPasswordInput
   /* --- end of the #588 T6 block ------------------------------------------------ */
 } from '../../contracts/wire/today'
+
+/**
+ * A mine on the board as the renderer holds it: today's board shape, plus what the Host's `MineWire` (14 §3.6) says
+ * that today's shape has no field for, so the mine card reads it off the board rather than off a list row that never
+ * carries it (`MineSummaryWire`, 14 B-M19).
+ */
+export interface Mine extends TodayMine {
+  /**
+   * The mine's score toward its next tier, as the Host measured it (`MineWire.score`, AMENDMENT-26, owner-approved
+   * 2026-10-23): the source weight in KB and the next tier's KB floor under the Host's active thresholds, `null` at
+   * the top tier. Absent while never measured or unrecorded.
+   */
+  score?: { kb: number; nextTierKb: number | null }
+  /** True while the Host is measuring the mine (`MineWire.state` `measuring`, US-MINES-008.AC03, AC04). */
+  measuring?: boolean
+}
 
 /** Root state for the mines store. */
 export interface MinesState {

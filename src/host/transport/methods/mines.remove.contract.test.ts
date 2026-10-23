@@ -151,6 +151,7 @@ async function host() {
   const transactions = new SqliteTransactionRunner(db)
   const bus = new RecordingEventBus<HostEvent>({ transactionScope: transactions })
   const mines = createMines({
+    thresholds: DEFAULT_TIER_THRESHOLDS,
     db,
     transactions,
     mapSites: [{ xPct: 10, yPct: 20 }],
