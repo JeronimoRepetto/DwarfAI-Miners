@@ -182,10 +182,18 @@ describe('the MessagePanel hosted in a Valle zone or pane (ISSUE-305)', () => {
         width: '100%',
         'min-width': 'min-content'
       })
-      // Only the panel's root is sized: no Valle rule reaches inside it, so the portrait, the header tools, Attach and
-      // Send keep the sizes the panel gives them while the name, the chips and the writing well give way.
+      // Only the panel's root is sized: no Valle rule sizes anything inside it, so the portrait, the header tools,
+      // Attach and Send keep the sizes the panel gives them while the name, the chips and the writing well give way. The
+      // one rule inside, in the stack, sizes nothing: it keeps the log's length out of the open chat's floor (Valle QA
+      // VQA-01, `contain: size`), so the log still scrolls inside the room the layout gives it.
       const deep = source(host.file).match(/:deep\([^)]*\)/g) ?? []
-      expect(new Set(deep), host.file).toEqual(new Set([':deep(.dm-msg)', ':deep(.dm-add)']))
+      expect(new Set(deep), host.file).toEqual(
+        new Set([
+          ':deep(.dm-msg)',
+          ':deep(.dm-add)',
+          ...(host === HOSTS.zone ? [':deep(.dm-msg .dm-msg__log)'] : [])
+        ])
+      )
     }
     // The panels never grow past their host either.
     expect(declarations('../message/DwarfMessagePanel.vue', '.dm-msg')['max-width']).toBe('100%')
