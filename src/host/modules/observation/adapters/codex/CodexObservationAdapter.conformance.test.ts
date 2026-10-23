@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
+import type { DwarfId } from '../../../../kernel/domain/values'
 import { FakeClock } from '../../../../kernel/fakes/FakeClock'
 import { NodeFs } from '../../../../platform/fs/NodeFs'
 import { NodeSqliteDatabase } from '../../../../platform/sqlite/NodeSqliteDatabase'
@@ -324,6 +325,43 @@ describe('CodexObservationAdapter conformance (fixtures/codex/observer)', () => 
     const { home: codexHome } = await homeWithRollout('turn-with-usage.jsonl')
     expect(await adapterAt(codexHome).discover(new NodeFs())).toHaveLength(1)
     expect(await adapterAt(join(codexHome, 'elsewhere')).discover(new NodeFs())).toEqual([])
+  })
+
+  // VQA-06: the rollout's entries were keyed by a hash of the file path, never the live stream's
+  // `codex:codex:<threadId>:<itemId>` (15 §4.4 Keys), so a launched dwarf's reply was stored twice.
+  it('[INV-60, C-19] a rollout keys its facts by the thread id, as the live stream does (15 §1.5, §4.4)', async () => {
+    const thread = '01a0b000-0000-7000-8000-000000000731'
+    const { home } = await homeWithRollout('turn-with-usage.jsonl')
+    const adapter = adapterAt(home)
+    const source = await onlySource(adapter, 'rollout')
+    const read = await adapter.read(source, null)
+
+    const entryKeys = read.events.flatMap((e) =>
+      e.kind === 'entries' ? e.entries.map((x) => x.sourceKey) : []
+    )
+    expect(entryKeys).toContain(`codex:codex:${thread}:msg_0731_0001`)
+    expect(entryKeys).toContain(`codex:codex:${thread}:msg_0731_0002`)
+    const usageKeys = read.events.flatMap((e) => (e.kind === 'usage' ? [e.usage.sourceKey] : []))
+    expect(usageKeys.length).toBeGreaterThan(0)
+    for (const key of [...entryKeys, ...usageKeys]) {
+      expect(key.startsWith(`codex:codex:${thread}:`), key).toBe(true)
+    }
+
+    // A window read of the same stream (TranscriptReader) yields the same keys.
+    const window = await adapter.entries(
+      { dwarfId: '00000000-0000-7000-8000-000000000731' as DwarfId, streamIds: [source.streamId] },
+      { limit: 50 }
+    )
+    expect(window.map((x) => x.sourceKey)).toEqual(entryKeys)
+
+    // So does a window read before any read of it (a Host restart).
+    const restarted = adapterAt(home)
+    const again = await onlySource(restarted, 'rollout')
+    const cold = await restarted.entries(
+      { dwarfId: '00000000-0000-7000-8000-000000000731' as DwarfId, streamIds: [again.streamId] },
+      { limit: 50 }
+    )
+    expect(cold.map((x) => x.sourceKey)).toEqual(entryKeys)
   })
 
   it('[FM-090] a busy Codex state database is read again next cycle, with no event and no warning', async () => {

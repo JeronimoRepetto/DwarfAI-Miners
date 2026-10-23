@@ -183,6 +183,27 @@ describe('createConversation', () => {
     }
   })
 
+  // VQA-06: a launched Codex dwarf's reply reaches ingest from the live stream and from its rollout,
+  // both keyed `codex:codex:<threadId>:<itemId>` (15 §1.5, §4.4), in either order.
+  it('[INV-60, ADR-006] a Codex reply keyed alike on both paths is stored once in either order, and two identical replies stay two', () => {
+    const reply = (item: string): ConversationEntry => ({
+      sourceKey: `codex:codex:019a0000-0000-7000-8000-00000000c0de:${item}`,
+      role: 'dwarf',
+      text: 'All checks passed.',
+      providerTime: T0
+    })
+    for (const order of [
+      ['transcript', 'live-stream'],
+      ['live-stream', 'transcript']
+    ] as const) {
+      const { conversation, dwarf, count } = setUp()
+      for (const origin of order) conversation.commands.ingest(dwarf, [reply('item-1')], origin)
+      expect(count('messages'), order.join(' → ')).toBe(1)
+      for (const origin of order) conversation.commands.ingest(dwarf, [reply('item-2')], origin)
+      expect(count('messages'), order.join(' → ')).toBe(2)
+    }
+  })
+
   it('[ADR-007] a 65 537-byte text fails the messages CHECK and rolls back the whole batch with nothing published', () => {
     const { conversation, bus, dwarf, count } = setUp()
 
