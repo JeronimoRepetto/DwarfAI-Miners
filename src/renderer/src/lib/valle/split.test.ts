@@ -3,6 +3,8 @@ import { BORIN, DAIN, FLOI, NALI } from '../veta/testing/vetaFixtures'
 import { addKey, type PinKey } from './pins'
 import {
   SPLIT_OFF,
+  controlMinimum,
+  mineMinimum,
   restoredSplit,
   splitButton,
   splitPanes,
@@ -333,6 +335,25 @@ describe('machine 30 diagram conformance', () => {
     ]
     for (const [body, foldedList, portraits, room] of table) {
       expect(splitRoom({ body, foldedList, portraits }), `${portraits} ${foldedList}`).toBe(room)
+    }
+  })
+})
+
+// APPENDED for the zones' plates (EPIC-20 package gap): a zone is never narrower than its roster
+// (`DS/docs/screens/valle.md` Layout, VA3; `organisms/mine-zone` `mineZoneMin`).
+describe("a mine zone's minimum width", () => {
+  it('a Control room column keeps 232 px, or its roster (16 px of plate, 48 px a portrait up to five, 48 px of tools) when wider', () => {
+    const table: readonly [portraits: number, control: number, front: number][] = [
+      [0, 232, 300],
+      [1, 232, 300],
+      [3, 232, 300],
+      [4, 256, 320],
+      [5, 304, 368],
+      [9, 304, 368]
+    ]
+    for (const [portraits, control, front] of table) {
+      expect(controlMinimum(portraits), `${portraits}`).toBe(control)
+      expect(mineMinimum(portraits), `${portraits}`).toBe(front)
     }
   })
 })

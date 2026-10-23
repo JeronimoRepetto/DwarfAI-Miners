@@ -71,7 +71,13 @@ describe('noTimers', () => {
     const clockMakers = SOURCES.filter(({ text }) => /\bcreateFrameClock\s*\(/.test(code(text)))
       .map(({ path }) => path)
       .filter((path) => path !== 'lib/sprite/frameClock.ts')
-    expect(clockMakers).toEqual(['composables/useFramePlayer.ts'])
+    // AMENDED for the Valle zones' mine art (EPIC-20 package gap): ADR-034 item 5 (S-034-1, measured by ISSUE-298) gives
+    // each Control-room column a sprite clock of its own, paused while the column is out of view; every sprite of a
+    // zone shares its zone's clock, so still no sprite runs a clock of its own.
+    expect(clockMakers.sort()).toEqual([
+      'composables/useFramePlayer.ts',
+      'composables/useValleArtClocks.ts'
+    ])
 
     const frameMath = SOURCES.filter(({ text }) =>
       /\b(sequenceFrameAt|sequenceNextChangeMs|sheetFrameAt)\s*\(/.test(code(text))

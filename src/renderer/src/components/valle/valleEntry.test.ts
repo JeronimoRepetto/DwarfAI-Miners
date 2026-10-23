@@ -68,8 +68,12 @@ describe('the Valle entry of the renderer (ADR-025 item 1; 05 §2.3; ISSUE-299)'
     // AMENDED for ISSUE-306: the top bar holds the needs-you counter, "Nobody waiting" (its "?" and "▸" hidden by its
     // style when disabled, `organisms/valle-bar`), and the footer is the needs-you queue, "Needs you" and its empty line
     // (`organisms/needs-queue`; 07 machine 34 `nobody-waiting`).
+    // AMENDED for Valle's visual parity (EPIC-20 package gap): the bar in the design's order (`organisms/valle-bar`:
+    // tabs, the "⋯" now the design's icon button, the ore totals with the Panel's own empty line, the counter, the
+    // lever's buttons), the list's fold now the design's chevron icon, and each list line with its tier chip and crew line
+    // (`organisms/mine-rows`).
     expect(root.text().replace(/\s+/g, ' ').trim()).toBe(
-      'Control roomWork front?Nobody waiting▸ ⋯ MODE ▼ Panel ▼ Veta Mines ⇤ moria⫽No chats pinned. Click a dwarf in the mine to open one.Needs youNobody is waiting on you.'
+      'Control roomWork frontOreNo ore yet?Nobody waiting▸MODE▼ Panel▼ VetaMinesSilvermoria1 dwarf⫽No chats pinned. Click a dwarf in the mine to open one.Needs youNobody is waiting on you.'
     )
     root.unmount()
   })

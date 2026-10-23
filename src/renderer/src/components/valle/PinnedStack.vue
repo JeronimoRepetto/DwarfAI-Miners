@@ -85,6 +85,7 @@ function onAuxClick(event: MouseEvent, key: PinKey): void {
           @auxclick="onAuxClick($event, pin.key)"
         >
           <div class="dm-cstack__row m-mat" :data-needs="pin.text.needs ? 'true' : 'false'">
+            <slot name="portrait" :pin="pin" />
             <span class="dm-cstack__name">{{ pin.text.name }}</span>
             <span class="dm-cstack__state">{{ pin.text.line }}</span>
             <button
@@ -114,6 +115,7 @@ function onAuxClick(event: MouseEvent, key: PinKey): void {
           @keydown="onLineKey($event, pin.key)"
           @auxclick="onAuxClick($event, pin.key)"
         >
+          <slot name="portrait" :pin="pin" />
           <span class="dm-cstack__name">{{ pin.text.name }}</span>
           <span class="dm-cstack__state">{{ pin.text.line }}</span>
           <button

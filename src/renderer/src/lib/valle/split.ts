@@ -272,6 +272,11 @@ export function mineMinimum(portraits: number): number {
   return Math.max(300, 16 + 48 * Math.min(Math.max(portraits, 0), 5) + 112)
 }
 
+/** A Control room column's minimum: `max(232, 16 + 48 × portraits (≤ 5) + 48)` (`DS` organisms/mine-zone). */
+export function controlMinimum(portraits: number): number {
+  return Math.max(232, 16 + 48 * Math.min(Math.max(portraits, 0), 5) + 48)
+}
+
 /**
  * 07 machine 30's room: the body's width − nav 56 − splitter 12 − 3 × 6 px gaps − the list (232, or 44 folded) − 6 px −
  * the mine's Work front minimum. The split needs 640 px of it.

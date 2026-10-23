@@ -11,6 +11,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createFakeWindowApi } from '../../../../contracts/ipc/testing/fakeWindowApi'
 import { modeTransitionPart } from '../../composables/useModeTransition'
 import type { ValleBodyObserver } from '../../composables/useValleSplit'
+import type { VallePresenceDeps } from '../../composables/useVallePresence'
+import { stoppedFrameClock, type PausableFrameClock } from '../../lib/sprite/frameClock'
+import SceneDwarf from '../scene/SceneDwarf.vue'
 import { VALLE_STORE_DEFAULTS, type ValleStores } from '../../composables/useValleStores'
 import type { ValleClock } from '../../lib/valle/flip'
 import { defaultValleLayouts } from '../../lib/valle/preset'
@@ -26,7 +29,12 @@ import {
   mineWire,
   snapshotPage
 } from '../../lib/veta/testing/vetaFixtures'
-import { AMBIENCE_SRC, UI_SFX_SRC } from '../../lib/audio/audioAssets'
+import {
+  AMBIENCE_SRC,
+  CREW_SFX_SRC,
+  DWARF_VOICE_SRC,
+  UI_SFX_SRC
+} from '../../lib/audio/audioAssets'
 import { createFakeAudioPlayer, type FakeAudioPlayer } from '../../lib/audio/fakeAudioPlayer'
 import { DEFAULT_AUDIO_PREFERENCES, type ProjectSummary } from '../../types'
 import HistoryPanel from '../history/HistoryPanel.vue'
@@ -103,7 +111,13 @@ function mountValle(
   stores: Partial<ValleStores>,
   bodyObserver: ValleBodyObserver = () => () => {},
   // AMENDED for ISSUE-304: members a case answers itself (the Settings page's reads and writes).
-  overrides: Partial<Window['api']> = {}
+  overrides: Partial<Window['api']> = {},
+  // AMENDED for the zones' mine art (EPIC-20 package gap): the viewport observer and each zone's frame clock, when a
+  // case watches them.
+  seams: {
+    observer?: VallePresenceDeps['observer']
+    artClock?: () => PausableFrameClock
+  } = {}
 ) {
   const writes: UiPreferenceWrite[] = []
   const moves: MoveToModeParams[] = []
@@ -151,11 +165,12 @@ function mountValle(
     props: {
       bridge: valleBridgeOf(api),
       stores: { ...VALLE_STORE_DEFAULTS, ...stores },
-      observer: () => new InertObserver(),
+      observer: seams.observer ?? (() => new InertObserver()),
       // jsdom has no ResizeObserver: unless a test measures the body, it never is, and the split stays off.
       bodyObserver,
       clock,
-      audioPlayer: player
+      audioPlayer: player,
+      ...(seams.artClock === undefined ? {} : { artClock: seams.artClock })
     }
   })
   /** A-N02: one batch of Host frames, to every listener. */
@@ -544,7 +559,9 @@ describe('the Valle zones in the on-screen report (ISSUE-304)', () => {
         bridge: valleBridgeOf(api),
         stores: { ...VALLE_STORE_DEFAULTS, preset: 'control', mosaicOrder: [MORIA, EREBOR] },
         observer: (callback) => {
-          seen = callback
+          // AMENDED for the zones' mine art (EPIC-20 package gap): the zones' art clocks build a second observer
+          // from the same factory; the first built is the on-screen report's, the one this case drives.
+          seen ??= callback
           return {
             observe: (element: Element) => void observed.push(element),
             unobserve: () => {},
@@ -1764,5 +1781,257 @@ describe('the reduced-motion stand-ins in the Valle root (ISSUE-311)', () => {
     // The scroll lands at once: no smooth scroll under reduced motion; the saved scroll follows it.
     expect(scrolls).toEqual([{ left: 300, behavior: 'auto' }])
     expect(patches).toContainEqual({ kind: 'valle', patch: { mosaicScrollLeft: 300 } })
+  })
+})
+
+// APPENDED for the zones' mine art (an EPIC-20 package gap resolved in development): each zone showing its mine draws
+// the Panel's own interior, its crew on their stations and the crew roster, and a dwarf pressed there pins its chat.
+describe('the mine art in the Valle zones (EPIC-20 package gap)', () => {
+  /** Borin in Moria and Dain in Erebor, both present. */
+  const twoMines = (): Partial<Window['api']> => ({
+    getHostSnapshot: () =>
+      Promise.resolve(
+        snapshotPage(10, {
+          minesEverKnown: true,
+          mines: [mineWire(MORIA), mineWire(EREBOR)],
+          dwarfs: [dwarfWire(BORIN, MORIA), dwarfWire(DAIN, EREBOR)]
+        })
+      ) as never
+  })
+  const zone = (root: VueWrapper, mineId: string) => root.get(`[data-valle-column="${mineId}"]`)
+  const sprite = (root: VueWrapper, mineId: string, dwarfId: string) =>
+    zone(root, mineId).get(`.dm-dwarf[data-dwarf="${dwarfId}"]`)
+  const current = (root: VueWrapper): string[] =>
+    root
+      .findAll('[data-valle-zone][aria-current="true"]')
+      .map((element) => element.attributes('aria-label')!)
+  /** The pin whose chat is expanded in the stack, or null. */
+  const open = (root: VueWrapper): string | null =>
+    root.element.querySelector('.dm-cstack__open')?.getAttribute('data-pin') ?? null
+
+  it('[S29.03, S29.04, S29.05, S35.01, US-VALLE-007.AC01, US-VALLE-014.AC02] a dwarf pressed on its sprite or its roster portrait in a zone is pinned and focused, its mine made current', async () => {
+    const { root, player, clock } = mountValle(
+      { preset: 'control', mosaicOrder: [MORIA, EREBOR], pins: [] },
+      undefined,
+      twoMines()
+    )
+    await flushPromises()
+    // Each zone draws its own interior with its own crew on it, and the crew's roster under it.
+    expect(
+      zone(root, MORIA)
+        .findAll('.dm-dwarf')
+        .map((d) => d.attributes('data-dwarf'))
+    ).toEqual([BORIN])
+    expect(
+      zone(root, EREBOR)
+        .findAll('.dm-dwarf')
+        .map((d) => d.attributes('data-dwarf'))
+    ).toEqual([DAIN])
+    expect(zone(root, EREBOR).find(`.dm-roster [data-dwarf="${DAIN}"]`).exists()).toBe(true)
+    expect(current(root)).toEqual(['Mine moria, current'])
+
+    // S29.03: Dain's sprite, in the other mine: pinned, focused, his mine current, his voice line heard (S35.07).
+    await sprite(root, EREBOR, DAIN).trigger('click')
+    await flushPromises()
+    expect(open(root)).toBe(DAIN)
+    expect(current(root)).toEqual(['Mine erebor, current'])
+    expect(sprite(root, EREBOR, DAIN).attributes('aria-pressed')).toBe('true')
+    expect(player.clips.some((clip) => clip.src === DWARF_VOICE_SRC.worker)).toBe(true)
+
+    // S29.04: Borin's roster portrait: appended last and focused, Dain's line collapsed, Moria current.
+    await zone(root, MORIA).get(`.dm-roster [data-dwarf="${BORIN}"]`).trigger('click')
+    await flushPromises()
+    expect(open(root)).toBe(BORIN)
+    expect(root.find(`.dm-cstack__row[data-pin="${DAIN}"]`).exists()).toBe(true)
+    expect(current(root)).toEqual(['Mine moria, current'])
+
+    // S29.05: Dain again: focus only, no second pin.
+    await sprite(root, EREBOR, DAIN).trigger('click')
+    await flushPromises()
+    expect(open(root)).toBe(DAIN)
+    expect(root.findAll(`.dm-cstack [data-pin="${DAIN}"]`)).toHaveLength(1)
+
+    // S35.01: another mine made current by its painting, then Dain, already in focus, pressed again: Erebor again.
+    await zone(root, MORIA).get('.dm-vz__well').trigger('click')
+    expect(current(root)).toEqual(['Mine moria, current'])
+    await sprite(root, EREBOR, DAIN).trigger('click')
+    await flushPromises()
+    expect(current(root)).toEqual(['Mine erebor, current'])
+
+    // S28.05: a double-click on a sprite never dives.
+    await sprite(root, EREBOR, DAIN).trigger('dblclick')
+    clock.advance(330)
+    await flushPromises()
+    expect(root.get('[data-valle-root]').attributes('data-preset')).toBe('control')
+  })
+
+  it('[S29.16, US-VALLE-007.AC12, US-VALLE-007.AC15] "+" under a Control room zone and "+ Dwarf" under the Work front mine open the Add panel pinned and focused, aimed at that mine', async () => {
+    const { root } = mountValle(
+      { preset: 'control', mosaicOrder: [MORIA, EREBOR], pins: [] },
+      undefined,
+      twoMines()
+    )
+    await flushPromises()
+    const plus = zone(root, EREBOR).get('button[title="New dwarf in erebor"]')
+    expect(plus.attributes('aria-label')).toBe('New dwarf in erebor')
+    await plus.trigger('click')
+    await flushPromises()
+    expect(open(root)).toBe(`add:${EREBOR}`)
+    expect(root.findComponent(AddPanel).exists()).toBe(true)
+
+    root.unmount()
+    const front = mountValle(
+      { preset: 'front', lastFrontMineId: MORIA, pins: [] },
+      undefined,
+      twoMines()
+    ).root
+    await flushPromises()
+    const add = front
+      .get(`[data-valle-front-mine="${MORIA}"]`)
+      .findAll('button')
+      .find((button) => button.text() === '+ Dwarf')
+    await add!.trigger('click')
+    await flushPromises()
+    expect(front.get('.dm-cdeck [role="tab"][aria-selected="true"]').attributes('data-pin')).toBe(
+      `add:${MORIA}`
+    )
+    expect(front.findComponent(AddPanel).exists()).toBe(true)
+  })
+
+  it("[US-VALLE-016.AC03, S35.07] only the current mine's crew is heard: a sound from another zone's crew plays nothing", async () => {
+    const { root, player } = mountValle(
+      { preset: 'control', mosaicOrder: [MORIA, EREBOR], pins: [] },
+      undefined,
+      twoMines()
+    )
+    await flushPromises()
+    const walk = CREW_SFX_SRC.worker.walk[0]!
+    const crew = (dwarfId: string) =>
+      root
+        .findAllComponents(SceneDwarf)
+        .find((dwarf) => (dwarf.props('dwarf') as { id: string }).id === dwarfId)!
+    // Moria is current (S35.06): Dain's footsteps in Erebor are silent, Borin's in Moria are heard.
+    crew(DAIN).vm.$emit('crew-sound', { cue: 'walk' })
+    await flushPromises()
+    expect(player.liveOf(walk)).toHaveLength(0)
+    crew(BORIN).vm.$emit('crew-sound', { cue: 'walk' })
+    await flushPromises()
+    expect(player.liveOf(walk)).toHaveLength(1)
+  })
+
+  it('[NFR-PERF-10] a zone outside the viewport holds its crew on the frame it shows, and plays again once back in view', async () => {
+    const observers: {
+      options: { threshold: number[] }
+      callback: (entries: { target: Element; intersectionRatio: number }[]) => void
+      observed: Set<Element>
+    }[] = []
+    const observer: VallePresenceDeps['observer'] = (callback, options) => {
+      const record = { options, callback, observed: new Set<Element>() }
+      observers.push(record)
+      return {
+        observe: (element: Element) => void record.observed.add(element),
+        unobserve: (element: Element) => void record.observed.delete(element),
+        disconnect: () => record.observed.clear()
+      }
+    }
+    const clocks: { paused: boolean; disposed: boolean }[] = []
+    const artClock = (): PausableFrameClock => {
+      const state = { paused: false, disposed: false }
+      clocks.push(state)
+      const base = stoppedFrameClock()
+      return {
+        player: (onFrame) => base.player(onFrame),
+        dispose: () => {
+          state.disposed = true
+          base.dispose()
+        },
+        pause: () => void (state.paused = true),
+        resume: () => void (state.paused = false)
+      }
+    }
+    const { root } = mountValle(
+      { preset: 'control', mosaicOrder: [MORIA, EREBOR], pins: [] },
+      undefined,
+      twoMines(),
+      { observer, artClock }
+    )
+    await flushPromises()
+    const art = (mineId: string) => zone(root, mineId).get('[data-valle-art]')
+    const watching = observers.find((record) => record.observed.has(art(EREBOR).element))
+    expect(watching, 'the art is watched against the viewport').toBeDefined()
+    expect(clocks).toHaveLength(2)
+
+    // Erebor scrolled out of view: its clock alone holds still.
+    watching!.callback([
+      { target: art(MORIA).element, intersectionRatio: 1 },
+      { target: art(EREBOR).element, intersectionRatio: 0 }
+    ])
+    await flushPromises()
+    expect(art(EREBOR).attributes('data-clock')).toBe('paused')
+    expect(art(MORIA).attributes('data-clock')).toBe('running')
+    expect(clocks.map((clock) => clock.paused)).toEqual([false, true])
+
+    // A sliver back in view plays again.
+    watching!.callback([{ target: art(EREBOR).element, intersectionRatio: 0.01 }])
+    await flushPromises()
+    expect(art(EREBOR).attributes('data-clock')).toBe('running')
+    expect(clocks.map((clock) => clock.paused)).toEqual([false, false])
+
+    root.unmount()
+    expect(clocks.every((clock) => clock.disposed)).toBe(true)
+  })
+})
+
+// APPENDED for Valle's visual parity (EPIC-20 package gap): the top bar's ore totals (`DS` organisms/valle-bar
+// `.dm-vbar__ore`), the Panel's own vault strip over the board's totals, between the preset menu and the counter.
+describe("Valle's top bar ore totals (EPIC-20 package gap)", () => {
+  it('the top bar shows the ore totals of every mine as the Map does, before the needs-you counter', async () => {
+    const { root } = mountValle({ preset: 'control' })
+    await flushPromises()
+    const bar = root.get('header.dm-vbar')
+    const ore = bar.find('.dm-vbar__ore [role="group"][aria-label="Ore"]')
+    expect(ore.exists()).toBe(true)
+    const parts = [...bar.element.children].map((child) => child.className)
+    expect(parts.findIndex((name) => name.includes('dm-vbar__ore'))).toBeLessThan(
+      parts.findIndex((name) => name.includes('dm-vbar__needs'))
+    )
+  })
+})
+
+// APPENDED for Valle's visual parity (EPIC-20 package gap): a pinned chat's line and tab lead with its dwarf's portrait
+// (`DS` organisms/chat-stack `.dm-cstack__row`, molecules/chat-tab), the Panel's own, carrying the dwarf's state.
+describe("the pinned chats' portraits in Valle (EPIC-20 package gap)", () => {
+  const twoMines = (): Partial<Window['api']> => ({
+    getHostSnapshot: () =>
+      Promise.resolve(
+        snapshotPage(10, {
+          minesEverKnown: true,
+          mines: [mineWire(MORIA), mineWire(EREBOR)],
+          dwarfs: [dwarfWire(BORIN, MORIA), dwarfWire(DAIN, EREBOR)]
+        })
+      ) as never
+  })
+  const PINS = [
+    { dwarfId: BORIN, mineId: MORIA, order: 0 },
+    { dwarfId: DAIN, mineId: EREBOR, order: 1 }
+  ]
+
+  it('a collapsed stack line and every chat tab lead with the dwarf’s portrait, an Add pin with its "+"', async () => {
+    const { root } = mountValle({ preset: 'control', pins: PINS }, undefined, twoMines())
+    await flushPromises()
+    const line = root.get(`.dm-cstack__row[data-pin="${DAIN}"]`)
+    expect(line.find('.dm-portrait').exists()).toBe(true)
+    expect(line.element.firstElementChild?.classList.contains('dm-portrait')).toBe(true)
+
+    root.unmount()
+    const front = mountValle(
+      { preset: 'front', lastFrontMineId: MORIA, pins: PINS },
+      undefined,
+      twoMines()
+    ).root
+    await flushPromises()
+    const tabs = front.findAll('.dm-cdeck [role="tab"]')
+    expect(tabs.length).toBeGreaterThan(0)
+    expect(tabs.every((tab) => tab.find('.dm-portrait').exists())).toBe(true)
   })
 })

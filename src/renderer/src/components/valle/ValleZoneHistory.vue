@@ -63,4 +63,10 @@ function escape(event: KeyboardEvent): void {
   min-height: 0;
   overflow: auto;
 }
+/* Docked into a zone or the drawer, the panel fills its slot instead of keeping a window's width and shadow (`DS`
+   screens/valle.css: `.dm-cdeck .dm-hist`, `.dm-vz .dm-hist`). */
+.dm-vhosted > :deep(.dm-hist) {
+  width: 100%;
+  filter: none;
+}
 </style>
