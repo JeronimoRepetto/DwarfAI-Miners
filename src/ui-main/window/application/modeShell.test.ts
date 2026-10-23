@@ -379,3 +379,51 @@ describe('the mode shell says which mode windows it shows (ISSUE-306)', () => {
     stop()
   })
 })
+
+// APPENDED for ISSUE-311: a notification click while Valle is the mode (ADR-025 item 8; ADR-018 item 6; 07 S10.10,
+// S10.11, S39.06).
+describe('the mode shell reveals in Valle (ISSUE-311)', () => {
+  it('[S10.10, S10.11, S39.06] a notification click while Valle is shown, or hidden, reveals in Valle and never switches the mode', async () => {
+    const valle = new FakeModeWindow()
+    const part = { window: () => valle, bounds: () => ({ x: 0, y: 0, width: 1200, height: 800 }) }
+    const s = setup('hidden', false, { built: ['panel', 'veta', 'valle'], valle: part })
+    s.shell.panel.toggleVisible()
+    s.answer()
+    await Promise.resolve()
+    const valleRun = (): string =>
+      (valle.calls.filter((c) => c.member === 'send').at(-1) as { payload: ModeTransition }).payload
+        .transitionId
+    const moved = s.shell.coordinator.moveToMode({ mode: 'valle' })
+    s.answer()
+    s.shell.coordinator.transitionDone('valle', { transitionId: valleRun() })
+    await moved
+    const runs = s.transitions().length + valle.calls.filter((c) => c.member === 'send').length
+
+    // Shown: the reveal runs in Valle (S10.10), no run is started, and the raise reaches the Valle window.
+    expect(await s.shell.coordinator.revealDwarfChat({ mineId: MINE, dwarfId: DWARF })).toBe(
+      'chat-open'
+    )
+    expect(s.reveals).toEqual([{ mineId: MINE, dwarfId: DWARF, existing: 'valle' }])
+    expect(s.shell.coordinator.mode()).toBe('valle')
+    expect(s.transitions().length + valle.calls.filter((c) => c.member === 'send').length).toBe(
+      runs
+    )
+    const focusedBefore = valle.calls.filter((c) => c.member === 'focus').length
+    await s.windows()!.raise('valle')
+    expect(valle.calls.filter((c) => c.member === 'focus').length).toBe(focusedBefore + 1)
+    expect(s.calls.filter((call) => call === 'raise')).toHaveLength(1)
+
+    // Hidden: Valle, its own mode, is the window that exists, restored before the reveal (S10.11).
+    s.shell.panel.toggleVisible()
+    s.shell.coordinator.transitionDone('valle', { transitionId: valleRun() })
+    await Promise.resolve()
+    expect(s.shell.coordinator.mode()).toBe('hidden')
+    const revealed = s.shell.coordinator.revealDwarfChat({ mineId: MINE, dwarfId: DWARF })
+    await Promise.resolve()
+    await Promise.resolve()
+    s.shell.coordinator.transitionDone('valle', { transitionId: valleRun() })
+    expect(await revealed).toBe('chat-open')
+    expect(s.reveals.at(-1)).toEqual({ mineId: MINE, dwarfId: DWARF, existing: 'valle' })
+    expect(s.shell.coordinator.mode()).toBe('valle')
+  })
+})

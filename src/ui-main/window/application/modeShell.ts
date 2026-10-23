@@ -194,12 +194,12 @@ export function composeModeShell(deps: ModeShellDeps): ModeShell {
     start: deps.start
   })
   revealer = deps.revealer({
-    // The mode of the window that exists: Veta while Veta is shown (07 S24.15, ISSUE-290), else the Panel, a hidden
-    // one included (S10.11).
+    // The mode of the window that exists: the mode shown (07 S24.15, ISSUE-290; S39.06, ISSUE-311), or for a hidden
+    // window the mode its restore shows again, its own (S10.11).
     existing: () => {
       const rung = coordinator.ladder().state
       if (rung === 'tray-only' || rung === 'not-running') return null
-      return rung === 'veta' ? 'veta' : 'panel'
+      return rung === 'hidden' ? coordinator.restoreMode() : rung
     },
     restore: () => void coordinator.restore(),
     // S10.12: a click with no window open opens the app in "Mode at launch" (ISSUE-294), a built mode.
@@ -208,8 +208,10 @@ export function composeModeShell(deps: ModeShellDeps): ModeShell {
       await coordinator.openAtLaunch(mode, { reveal: true })
       return mode
     },
-    raise: () => {
-      panel.raise()
+    // The window revealed in comes to the front: Valle's own (ISSUE-311), else the Panel's raise.
+    raise: (mode) => {
+      if (mode === 'valle' && valle !== undefined) valleWindow().focus()
+      else panel.raise()
       return Promise.resolve(deps.focused?.() ?? panel.visible())
     }
   })
