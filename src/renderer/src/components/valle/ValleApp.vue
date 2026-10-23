@@ -54,7 +54,7 @@
  *   dive, swap or list pick (S35.03), else the fallback (S35.06), written through A-N18 and marked by the brackets.
  *   The window's one sound engine (`useAudio`, owner decision 2026-10-22 lifted by US-VALLE-016) plays only that
  *   mine's room tone, bed and crew, silenced by its own mute; the attention cues (`useAttentionCues`) and a dwarf's
- *   voice are never gated on it. It follows the page's own visibility (a hidden window plays nothing, S35.08), plays
+ *   voice are never gated on it. It follows Valle's shown state (a hidden window plays nothing, S35.08; VQA-09), plays
  *   the music the nav's Music slot toggles (as the Panel's, EPIC-20 visual parity) and no Panel cue, and adopts the stored Sound settings again on every show and when Valle's Settings page
  *   closes (the page's rows write the preference alone).
  * - The history drawer (`useValleHistoryDrawer`, 07 machine 36; ISSUE-308): "Mine history" in the Work front's mine
@@ -260,29 +260,42 @@ const view = preset.view
 const gated = (): boolean =>
   view.value.motion?.kind === 'diving' || view.value.motion?.kind === 'climbing'
 
-/** Whether Valle is the shown mode window: a hidden window's page is hidden (ADR-025 item 7). */
-const shown = shallowRef(document.visibilityState === 'visible')
-const visibilityChanged = (): void => {
-  shown.value = document.visibilityState === 'visible'
+/*
+ * Whether Valle is the shown mode window (ADR-025 item 7): its page visible, and not left since a run last entered it.
+ * A hidden frameless window does not reliably report itself hidden (VQA-09), so the runs say it as they say it to Veta:
+ * a run Valle leaves hides it once its half ended, its content veiled (`onLeft`), and a run entering it shows it again
+ * at `t0` (`onEntered`). The page's own `visibilitychange` still counts where the OS does report it (a minimized window).
+ */
+const pageVisible = (): boolean => document.visibilityState === 'visible'
+let left = false
+const shown = shallowRef(pageVisible())
+const showingChanged = (): void => {
+  const now = pageVisible() && !left
+  if (now === shown.value) return
+  shown.value = now
   // A reveal heard while hidden plays once the window is shown again (S10.11).
-  if (shown.value) valleReveal.shownChanged()
+  if (now) valleReveal.shownChanged()
   // A hidden window freezes timelines: the run resolves at once (S28.22); the history drawer closes at once (S36.04).
-  if (!shown.value) historyDrawer.send({ kind: 'hidden' })
-  if (!shown.value) preset.send({ kind: 'hidden' })
+  if (!now) historyDrawer.send({ kind: 'hidden' })
+  if (!now) preset.send({ kind: 'hidden' })
   // S35.08: the current mine is kept for the next show, where the stored Sound settings are adopted again.
-  if (!shown.value) currentMine.send({ kind: 'hidden' })
+  if (!now) currentMine.send({ kind: 'hidden' })
   else void audio.sync()
 }
-document.addEventListener('visibilitychange', visibilityChanged)
+document.addEventListener('visibilitychange', showingChanged)
+const stopLeft = modeTransitionPart().onLeft(() => {
+  left = true
+  showingChanged()
+})
+const stopEntered = modeTransitionPart().onEntered(() => {
+  left = false
+  showingChanged()
+})
 
-/** The Valle page's own visibility, the sound engine's gate (S35.08): the Panel's A-P1 push says nothing of Valle. */
+/** Valle's own shown state, the sound engine's gate (S35.08): the Panel's A-P1 push says nothing of Valle. */
 const pageVisibility: AudioVisibility = {
-  read: () => Promise.resolve(document.visibilityState === 'visible'),
-  listen: (listener) => {
-    const heard = (): void => listener(document.visibilityState === 'visible')
-    document.addEventListener('visibilitychange', heard)
-    return () => document.removeEventListener('visibilitychange', heard)
-  }
+  read: () => Promise.resolve(shown.value),
+  listen: (listener) => watch(shown, (now) => listener(now))
 }
 /**
  * The window's one sound engine (US-VALLE-016): the music the nav's Music slot plays, as the Panel's (`DS` valle.js
@@ -880,7 +893,9 @@ onUnmounted(() => {
   currentMine.stop()
   historyDrawer.stop()
   audio.dispose()
-  document.removeEventListener('visibilitychange', visibilityChanged)
+  document.removeEventListener('visibilitychange', showingChanged)
+  stopLeft()
+  stopEntered()
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('resize', resized)
   removeGate?.()
@@ -1152,12 +1167,12 @@ onUnmounted(() => {
           </template>
         </ChatDeck>
       </aside>
-      <!-- The toast contract's host over the main zone alone (BR-23; 07 §24 I-38): never over the chat zone. -->
-      <div class="dm-valle__toasts" data-valle-toasts>
-        <ToastHost />
-      </div>
     </div>
     <NeedsYouQueue :entries="needsYou.entries.value" @press="(entry) => jumpNeed(entry)" />
+    <!-- The toast contract's host on Valle's widest free area, the needs-you row (US-VALLE-010.AC05; BR-23; VQA-12). -->
+    <div class="dm-valle__toasts" data-valle-toasts>
+      <ToastHost />
+    </div>
     <div class="dm-vghosts" aria-hidden="true"></div>
     <WorktreeDialog
       :question="mosaic.worktree.value"
@@ -1191,17 +1206,32 @@ onUnmounted(() => {
   min-height: 0;
 }
 /*
- * The area the general toast rule centres on (BR-23): the main zone, between the nav column and the splitter (nav 56 and
- * gap 6 on the left; the chat zone, its gap, the 12 px splitter and its gap on the right). The toast stands
- * 56 px above its bottom, so it never lies over the chat zone or a composer; the design's own Valle rule is open (07 §24
- * I-38). It takes no pointer.
+ * Where Valle's toasts stand (US-VALLE-010.AC05: "centred on the widest free area, never covering the mines, the chats or a
+ * composer"; BR-23; ISSUE-309 DR-05, the design's Valle rule still open, 07 §24 I-38). The body is the mines and the
+ * chats from edge to edge: the main zone is the mosaic's columns (or the Work front's mine) and the chat zone ends in a
+ * composer, so no part of it is free once the columns fill it (VQA-12). The window's always-present rows are the top bar
+ * and the needs-you row; the top bar's free span between the tabs and the ORE strip is narrower than a toast at 1024 px,
+ * while the needs-you row spans the whole window and holds no mine, chat or composer. So a toast is centred on that row,
+ * the window's full width, the first one centred in its 48 px; a second stacks 8 px above it (US-SHELL-012). It takes no
+ * pointer, so a needs-you entry beneath it is still pressed.
  */
 .dm-valle__toasts {
   position: absolute;
-  inset-block: 0;
-  inset-inline-start: 62px;
-  inset-inline-end: calc(var(--chat-w) + 24px);
+  inset-inline: 6px;
+  bottom: 6px;
+  z-index: var(--z-toast);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  height: calc(48px + 2 * var(--px));
+  padding-bottom: 9px;
   pointer-events: none;
+}
+.dm-valle__toasts :deep(.dm-toasts) {
+  position: relative;
+  left: auto;
+  bottom: auto;
+  transform: none;
 }
 /* The Panel nav's plate (`DS` organisms/nav, nav.css): wood, 56 px, its groups top and foot. */
 .dm-valle__nav {

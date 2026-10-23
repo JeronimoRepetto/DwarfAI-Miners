@@ -23,7 +23,9 @@
  * run into the Panel carrying no chat opens the mine the session store names as the Panel's current mine
  * (`onMineArrival`, ISSUE-295; S27.01, S22.13), since A-N14 carries no mine of its own. A
  * window that left a run (`onLeft`) is told once its source half ended, its content veiled: a hidden frameless window
- * does not reliably report itself hidden, so this is when Veta folds its risen chat (S24.14).
+ * does not reliably report itself hidden, so this is when Veta folds its risen chat (S24.14). A window that enters a run
+ * (`onEntered`) is told at `t0`, as its content is unveiled for its target half: with `onLeft`, Valle's shown state
+ * (VQA-09).
  * Under reduced motion both halves last 0 ms and the answer goes at `t0` (S27.06, NFR-TIM-02). An
  * in-progress IME composition is not carried: the hand-off ends it before the flush; how each OS commits it is
  * S-025-1's record.
@@ -98,6 +100,12 @@ export interface ModeTransitionPart {
   onLanded(hear: (chat: CarriedChat) => void): () => void
   /** Hears each run this window left, once its source half ended and its content is veiled; answers the unregister. */
   onLeft(hear: (t: ModeTransition) => void): () => void
+  /**
+   * Hears each run this window enters, at `t0`, as its content is unveiled to play its target half; answers the
+   * unregister. With `onLeft`, what tells a window it is shown again (VQA-09): a hidden frameless window does not
+   * reliably report its visibility.
+   */
+  onEntered(hear: (t: ModeTransition) => void): () => void
   dispose(): void
 }
 
@@ -111,6 +119,7 @@ export function useModeTransition(deps: ModeTransitionDeps): ModeTransitionPart 
   let mineArrival: ((mineId: MineId) => void) | null = null
   let landed: ((chat: CarriedChat) => void) | null = null
   let left: ((t: ModeTransition) => void) | null = null
+  let entered: ((t: ModeTransition) => void) | null = null
   /** A carried chat heard before this window registered how to open it (`onArrival`), opened once it does. */
   let unopened: CarriedChat | null = null
   /** A carried chat opened here whose panel has not registered yet, and what its registration settles. */
@@ -234,7 +243,11 @@ export function useModeTransition(deps: ModeTransitionDeps): ModeTransitionPart 
     seen.add(t.transitionId)
     const playAtT0 = (): void =>
       atT0(t.t0, () => {
-        if (t.role === 'target') deps.veil(false)
+        if (t.role === 'target') {
+          deps.veil(false)
+          // The window is shown again: what hides with it may come back (Valle's page, VQA-09).
+          entered?.(t)
+        }
         const half = deps.reducedMotion() ? [] : deps.half(t)
         if (half.length === 0) {
           answer(t)
@@ -299,6 +312,12 @@ export function useModeTransition(deps: ModeTransitionDeps): ModeTransitionPart 
       left = hear
       return () => {
         if (left === hear) left = null
+      }
+    },
+    onEntered(hear) {
+      entered = hear
+      return () => {
+        if (entered === hear) entered = null
       }
     },
     dispose() {
@@ -366,6 +385,7 @@ export function modeTransitionPart(): ModeTransitionPart {
       onMineArrival: () => () => {},
       onLanded: () => () => {},
       onLeft: () => () => {},
+      onEntered: () => () => {},
       dispose: () => {}
     }
   }
@@ -376,6 +396,7 @@ export function modeTransitionPart(): ModeTransitionPart {
     onMineArrival: (open) => part.onMineArrival(open),
     onLanded: (hear) => part.onLanded(hear),
     onLeft: (hear) => part.onLeft(hear),
+    onEntered: (hear) => part.onEntered(hear),
     dispose: () => {
       part.dispose()
       shared = null

@@ -1172,6 +1172,47 @@ describe('the current mine and its sound in the Valle root (ISSUE-307)', () => {
     }
   })
 
+  it('[S35.08, S39.04] a Valle moved away from is hidden even while its page still reports itself visible, and shown again when a run enters it', async () => {
+    // VQA-09: a hidden frameless window does not reliably report its visibility; the runs say when Valle leaves and enters.
+    modeTransitionPart().dispose()
+    let heard: ((t: ModeTransition) => void) | null = null
+    try {
+      const { root, player } = mountValle(
+        { preset: 'control', mosaicOrder: [MORIA, EREBOR] },
+        undefined,
+        {
+          onModeTransition: (h) => {
+            heard = h as (t: ModeTransition) => void
+            return () => (heard = null)
+          }
+        }
+      )
+      modeTransitionPart()
+      await flushPromises()
+      await root.get(`[data-valle-column="${EREBOR}"] .dm-vz__well`).trigger('click')
+      expect(beds(player)).toHaveLength(1)
+      expect(document.visibilityState).toBe('visible')
+
+      // "▼ Panel": Valle plays its source half and is put away; its page never says it is hidden.
+      heard!({
+        transitionId: 'run-out',
+        from: 'valle',
+        to: 'panel',
+        t0: Date.now(),
+        role: 'source'
+      })
+      await vi.waitFor(() => expect(beds(player)).toHaveLength(0), { timeout: 3_000 })
+      expect(player.live().filter((clip) => clip.playing)).toHaveLength(0)
+
+      // "▲ Valle": the run enters Valle again, its current mine kept.
+      heard!({ transitionId: 'run-in', from: 'panel', to: 'valle', t0: Date.now(), role: 'target' })
+      await vi.waitFor(() => expect(beds(player)).toHaveLength(1), { timeout: 3_000 })
+      expect(current(root)).toEqual(['Mine erebor, current'])
+    } finally {
+      modeTransitionPart().dispose()
+    }
+  })
+
   it('[US-VALLE-016.AC04, S35.07] a finished turn in a mine that is not current plays its cue in Valle', async () => {
     const { root, push, player } = mountValle({ preset: 'control', mosaicOrder: [MORIA, EREBOR] })
     await flushPromises()
