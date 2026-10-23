@@ -2169,3 +2169,18 @@ describe("Valle's nav column, the Panel's own (EPIC-20 visual parity)", () => {
     expect(made).toBe(0)
   })
 })
+
+// APPENDED for the Valle visual parity (EPIC-20): the top bar's app mark hides Valle as the app mark does in every mode
+// (07 S10.08): a mode move to `hidden` through the ModeCoordinator (A-N13), with the short hide sound (`DS` valle.js
+// `hideValle`, the panel cue).
+describe("Valle's app mark (EPIC-20 visual parity)", () => {
+  it('[US-SHELL-002.AC01] the app mark hides Valle through a move to the hidden mode, and the short hide sound plays', async () => {
+    const { root, moves, player } = mountValle({ preset: 'control', mosaicOrder: [MORIA] })
+    await flushPromises()
+    const before = player.clips.filter((clip) => clip.src === UI_SFX_SRC.panel).length
+    await root.get('header.dm-vbar button.dm-vbar__mark').trigger('click')
+    await flushPromises()
+    expect(moves).toEqual([{ mode: 'hidden' }])
+    expect(player.clips.filter((clip) => clip.src === UI_SFX_SRC.panel)).toHaveLength(before + 1)
+  })
+})

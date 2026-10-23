@@ -683,8 +683,12 @@ watch(
   },
   { flush: 'sync' }
 )
-/** "▼ Panel" / "▼ Veta": leaving Valle closes the drawer at once (S36.04). */
+/**
+ * "▼ Panel" / "▼ Veta", or the app mark's move to `hidden` (07 S10.08): leaving Valle closes the drawer at once (S36.04).
+ * The app mark plays the short hide sound in this, the source window (S10.08, US-SHELL-002.AC01; `DS` valle.js `hideValle`).
+ */
 function leave(move: MoveToModeParams): void {
+  if (move.mode === 'hidden') audio.playSfx('panel')
   historyDrawer.send({ kind: 'leave' })
   preset.send({ kind: 'leave', move })
 }
