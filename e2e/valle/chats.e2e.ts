@@ -30,7 +30,8 @@ import { declareMine } from '../support/veta.ts'
  * Control room's expanded line; a message typed there reaches the stub session. In the Work front's split at its
  * narrowest, each pane's MessagePanel fills its 317 px pane, its own min-content floor, and the chat zone stays at the
  * splitter's 640 px minimum: the panel never widens Valle's minimums. Widths are read from the laid-out page. The pins
- * are written through A-N21 from the Panel before Valle opens, as no Valle control pins a dwarf yet.
+ * are written through A-N21 from the Panel before Valle opens, so the case starts with both chats already pinned (a
+ * dwarf pressed in a zone pins its chat too, covered by the Valle root's unit cases).
  */
 
 test.describe.configure({ timeout: 300_000 })
