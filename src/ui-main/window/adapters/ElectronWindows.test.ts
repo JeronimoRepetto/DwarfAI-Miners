@@ -391,3 +391,23 @@ describe('the Panel visibility read-back (ISSUE-056; 16 §4.14 read-backs, visib
     expect(FakeBrowserWindow.built, 'no window built to answer').toHaveLength(1)
   })
 })
+
+// APPENDED for ISSUE-311: the Valle window is built on its first entry, and that entry's run is sent to it at once
+// (07 S39.01, S27.05): a push its page could not hear yet would lose the run's carried chat (S29.23).
+describe('the Valle window before its page has loaded (ISSUE-311)', () => {
+  it('[S39.01, S29.23] a push to the Valle window before its page has loaded reaches it once the page has loaded, in order', () => {
+    const valle = new ElectronWindows(deps()).valle('display-a')
+    const window = FakeBrowserWindow.built[0]!
+    valle.send('mode:transition', { transitionId: 't-1' })
+    valle.send('mode:transition', { transitionId: 't-2' })
+    expect(window.calls.filter((call) => call.startsWith('send'))).toEqual([])
+    window.webContents.emit('did-finish-load')
+    // Then pushes go straight through.
+    valle.send('mode:transition', { transitionId: 't-3' })
+    expect(window.calls.filter((call) => call.startsWith('send'))).toEqual([
+      'send mode:transition {"transitionId":"t-1"}',
+      'send mode:transition {"transitionId":"t-2"}',
+      'send mode:transition {"transitionId":"t-3"}'
+    ])
+  })
+})
