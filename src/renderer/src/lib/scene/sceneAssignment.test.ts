@@ -240,4 +240,77 @@ describe('assignScene', () => {
       expect(postless.anchors).toContain(placement.anchor)
     }
   })
+
+  /*
+    Valle QA VQA-10: every dwarf a person launches is a foreman (the Host's rank is the depth
+    below the root session, INV-27), and the interior draws three foreman diamonds, all on one
+    landing. Doubling foremen up on them huddled a whole crew on that landing, where the design
+    spreads it over the galleries. The design's rule (prototype sample-data.js, PANEL-QUESTIONS
+    28) is this module's: a foreman on a foreman station, a miner on a worker one. It says nothing
+    of a fourth foreman, so the overflow takes a free worker station before anyone doubles up.
+  */
+  describe('more foremen than foreman stations', () => {
+    const foremanStations = anchorsOfKind(INTERIOR_LAYOUT, 'foreman').length
+    const foremen = Array.from({ length: foremanStations * 2 }, (_, index) =>
+      occupant(`5f0c-dwarf-${index}`, index % 2 === 0 ? 'working' : 'waiting', 'foreman')
+    )
+
+    it('stands every foreman on a station of its own rather than doubling up', () => {
+      const placements = assignScene(foremen, INTERIOR_LAYOUT)
+      const anchors = [...placements.values()].map((place) => place.anchor.id)
+      expect(new Set(anchors).size).toBe(foremen.length)
+      for (const place of placements.values()) expect(place.shareCount).toBe(1)
+    })
+
+    it('keeps the foreman diamonds full and seats the rest on worker stations', () => {
+      const kinds = [...assignScene(foremen, INTERIOR_LAYOUT).values()].map((p) => p.anchor.kind)
+      expect(kinds.filter((kind) => kind === 'foreman')).toHaveLength(foremanStations)
+      expect(kinds.filter((kind) => kind === 'worker')).toHaveLength(
+        foremen.length - foremanStations
+      )
+    })
+
+    it('spreads the crew over the galleries instead of one landing', () => {
+      const ys = [...assignScene(foremen, INTERIOR_LAYOUT).values()].map((p) => p.point.y)
+      // The three diamonds span under 5% of the painting's height: one landing.
+      expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThan(20)
+    })
+
+    it('never takes a worker station a miner already holds', () => {
+      // Exactly as many worker stations left free as there are foremen past the diamonds.
+      const free = foremen.length - foremanStations
+      const workerStations = anchorsOfKind(INTERIOR_LAYOUT, 'worker').length
+      const miners = Array.from({ length: workerStations - free }, (_, index) =>
+        occupant(`claude:m${index}`)
+      )
+      const alone = anchorIds(assignScene(miners, INTERIOR_LAYOUT))
+      const placements = assignScene([...miners, ...foremen], INTERIOR_LAYOUT)
+      const mixed = anchorIds(placements)
+      for (const miner of miners) expect(mixed[miner.id], miner.id).toBe(alone[miner.id])
+      expect(new Set(Object.values(mixed)).size).toBe(miners.length + foremen.length)
+    })
+
+    it('gives each foreman the same station whatever order the crew comes in', () => {
+      expect(anchorIds(assignScene([...foremen].reverse(), INTERIOR_LAYOUT))).toEqual(
+        anchorIds(assignScene(foremen, INTERIOR_LAYOUT))
+      )
+    })
+
+    it('leaves a mine with no more foremen than diamonds as it was', () => {
+      // The design's own sample: dwarfai-55, its foreman, on the diamond at 68.21 / 49.02.
+      const sample = assignScene(
+        [
+          occupant('d53'),
+          occupant('d54', 'waiting', 'worker2'),
+          occupant('d55', 'waiting', 'foreman'),
+          occupant('d56')
+        ],
+        INTERIOR_LAYOUT
+      )
+      expect(sample.get('d55')?.point).toEqual({ x: 68.21, y: 49.02 })
+      expect(sample.get('d53')?.point).toEqual({ x: 82.88, y: 51.95 })
+      expect(sample.get('d54')?.point).toEqual({ x: 14.05, y: 14.89 })
+      expect(sample.get('d56')?.point).toEqual({ x: 61.83, y: 24.94 })
+    })
+  })
 })
