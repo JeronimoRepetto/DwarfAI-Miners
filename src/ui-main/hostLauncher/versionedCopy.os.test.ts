@@ -25,10 +25,12 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import type { HostEndpoint } from '@dwarfai/contracts'
+import { createCopyPreparer } from './copyPreparer'
 import { RecordingUiLog } from './fakes/RecordingUiLog'
 import { buildManifest, serializeManifest } from './hostManifest'
 import { createNodeHostLauncher } from './index'
 import { IDENTITY_TOLERANCE_MS, createProcessStartReader } from './processStart'
+import { NodeScript, bundleEntry, repoImport } from './testing/osProcess'
 import { osQueryRunner, thisPlatform } from './testing/osQueryRunner'
 import { copySourceOf, packagedResourcesDirOf, type CopyPlatform } from './versionedCopy'
 
@@ -354,3 +356,135 @@ describe('the Host runs from its versioned copy (ADR-002 D5, ADR-027 item 2)', (
     CASE_TIMEOUT_MS
   )
 })
+
+// ADDED for ISSUE-270 (ADR-027 item 2; 13 FM-129): the copy's crash and collection rules on this OS's real file system,
+// through the launcher's own copy code. A small app folder (an executable file and a `resources` folder) stands for a
+// packaged layout; its manifest is built the way the packaging hook builds it.
+const STEP_TIMEOUT_MS = 60_000
+/** Enough data that the copy is still running when it is killed: 10 folders of 20 files of 64 KiB, 12.8 MB in all. */
+const APP_FOLDERS = 10
+const APP_FILES_PER_FOLDER = 20
+const APP_FILE_BYTES = 64 * 1024
+
+/** A packaged-style app folder under `root`, with its manifest beside it. */
+async function packagedApp(
+  root: string
+): Promise<{ sourceDir: string; execPath: string; manifest: string }> {
+  const sourceDir = path.join(root, 'install', 'DwarfAI-Miners')
+  for (let folder = 0; folder < APP_FOLDERS; folder += 1) {
+    const dir = path.join(sourceDir, 'resources', `part-${folder}`)
+    mkdirSync(dir, { recursive: true })
+    for (let file = 0; file < APP_FILES_PER_FOLDER; file += 1) {
+      writeFileSync(path.join(dir, `file-${file}.bin`), randomBytes(APP_FILE_BYTES))
+    }
+  }
+  const execPath = path.join(sourceDir, WINDOWS ? 'DwarfAI-Miners.exe' : 'dwarfai-miners')
+  writeFileSync(execPath, 'the executable')
+  const manifest = path.join(root, 'host-manifest.json')
+  writeFileSync(manifest, serializeManifest(await buildManifest(sourceDir)))
+  return { sourceDir, execPath, manifest }
+}
+
+/** The launcher's copy preparer for `version`, over a private copy root. */
+function preparerFor(
+  app: { execPath: string; manifest: string },
+  copyRoot: string,
+  version: string
+) {
+  return createCopyPreparer({
+    execPath: app.execPath,
+    hostManifest: app.manifest,
+    appVersion: version,
+    platform: PLATFORM,
+    build: 'release',
+    uiEnv: {},
+    copyRoot,
+    log: new RecordingUiLog()
+  })
+}
+
+/**
+ * One start's copy in a process of its own: the launcher's copy code over the Node operations, holding still once its
+ * copy into `<version>.tmp-<pid>` was written, so the kill lands before the verification and the rename.
+ */
+const KILLED_COPIER = `
+import { ensureVersionedCopy, nodeCopyOps } from ${repoImport('src', 'ui-main', 'hostLauncher', 'versionedCopy.ts')}
+
+setTimeout(() => process.exit(9), 120_000)
+const [sourceDir, manifestPath, root, platform, version] = process.argv.slice(2)
+const ops = {
+  ...nodeCopyOps,
+  async copyTree(from, to, include) {
+    await nodeCopyOps.copyTree(from, to, include)
+    console.log('copied')
+    return new Promise(() => {})
+  }
+}
+await ensureVersionedCopy({
+  version, sourceDir, manifestPath, root, platform, pid: process.pid, ops,
+  log: { record: () => {} }, clock: { now: Date.now }
+})
+process.exit(0)
+`
+
+describe.runIf(['win32', 'darwin', 'linux'].includes(process.platform))(
+  'the versioned copy on this OS (ADR-027 item 2, FM-129)',
+  () => {
+    it(
+      '[ADR-027, FM-129] a kill during the copy leaves only a .tmp- directory that the next start removes',
+      async () => {
+        const root = mkdtempSync(path.join(tmpdir(), 'dwarfai-270-kill-'))
+        try {
+          const app = await packagedApp(root)
+          const copyRoot = path.join(root, 'DwarfAI', 'host')
+          const script = await bundleEntry(KILLED_COPIER, path.join(root, 'bundle'), 'copier')
+          const copier = new NodeScript(script, [
+            app.sourceDir,
+            app.manifest,
+            copyRoot,
+            PLATFORM,
+            VERSION
+          ])
+          try {
+            await copier.line((line) => line === 'copied', STEP_TIMEOUT_MS)
+          } finally {
+            await copier.kill()
+          }
+
+          expect(readdirSync(copyRoot), 'only the temporary directory is left').toEqual([
+            `${VERSION}.tmp-${copier.pid}`
+          ])
+
+          const next = await preparerFor(app, copyRoot, VERSION)()
+
+          expect(next, JSON.stringify(next)).toMatchObject({ ok: true })
+          expect(readdirSync(copyRoot), 'the next start removed the leftover').toEqual([VERSION])
+        } finally {
+          expect(await removeFolder(root), 'the temporary folder is removed').toBe(true)
+        }
+      },
+      CASE_TIMEOUT_MS
+    )
+
+    it(
+      '[ADR-027] after three versions only the two newest copies not in use remain',
+      async () => {
+        const root = mkdtempSync(path.join(tmpdir(), 'dwarfai-270-gc-'))
+        try {
+          const app = await packagedApp(root)
+          const copyRoot = path.join(root, 'DwarfAI', 'host')
+
+          for (const version of ['1.9.0', '1.10.0', '1.11.0']) {
+            const prepared = await preparerFor(app, copyRoot, version)()
+            expect(prepared, `${version}: ${JSON.stringify(prepared)}`).toMatchObject({ ok: true })
+          }
+
+          expect(readdirSync(copyRoot).sort()).toEqual(['1.10.0', '1.11.0'])
+        } finally {
+          expect(await removeFolder(root), 'the temporary folder is removed').toBe(true)
+        }
+      },
+      CASE_TIMEOUT_MS
+    )
+  }
+)

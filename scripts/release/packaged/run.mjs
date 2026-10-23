@@ -8,10 +8,13 @@
 // `p<nn>-<name>.packaged.mjs` beside this file (or in `--checks <dir>`) that exports its P id as `id` and, as its
 // default export, an async function `({ artifactDir }) => ({ ok, detail })`. The runner prints one line per check,
 // `<id> ok: <detail>` or `<id> FAIL: <detail>`, and exits 1 when any check fails, when it finds no check, or when the
-// artifact folder is missing, so an empty run never passes. With `--release` the run is also held to
-// `required.json` (`--required <file>` names another): every P id it lists must have a check file here and pass, and
-// a missing or blocked id fails the run, named with the issue that owns it (ISSUE-271; `20` §2.3). Without the flag
-// the runner runs what is present. It reads files only.
+// artifact folder is missing, so an empty run never passes. A check that a spike blocks answers `ok: false` with
+// `blocked: { by, owner }` (the spike id and who must record it, ISSUE-270): it is never green, the runner prints
+// `<id> blocked: <detail>`, and outside `--release` that line does not fail the run. With `--release` the run is also
+// held to `required.json` (`--required <file>` names another): every P id it lists must have a check file here and
+// pass; a missing or failing id fails the run, named with the issue that owns it, and a spike-blocked one fails naming
+// the spike and its owner (ISSUE-271; `20` §2.3). Without the flag the runner runs what is present. It reads files
+// only.
 import { readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -67,8 +70,11 @@ export async function runPackagedChecks({ artifactDir, checksDir }) {
       continue
     }
     try {
-      const { ok, detail } = await check({ artifactDir })
-      results.push({ id, ok: ok === true, detail })
+      const { ok, detail, blocked } = await check({ artifactDir })
+      const result = { id, ok: ok === true, detail }
+      if (ok !== true && isBlocked(blocked))
+        result.blocked = { by: blocked.by, owner: blocked.owner }
+      results.push(result)
     } catch (error) {
       results.push({
         id,
@@ -78,6 +84,16 @@ export async function runPackagedChecks({ artifactDir, checksDir }) {
     }
   }
   return results
+}
+
+/** A spike block as a check reports it: the spike id and its owner, both named. */
+function isBlocked(blocked) {
+  return (
+    typeof blocked?.by === 'string' &&
+    blocked.by !== '' &&
+    typeof blocked?.owner === 'string' &&
+    blocked.owner !== ''
+  )
 }
 
 /**
@@ -93,7 +109,14 @@ export function releaseGaps({ required, results }) {
     if (found.length === 0) {
       gaps.push({ id, detail: `missing, no ${pattern} check; owned by ${issue}` })
     } else if (!found.some((result) => result.ok)) {
-      gaps.push({ id, detail: `blocked, the check does not pass; owned by ${issue}` })
+      const spike = found.find((result) => result.blocked !== undefined)
+      gaps.push({
+        id,
+        detail:
+          spike === undefined
+            ? `blocked, the check does not pass; owned by ${issue}`
+            : `blocked by ${spike.blocked.by}, owned by ${spike.blocked.owner}: ${spike.detail}`
+      })
     }
   }
   return gaps
@@ -121,10 +144,12 @@ async function main() {
     console.error(`packaged checks: no p*.packaged.mjs check in ${checksDir}`)
     return 1
   }
-  for (const { id, ok, detail } of results) {
-    const line = `${id} ${ok ? 'ok' : 'FAIL'}: ${detail}`
-    if (ok) console.log(line)
-    else console.error(line)
+  for (const { id, ok, detail, blocked } of results) {
+    if (ok) console.log(`${id} ok: ${detail}`)
+    // In release mode the gap below prints the blocked id as a failure, naming the spike and its owner.
+    else if (blocked !== undefined) {
+      if (!release) console.log(`${id} blocked: ${detail}`)
+    } else console.error(`${id} FAIL: ${detail}`)
   }
   let complete = true
   if (release) {
@@ -138,7 +163,7 @@ async function main() {
       complete = false
     }
   }
-  return complete && results.every((result) => result.ok) ? 0 : 1
+  return complete && results.every((result) => result.ok || result.blocked !== undefined) ? 0 : 1
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
