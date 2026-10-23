@@ -49,12 +49,23 @@
  *   `VALLE_TRACK_ZONE`); only zones showing their mine and at least half inside the viewport are reported, nothing while
  *   hidden or while a nav page covers the main zone.
  * - The "started in" toast (`useValleArrivalToast`, S39.11) through the window's one toast queue (BR-23).
+ * - The current mine and the sound (`useCurrentMine`, 07 machine 35; ISSUE-307): one current mine for the Valle host,
+ *   made current by a chat focused in a pin (S35.01), a single click on a zone's painting or header (S35.02), or a
+ *   dive, swap or list pick (S35.03), else the fallback (S35.06), written through A-N18 and marked by the brackets.
+ *   The window's one sound engine (`useAudio`, owner decision 2026-10-22 lifted by US-VALLE-016) plays only that
+ *   mine's room tone, bed and crew, silenced by its own mute; the attention cues (`useAttentionCues`) and a dwarf's
+ *   voice are never gated on it. It follows the page's own visibility (a hidden window plays nothing, S35.08), plays
+ *   no music and no Panel cue, and adopts the stored Sound settings again on every show and when Valle's Settings page
+ *   closes (the page's rows write the preference alone).
  *
  * The bridge is the composition root's (`valleBridgeOf(window.api)`, R13); the observer is the browser's own unless a
  * test hands one.
  */
 import type { DwarfId, MineId } from '@dwarfai/contracts'
 import { computed, nextTick, onMounted, onUnmounted, provide, shallowRef, watch } from 'vue'
+import { useAttentionCues } from '../../composables/useAttentionCues'
+import { useAudio, type AudioVisibility } from '../../composables/useAudio'
+import { useCurrentMine } from '../../composables/useCurrentMine'
 import { useValleArrivalToast } from '../../composables/useValleArrivalToast'
 import { useValleChats } from '../../composables/useValleChats'
 import { useValleMosaic, type ValleZoneKey } from '../../composables/useValleMosaic'
@@ -79,6 +90,8 @@ import {
   createValleStage,
   type ValleClock
 } from '../../lib/valle/flip'
+import type { AudioPlayer } from '../../lib/audio/player'
+import type { PinKey } from '../../lib/valle/pins'
 import type { ValleFacts, ValleNavPage } from '../../lib/valle/preset'
 import { createVetaMotion } from '../../lib/veta/vetaMotion'
 import { createValleReadModel } from '../../lib/valle/valleReadModel'
@@ -107,6 +120,8 @@ const props = defineProps<{
   bodyObserver?: ValleBodyObserver
   /** The clock a dive or a climb runs on; the browser's frames and timers unless a test hands one. */
   clock?: ValleClock
+  /** The sound engine's player; one `Audio` element per clip unless a test hands one. */
+  audioPlayer?: AudioPlayer
 }>()
 
 const { stores } = useValleStores(props.bridge, props.stores)
@@ -202,8 +217,31 @@ const visibilityChanged = (): void => {
   shown.value = document.visibilityState === 'visible'
   // A hidden window freezes timelines: the run resolves at once (S28.22).
   if (!shown.value) preset.send({ kind: 'hidden' })
+  // S35.08: the current mine is kept for the next show, where the stored Sound settings are adopted again.
+  if (!shown.value) currentMine.send({ kind: 'hidden' })
+  else void audio.sync()
 }
 document.addEventListener('visibilitychange', visibilityChanged)
+
+/** The Valle page's own visibility, the sound engine's gate (S35.08): the Panel's A-P1 push says nothing of Valle. */
+const pageVisibility: AudioVisibility = {
+  read: () => Promise.resolve(document.visibilityState === 'visible'),
+  listen: (listener) => {
+    const heard = (): void => listener(document.visibilityState === 'visible')
+    document.addEventListener('visibilitychange', heard)
+    return () => document.removeEventListener('visibilitychange', heard)
+  }
+}
+/** The window's one sound engine (US-VALLE-016): no music and no Panel cue here. */
+const audio = useAudio({
+  player: props.audioPlayer,
+  visibility: pageVisibility,
+  music: false,
+  panelCue: false
+})
+let stopCues: (() => void) | undefined
+let stopAudio: (() => void) | undefined
+let unmounted = false
 
 const presence = useVallePresence({
   bridge: props.bridge,
@@ -231,12 +269,17 @@ const held = computed(() => String(model.held.value))
 
 /** Whether the Host's facts were read once: the pins and the mosaic order restore against them (S29.02, S32.02). */
 const factsRead = shallowRef(false)
+/** S35.01 from the pins: a focused chat's mine, handed to the current mine once it is composed below. */
+let focusChat = (mineId: MineId): void => {
+  void mineId
+}
 const pins = useVallePins({
   bridge: props.bridge,
   stores,
   model,
   factsRead,
-  talkedLast: () => stores.value.session.panelOpenChat ?? null
+  talkedLast: () => stores.value.session.panelOpenChat ?? null,
+  chatFocused: (mineId) => focusChat(mineId)
 })
 const mosaic = useValleMosaic({
   bridge: props.bridge,
@@ -336,6 +379,51 @@ const chat = computed((): { mineId: string; dwarfId: DwarfId } | null => {
   return pin?.kind === 'chat' ? { mineId: pin.mineId, dwarfId: pin.dwarfId } : null
 })
 
+/** The current mine (07 machine 35): marked, written for the Valle host and heard (ISSUE-307). */
+const currentMine = useCurrentMine({
+  bridge: props.bridge,
+  facts: () => ({
+    preset: view.value.preset,
+    mosaic: mosaic.order.value,
+    frontMine: frontMine.value,
+    focusMine: (chat.value?.mineId as MineId | undefined) ?? null
+  }),
+  muted: () => model.mines.value.map((mine) => mine.id).filter((mineId) => mosaic.isMuted(mineId)),
+  sound: audio
+})
+focusChat = (mineId) => {
+  currentMine.send({ kind: 'chat', mineId })
+}
+// S35.03: the Work front's mine, dived into, swapped in or picked from the list, is made current.
+watch(
+  () => (view.value.preset === 'front' ? frontMine.value : null),
+  (mineId) => {
+    if (mineId !== null) currentMine.send({ kind: 'dive', mineId })
+  },
+  { immediate: true }
+)
+/** The columns with the current mine marked and the mines needing the person (the ring's host, ISSUE-306). */
+const zoneColumns = computed(() =>
+  columns.value.map((column) => ({
+    ...column,
+    current: column.mineId === currentMine.current.value,
+    needs: model.dwarfs.value.some((dwarf) => dwarf.mineId === column.mineId && dwarf.needsYou)
+  }))
+)
+/** A pin selected: its chat focused, and in the Control room its mine made current even when already in focus (S35.01). */
+function selectPin(key: PinKey): void {
+  split.sendPin({ kind: 'select', key })
+  const pin = pins.set.value.pins.find((p) => p.key === key)
+  if (pin?.kind === 'chat') currentMine.send({ kind: 'chat', mineId: pin.mineId })
+}
+// Valle's Settings page writes the Sound preferences alone: the engine adopts them when the page closes.
+watch(
+  () => view.value.page,
+  (page, was) => {
+    if (was === 'settings' && page !== 'settings') void audio.sync()
+  }
+)
+
 /** Valle's nav column: the slots whose page takes the main zone (S28.19), the Panel's own slots. */
 const NAV_SLOTS = [...WORLD_SLOTS, ...SYSTEM_SLOTS].filter(
   (slot): slot is PanelNavSlot & { area: ValleNavPage } =>
@@ -419,8 +507,24 @@ onMounted(() => {
   // The hosted pages' board and remembered projects (ISSUE-304).
   void board.start({ announce: false }).then(() => mapPage.loaded())
   void minesPage.load()
+  // The sound (ISSUE-307): the stored settings and the page's visibility first, then the attention cues, judged
+  // against the person's own Notification sounds (ISSUE-117).
+  void audio.sync().then(() => {
+    if (unmounted) return
+    stopCues = useAttentionCues().start({
+      settings: audio.settings,
+      windowShown: audio.windowShown,
+      playSfx: audio.playSfx
+    })
+  })
+  stopAudio = audio.listen()
 })
 onUnmounted(() => {
+  unmounted = true
+  stopCues?.()
+  stopAudio?.()
+  currentMine.stop()
+  audio.dispose()
   document.removeEventListener('visibilitychange', visibilityChanged)
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('resize', resized)
@@ -477,12 +581,14 @@ onUnmounted(() => {
         :mine="shownMine"
         :content="mosaic.frontContent.value"
         :menu="frontMenu"
+        :moving="gated()"
         @menu="toggleMenu({ preset: 'front' })"
         @menu-pick="(id) => mosaic.pickMenu(id)"
         @menu-dismiss="mosaic.dismiss()"
         @fold="preset.send({ kind: 'fold' })"
         @unfold="preset.send({ kind: 'unfold' })"
         @pick="(mineId) => preset.send({ kind: 'pick', mineId })"
+        @current="(mineId) => currentMine.send({ kind: 'painting', mineId })"
       >
         <template #content="{ mineId, content }">
           <ValleZoneHistory
@@ -500,10 +606,11 @@ onUnmounted(() => {
       <ValleControlRoom
         v-else
         ref="room"
-        :columns="columns"
+        :columns="zoneColumns"
         :menu="columnMenu"
         :slot-entries="mosaic.slot.value"
         :notice="mosaic.notice.value"
+        :moving="gated()"
         @menu="(mineId) => toggleMenu({ preset: 'control', mineId })"
         @menu-pick="(id) => mosaic.pickMenu(id)"
         @menu-dismiss="mosaic.dismiss()"
@@ -513,6 +620,7 @@ onUnmounted(() => {
         @slot-new="mosaic.newProject()"
         @dive="(mineId) => preset.send({ kind: 'dive', mineId })"
         @sprite-double-click="preset.send({ kind: 'sprite-double-click' })"
+        @current="(mineId) => currentMine.send({ kind: 'painting', mineId })"
       >
         <template #content="{ mineId, content }">
           <ValleZoneHistory
@@ -547,7 +655,7 @@ onUnmounted(() => {
           :pins="pins.views.value"
           :focus="pins.set.value.focus"
           :focus-request="pins.focusRequest.value"
-          @select="(key) => split.sendPin({ kind: 'select', key })"
+          @select="selectPin"
           @unpin="(key) => split.sendPin({ kind: 'unpin', key })"
         >
           <template #chat="{ pin }">
@@ -565,7 +673,7 @@ onUnmounted(() => {
           :focus="pins.set.value.focus"
           :focus-request="pins.focusRequest.value"
           :split="deckSplit"
-          @select="(key) => split.sendPin({ kind: 'select', key })"
+          @select="selectPin"
           @unpin="(key) => split.sendPin({ kind: 'unpin', key })"
           @drag="(key) => split.sendPin({ kind: 'drag', key })"
           @drop="(order) => split.sendPin({ kind: 'drop', order })"

@@ -1037,8 +1037,10 @@ describe('machine 28 diagram conformance (dive and climb)', () => {
       }
     })
     expect(list.get(`[data-valle-row="${EREBOR}"]`).attributes('aria-current')).toBe('true')
+    // AMENDED for ISSUE-307 (US-VALLE-013.AC05, .AC09): the Work front's one mine is the current mine, so its name
+    // ends with ", current".
     expect(list.get(`[data-valle-front-mine="${EREBOR}"]`).attributes('aria-label')).toBe(
-      'Mine Erebor'
+      'Mine Erebor, current'
     )
     await list.get(`[data-valle-row="${MORIA}"]`).trigger('click')
     expect(list.emitted('pick')).toEqual([[MORIA]])

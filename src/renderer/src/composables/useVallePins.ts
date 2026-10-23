@@ -80,6 +80,11 @@ export interface VallePinsDeps {
   factsRead: Readonly<Ref<boolean>>
   /** The chat talked to last before Valle opened (07 N-16, §24 I-29), if any. */
   talkedLast(): DwarfId | null
+  /**
+   * The window's current mine (07 machine 35, S35.01; ISSUE-307): a focused chat's mine goes there, and the current mine
+   * writes A-N18 `current-mine` itself (the Work front's S35.04 included). Without it the mine is written here.
+   */
+  chatFocused?(mineId: MineId): void
 }
 
 export interface VallePinsPart {
@@ -134,7 +139,8 @@ export function useVallePins(deps: VallePinsDeps): VallePinsPart {
         bridge.patchUiSession({ kind: 'open-chat', host: 'valle', dwarfId: effect.dwarfId })
         return
       case 'current-mine':
-        bridge.patchUiSession({ kind: 'current-mine', host: 'valle', mineId: effect.mineId })
+        if (deps.chatFocused !== undefined) deps.chatFocused(effect.mineId)
+        else bridge.patchUiSession({ kind: 'current-mine', host: 'valle', mineId: effect.mineId })
         return
       case 'keyboard-focus':
         focusRequest.value = { target: effect.target, seq: (seq += 1) }

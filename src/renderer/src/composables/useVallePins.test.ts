@@ -61,7 +61,12 @@ function fakeModel(dwarfs: DwarfWire[], mines: MineWire[] = [mineWire(MORIA), mi
 function setUp(
   over: Partial<ValleStores>,
   dwarfs: DwarfWire[],
-  opts: { failFirstWrite?: boolean; talkedLast?: string } = {}
+  // AMENDED for ISSUE-307: `chatFocused`, the window's current mine (07 machine 35) a focused chat's mine goes to.
+  opts: {
+    failFirstWrite?: boolean
+    talkedLast?: string
+    chatFocused?: (mineId: string) => void
+  } = {}
 ) {
   const fake = fakeBridge(opts.failFirstWrite)
   const model = fakeModel(dwarfs)
@@ -74,7 +79,8 @@ function setUp(
       stores,
       model,
       factsRead,
-      talkedLast: () => (opts.talkedLast ?? null) as never
+      talkedLast: () => (opts.talkedLast ?? null) as never,
+      ...(opts.chatFocused ? { chatFocused: opts.chatFocused } : {})
     })
   )!
   return { ...fake, model, stores, factsRead, pins, scope }
@@ -265,6 +271,24 @@ describe('the dive tab order bound to the Valle pins (ISSUE-301)', () => {
     expect(t.pins.focused.value).toEqual({ dwarfId: BORIN, mineId: MORIA, from: 'handover' })
     t.pins.send({ kind: 'select', key: DAIN })
     expect(t.pins.focused.value).toEqual({ dwarfId: DAIN, mineId: EREBOR, from: 'other' })
+    t.scope.stop()
+  })
+})
+
+// APPENDED for ISSUE-307: the focused chat's mine goes to the window's current mine (07 machine 35, S35.01), which
+// writes A-N18 `current-mine` itself, so the Work front's S35.04 holds and the session has one writer.
+describe('the Valle pins and the current mine (ISSUE-307)', () => {
+  it('[US-VALLE-013.AC01, S35.01] a chat focused in a pin hands its mine to the current mine, never writing it itself', async () => {
+    const focused: string[] = []
+    const t = setUp({ pins: [] }, [dwarfWire(BORIN, MORIA), dwarfWire(DAIN, EREBOR)], {
+      chatFocused: (mineId) => focused.push(mineId)
+    })
+    t.factsRead.value = true
+    await nextTick()
+    expect(t.pins.send({ kind: 'click', dwarfId: BORIN, mineId: MORIA })).toBe(true)
+    expect(t.pins.send({ kind: 'click', dwarfId: DAIN, mineId: EREBOR })).toBe(true)
+    expect(focused).toEqual([MORIA, EREBOR])
+    expect(t.patches.filter((patch) => patch.kind === 'current-mine')).toEqual([])
     t.scope.stop()
   })
 })

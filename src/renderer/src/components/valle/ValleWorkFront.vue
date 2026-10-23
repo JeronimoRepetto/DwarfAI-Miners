@@ -11,11 +11,16 @@
  *   the dive's FLIP moves into place (`flip.ts`). Its other tools (ambience, history) and the art itself are later
  *   issues' (`art` slot), and so is what the zone shows instead of its mine (`content` slot).
  * - The zone registers with the on-screen report (`VALLE_TRACK_ZONE`, S39.05): it counts only while showing its mine.
+ * - The current mine (07 machine 35; US-VALLE-013.AC05, .AC11; ISSUE-307): the one mine shown is always current, its
+ *   zone with `aria-current`, ", current" in its name and the corner brackets in its body; its list line wears the gold
+ *   face with the list's own small brackets and no brass ring (brass is needs you). A single click on its painting or
+ *   header reports it (S35.02).
  */
 import type { MineId, ZoneContent } from '@dwarfai/contracts'
 import { computed, inject, onUnmounted, shallowRef, watch } from 'vue'
 import { VALLE_LIST_FOLDED_WIDTH, VALLE_LIST_WIDTH } from '../../lib/valle/preset'
 import type { ZoneMenuEntry, ZoneMenuItemId } from '../../lib/valle/zone'
+import CurrentMineMark from './CurrentMineMark.vue'
 import ZoneHeader from './ZoneHeader.vue'
 import ZoneMenu from './ZoneMenu.vue'
 import { VALLE_TRACK_ZONE } from './valleZones'
@@ -30,6 +35,8 @@ const props = defineProps<{
   content?: ZoneContent
   /** Its zone menu's entries while open, or `null`. */
   menu?: readonly ZoneMenuEntry[] | null
+  /** A dive or a climb plays (machine 28): the current mark hides until it settles. */
+  moving?: boolean
 }>()
 const emit = defineEmits<{
   fold: []
@@ -38,7 +45,21 @@ const emit = defineEmits<{
   menu: []
   'menu-pick': [id: ZoneMenuItemId]
   'menu-dismiss': []
+  /** S35.02: a single click on the mine's painting or header. */
+  current: [mineId: MineId]
 }>()
+
+/** A dwarf's sprite, or a control in the header or the art: its press is its own, never a click on the painting. */
+const NOT_PAINTING =
+  '[data-valle-sprite], .dm-vdwarf, .dm-dwarf, button, a, input, [role="menu"], [role="menuitem"]'
+
+function zoneClick(event: MouseEvent): void {
+  const mineId = props.mine?.mineId
+  if (mineId === undefined) return
+  const target = event.target
+  if (target instanceof Element && target.closest(NOT_PAINTING) !== null) return
+  emit('current', mineId)
+}
 
 const shows = computed((): ZoneContent => props.content ?? 'mine')
 
@@ -98,10 +119,11 @@ const listWidth = computed(
           type="button"
           class="dm-mrow"
           :data-valle-row="row.mineId"
+          :data-current="row.mineId === mine?.mineId ? 'true' : 'false'"
           :aria-current="row.mineId === mine?.mineId ? 'true' : undefined"
           @click="emit('pick', row.mineId)"
         >
-          {{ row.name }}
+          {{ row.name }}<CurrentMineMark :current="row.mineId === mine?.mineId" size="list" />
         </button>
       </div>
     </section>
@@ -113,10 +135,12 @@ const listWidth = computed(
         :data-valle-front-mine="mine.mineId"
         data-valle-zone
         :data-content="shows"
-        :aria-label="`Mine ${mine.name}`"
+        data-current="true"
+        aria-current="true"
+        :aria-label="`Mine ${mine.name}, current`"
       >
         <div class="dm-vz__bg" aria-hidden="true"></div>
-        <div class="dm-vz__head">
+        <div class="dm-vz__head" @click="zoneClick">
           <ZoneHeader
             :name="mine.name"
             :content="shows"
@@ -130,11 +154,13 @@ const listWidth = computed(
             @dismiss="emit('menu-dismiss')"
           />
         </div>
-        <div v-if="shows === 'mine'" class="dm-vz__well">
+        <div v-if="shows === 'mine'" class="dm-vz__well" @click="zoneClick">
           <slot name="art" :mine-id="mine.mineId" />
+          <CurrentMineMark :current="true" size="zone" :moving="moving === true" />
         </div>
         <div v-else class="dm-vz__well" :data-zone-content="shows">
           <slot name="content" :mine-id="mine.mineId" :content="shows" />
+          <CurrentMineMark :current="true" size="zone" :moving="moving === true" />
         </div>
       </section>
     </div>
@@ -172,10 +198,19 @@ const listWidth = computed(
   overflow-y: auto;
 }
 .dm-mrow {
+  position: relative;
   overflow: hidden;
   text-align: start;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* The line of the mine shown, the current mine: the gold face (`DS` organisms/mine-rows), no brass ring. */
+.dm-mrow[data-current='true'] {
+  background: var(--gold-select);
+  box-shadow:
+    inset 2px 2px 0 0 var(--gold),
+    inset -2px -2px 0 0 var(--gold-deep),
+    0 0 0 2px var(--rock-lo);
 }
 .dm-vmines {
   display: grid;

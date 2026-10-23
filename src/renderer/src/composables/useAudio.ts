@@ -47,11 +47,31 @@ import type { UiSfx } from '../lib/audio/volume'
  */
 export const AUDIO_TICK_MS = 250
 
+/**
+ * Where a window learns whether it is on screen. The Panel's is A-P1 (`getPanelVisible`, `onPanelVisibility`), the
+ * default; a mode window that is not the Panel reads its own (ISSUE-307: Valle's page visibility, 07 S35.08).
+ */
+export interface AudioVisibility {
+  read(): Promise<boolean>
+  listen(listener: (visible: boolean) => void): () => void
+}
+
 export interface UseAudioOptions {
   /** Injected by the tests; the real one is one `Audio` element per clip. */
   player?: AudioPlayer
   random?: () => number
   now?: () => number
+  /** The window's own visibility; the Panel's A-P1 pair unless a window names its own. */
+  visibility?: AudioVisibility
+  /** Whether the music plays here (the Panel's, #174); `false` keeps a window's engine music-free. */
+  music?: boolean
+  /** Whether the window's show and hide sound the Panel cue (#635, Q22); the Panel's own, so on by default. */
+  panelCue?: boolean
+}
+
+const PANEL_VISIBILITY: AudioVisibility = {
+  read: () => window.api.getPanelVisible(),
+  listen: (listener) => window.api.onPanelVisibility(listener)
 }
 
 export function useAudio(options: UseAudioOptions = {}) {
@@ -62,6 +82,9 @@ export function useAudio(options: UseAudioOptions = {}) {
   const musicPlaying = ref(false)
   /** The mine interior's own mute, which silences the ambience alone. */
   const ambienceMuted = ref(false)
+  const visibility = options.visibility ?? PANEL_VISIBILITY
+  const music = options.music ?? true
+  const panelCue = options.panelCue ?? true
 
   const engine = createAudioEngine({
     player: options.player ?? createElementAudioPlayer(),
@@ -117,7 +140,7 @@ export function useAudio(options: UseAudioOptions = {}) {
       // Asked rather than assumed, because the page loads while the window is
       // still HIDDEN: a renderer that assumed it was on screen would start the
       // music behind a window nobody had opened yet.
-      hidden = !(await window.api.getPanelVisible())
+      hidden = !(await visibility.read())
       visibilityKnown = true
       applyGates()
     } catch {
@@ -125,7 +148,7 @@ export function useAudio(options: UseAudioOptions = {}) {
       // a silent app with nothing on screen to explain it, and the push
       // corrects this the first time the window is shown or hidden.
     }
-    if (settings.value.musicAtStartup) {
+    if (music && settings.value.musicAtStartup) {
       musicPlaying.value = true
       engine.setMusicOn(true)
     }
@@ -140,7 +163,7 @@ export function useAudio(options: UseAudioOptions = {}) {
    * Returns the stop, like every other `listen` here.
    */
   function listen(): () => void {
-    const unlisten = window.api.onPanelVisibility((visible) => {
+    const unlisten = visibility.listen((visible) => {
       /*
        * The panel cue as the window is shown or hidden (#635, PANEL-QUESTIONS
        * Q22): main publishes on every show, hide, minimise and restore, from
@@ -155,10 +178,10 @@ export function useAudio(options: UseAudioOptions = {}) {
        */
       const transition = visibilityKnown && visible === hidden
       visibilityKnown = true
-      if (transition && !visible) engine.playSfx('panel')
+      if (panelCue && transition && !visible) engine.playSfx('panel')
       hidden = !visible
       applyGates()
-      if (transition && visible) engine.playSfx('panel')
+      if (panelCue && transition && visible) engine.playSfx('panel')
     })
     ticker = setInterval(() => engine.tick(), AUDIO_TICK_MS)
     return () => {
@@ -170,6 +193,7 @@ export function useAudio(options: UseAudioOptions = {}) {
 
   /** The shell's music button. */
   function toggleMusic(): void {
+    if (!music) return
     musicPlaying.value = !musicPlaying.value
     engine.setMusicOn(musicPlaying.value)
   }
@@ -178,6 +202,15 @@ export function useAudio(options: UseAudioOptions = {}) {
   function toggleAmbienceMute(): void {
     ambienceMuted.value = !ambienceMuted.value
     engine.setAmbienceMuted(ambienceMuted.value)
+  }
+
+  /**
+   * The mine's own mute set from outside (ISSUE-307): Valle's zone menu stores it per mine (`mutedMineIds`), and the
+   * current mine's is the one the engine reads.
+   */
+  function setAmbienceMuted(muted: boolean): void {
+    ambienceMuted.value = muted
+    engine.setAmbienceMuted(muted)
   }
 
   /**
@@ -257,6 +290,7 @@ export function useAudio(options: UseAudioOptions = {}) {
     listen,
     toggleMusic,
     toggleAmbienceMute,
+    setAmbienceMuted,
     setSettings,
     setScene,
     setCollapsed,
