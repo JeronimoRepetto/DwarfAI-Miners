@@ -218,3 +218,18 @@ export async function openMineColumn(window, mineId) {
   await card.dispatchEvent('click')
   await window.locator('.shell-mine').waitFor({ timeout: 30_000 })
 }
+
+/** One dwarf's chat as the Host keeps it (the snapshot's `tails` section): its messages' role and text, in order. */
+export async function chatOf(window, dwarfId) {
+  const tails = await section(window, 'tails')
+  const tail = tails.find((t) => t.dwarfId === dwarfId)
+  return (tail?.messages ?? []).map((m) => ({ role: m.role, text: m.text }))
+}
+
+/** Answers an open question ask (A-41 `answerDwarfQuestion`) as the question card does: one pick per step. */
+export async function answerQuestion(window, askId, answers) {
+  const answered = await window.evaluate(
+    `window.api.answerDwarfQuestion(${JSON.stringify({ askId, answers, requestId: uuidv7() })})`
+  )
+  return answered?.ok === true
+}

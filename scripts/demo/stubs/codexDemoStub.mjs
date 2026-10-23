@@ -20,6 +20,7 @@ import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import { behaviorFor } from './behavior.mjs'
 import { readScript } from './claudeDemoStub.mjs'
+import { replyItems, userItems } from './codexItems.mjs'
 import { codexRolloutFile, codexSubthreadMeta, threadIdOf } from './subagents.mjs'
 
 const VERSION = 'codex-cli 0.153.4'
@@ -284,20 +285,11 @@ function runServer(worldDir) {
     notify('thread/status/changed', { threadId, status: { type: 'active', activeFlags: [] } })
     notify('turn/started', { threadId, turn: turnOf(turnId, 'inProgress', false) })
     rollout('event_msg', { type: 'task_started', turn_id: turnId })
-    rollout('response_item', {
-      type: 'message',
-      id: randomUUID(),
-      role: 'user',
-      content: [{ type: 'input_text', text }]
-    })
-    const user = {
-      type: 'userMessage',
-      id: randomUUID(),
-      clientId: null,
-      content: [{ type: 'text', text, text_elements: [] }]
-    }
-    item('item/started', turnId, user)
-    item('item/completed', turnId, user)
+    // One id for the live item and the rollout line, as Codex writes them: the Host stores the line once.
+    const user = userItems(text)
+    rollout('response_item', user.rollout)
+    item('item/started', turnId, user.live)
+    item('item/completed', turnId, user.live)
     for (const step of behavior.steps) {
       await pause(behavior.stepMs)
       if (mine.interrupted) return
@@ -382,24 +374,11 @@ function runServer(worldDir) {
     }
     await pause(Math.min(behavior.stepMs, 1_500))
     if (mine.interrupted) return
-    item('item/completed', turnId, {
-      type: 'agentMessage',
-      id: randomUUID(),
-      text: reply,
-      phase: 'final_answer',
-      memoryCitation: null,
-      delivery: null,
-      questions: null
-    })
+    const answer = replyItems(reply)
+    item('item/completed', turnId, answer.live)
     spend(turnId, share)
     notify('thread/status/changed', { threadId, status: { type: 'idle' } })
-    rollout('response_item', {
-      type: 'message',
-      id: randomUUID(),
-      role: 'assistant',
-      content: [{ type: 'output_text', text: reply }],
-      phase: 'final_answer'
-    })
+    rollout('response_item', answer.rollout)
     rollout('event_msg', { type: 'task_complete', turn_id: turnId, last_agent_message: reply })
     notify('turn/completed', { threadId, turn: turnOf(turnId, 'completed', true) })
     open = null

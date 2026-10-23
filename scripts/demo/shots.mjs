@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { chooseTrayItem, TRAY_ITEMS } from '../../e2e/_harness/launchApp.ts'
-import { asksOf, poll, setPreference, showMode } from './app.mjs'
+import { answerQuestion, asksOf, chatOf, poll, setPreference, showMode } from './app.mjs'
 
 /**
  * `pnpm demo:shots` (docs/demo.md "Shots"): page captures of each mode as PNGs into a folder (default a fresh
@@ -212,6 +212,34 @@ export async function captureShots({
       await valle.locator('.dm-cdeck[data-drawer="open"]').waitFor({ timeout: 15_000 })
     })
     await showMode(app, valle, 'panel').catch(() => undefined)
+  }
+  // The Codex foreman's question answered as the card does (first option of each step), so a Codex reply exists on both
+  // paths (live item and rollout line); then a while for the Host to observe the rollout too.
+  if (asker !== undefined && !stopped()) {
+    const ask = (await asksOf(window)).find(
+      (a) => a.dwarfId === ids[asker.key] && a.kind === 'question' && a.state === 'open'
+    )
+    const questions = scenario.behaviors[asker.behavior].ask?.questions ?? []
+    if (ask !== undefined) {
+      const answers = questions.map((q, step) => ({ step, option: q.options[0] }))
+      const ok = await answerQuestion(window, ask.id, answers)
+      log(`answered ${asker.name ?? asker.key}'s question: ${ok ? 'accepted' : 'refused'}`)
+      await poll(
+        async () => (await chatOf(window, ids[asker.key])).filter((m) => m.role === 'dwarf').length,
+        (replies) => replies > 0 || stopped(),
+        `${asker.name ?? asker.key} replies`,
+        60_000
+      ).catch((error) => log(error.message))
+      await sleep(10_000)
+    }
+  }
+  // Each foreman's chat as the Host keeps it: a message stored twice shows twice, so a doubled line is named.
+  for (const foreman of scenario.mines.map((mine) => mine.foreman)) {
+    const chat = await chatOf(window, ids[foreman.key]).catch(() => [])
+    const doubled = chat.filter(
+      (m, at) => at > 0 && m.role === chat[at - 1].role && m.text === chat[at - 1].text
+    ).length
+    log(`chat check ${foreman.name ?? foreman.key}: ${chat.length} messages, ${doubled} doubled`)
   }
   log(`${taken.length} shots taken`)
 }

@@ -186,7 +186,8 @@ The Host marks a launched dwarf working, and credits its ore, from the transcrip
 would: the Claude stub `<CLAUDE_CONFIG_DIR>/projects/<encoded folder>/<session>.jsonl`, the Codex stub
 `<CODEX_HOME>/sessions/YYYY/MM/DD/rollout-*.jsonl`, both inside the profile (the Host hands each child its provider
 home, and the guard keeps both in the profile). The person's line keeps the uuid the driver sent, as Claude Code does,
-so the Host matches the two. Each reported message carries enough tokens for at least one unit of the richest
+and a Codex message carries one item id on both paths (the live item and the rollout line, `stubs/codexItems.mjs`), as
+Codex does, so the Host stores each message once and the chat shows it once. Each reported message carries enough tokens for at least one unit of the richest
 material, so ore shows in every tier.
 
 ## Limits
