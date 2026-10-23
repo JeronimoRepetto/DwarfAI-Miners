@@ -28,9 +28,9 @@ import { declareMine } from '../support/veta.ts'
  * L9 (ISSUE-306; US-SHELL-010.AC08; 07 S39.05, S17.01; UC-064, UC-059): in the E2E build profile (Valle in its
  * built-modes list, docs/e2e.md), Valle's Control room shows three mines at 1024 × 768, the last one's column past the
  * mosaic's right edge. Two stub Claude dwarfs start asking for a permission: first one in the mine on screen, then one
- * in the mine scrolled out of view, which raises the level-3 notification, since a mine counts as on screen only inside
- * the visible viewport (PO #85). The level-3 decision is the Host's; Valle only reports what is on screen (A-44). The
- * counter and the footer's queue list both askers, oldest first.
+ * in the mine scrolled out of view. Only the second raises the level-3 notification, since a mine counts as on screen
+ * only inside the visible viewport (PO #85). The level-3 decision is the Host's; Valle only reports what is on screen
+ * (A-44). The counter and the footer's queue list both askers, oldest first.
  *
  * The OS notification is never drawn on the machine running the case: Electron's `Notification` is replaced in the main
  * process before any ask, recording what would have been shown (its title and body, the dwarf's and the mine's names).
@@ -63,6 +63,12 @@ const shownOf = (app: ElectronApplication): Promise<Shown[]> =>
   app.evaluate(() => [
     ...((globalThis as unknown as { dwarfaiE2eShown?: Shown[] }).dwarfaiE2eShown ?? [])
   ])
+
+/** Forgets what was recorded so far: each launched dwarf's first turn ended with a turn-finished notification. */
+const forgetNotifications = (app: ElectronApplication): Promise<void> =>
+  app.evaluate(() => {
+    ;(globalThis as unknown as { dwarfaiE2eShown?: unknown[] }).dwarfaiE2eShown?.splice(0)
+  })
 
 /** The stub dwarf asks for its Write tool (`claudeStreamStub.mjs` ASK_MARKER); answers once its ask is open. */
 async function startAsking(window: Page, dwarfId: string): Promise<void> {
@@ -159,7 +165,9 @@ test.describe('the needs-you queue and the on-screen rule in Valle (ISSUE-306)',
     await expect.poll(() => visibleShare(valle, shownMine), { timeout: 15_000 }).toBe(1)
     await expect.poll(() => visibleShare(valle, hiddenMine), { timeout: 15_000 }).toBeLessThan(0.5)
 
-    // The dwarf in the mine on screen asks first.
+    // Only the asks' notifications count from here: the first turns' turn-finished ones were raised before Valle opened.
+    await forgetNotifications(app)
+    // The dwarf in the mine on screen asks first: its mine is on screen, so no level 3 for it.
     await startAsking(window, onScreen.dwarfId)
     // Then the dwarf in the mine scrolled out of view.
     await startAsking(window, offScreen.dwarfId)
@@ -174,13 +182,14 @@ test.describe('the needs-you queue and the on-screen rule in Valle (ISSUE-306)',
       onScreen.dwarfId
     )
 
-    // Level 3 for the mine out of view.
+    // Level 3 for the mine out of view; never for the one on screen, whose ask the Host decided first.
     await expect
       .poll(async () => (await shownOf(app)).map((n) => n.body), {
         timeout: 60_000,
         message: 'the Host raises level 3 for the mine scrolled out of view'
       })
       .toContain('gamma')
+    expect((await shownOf(app)).map((n) => n.body)).not.toContain('alpha')
 
     // The counter jumps to the oldest, the dwarf on screen: its chat expanded in the stack, the preset unchanged.
     await counter.click()
