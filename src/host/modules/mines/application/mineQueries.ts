@@ -7,9 +7,9 @@
 // - `get` and `folderOf` read one mine on the board: a removed or unknown mine reads as none.
 // - `resolveFileInMine` is `resolveFile.ts`'s (ISSUE-066): it reads the disk, so the module index composes it beside this read model.
 import type { FolderPath, Instant, MineId, Result } from '../../../kernel/domain/values'
-import type { Mine, MineName } from '../domain/mine'
+import { scoreOf, type Mine, type MineName, type MineScore } from '../domain/mine'
 import type { MinePath } from '../domain/minePath'
-import type { Tier } from '../domain/tier'
+import type { Tier, TierThresholds } from '../domain/tier'
 import type { MineQuery, MineRepository } from '../ports/mineRepository'
 
 // verbatim: 05 §3.1 (16 §4.1) `MinesQueries`
@@ -32,8 +32,12 @@ export interface MineSummary {
   removed: boolean
 }
 
-/** One mine on the board with its present-dwarf count (the ledger totals are ledger's, ISSUE-082). */
-export type MineView = Mine & { readonly presentDwarfs: number }
+/**
+ * One mine on the board with its present-dwarf count (the ledger totals are ledger's, ISSUE-082) and, once measured,
+ * its score toward the next tier (AMENDMENT-26, owner-approved 2026-10-23; 06 §0.2 view note): derived from the stored
+ * weight and the Host's active thresholds, absent while never measured or `unrecorded`.
+ */
+export type MineView = Mine & { readonly presentDwarfs: number; readonly score?: MineScore }
 
 /**
  * Interim (until ISSUE-094 wires crew's `CrewQueries` into mines): how many present dwarfs each
@@ -50,6 +54,8 @@ export interface MineReadModelDeps {
   repository: MineRepository
   /** Interim, until ISSUE-094. */
   presentDwarfs: PresentDwarfCounts
+  /** The tier thresholds read once at Host start (06 §4.1), the score's next-tier floor (AMENDMENT-26). */
+  thresholds: TierThresholds
 }
 
 /** `MinesQueries` without `resolveFileInMine`, which `resolveFile.ts` serves (ISSUE-066). */
@@ -73,9 +79,11 @@ export class MineReadModel implements Omit<MinesQueries, 'resolveFileInMine'> {
   get(mineId: MineId): MineView | null {
     const mine = this.onBoard(mineId)
     if (mine === null) return null
+    const score = scoreOf(mine, this.deps.thresholds)
     return {
       ...mine,
-      presentDwarfs: this.deps.presentDwarfs.presentDwarfsIn([mine.id]).get(mine.id) ?? 0
+      presentDwarfs: this.deps.presentDwarfs.presentDwarfsIn([mine.id]).get(mine.id) ?? 0,
+      ...(score === null ? {} : { score })
     }
   }
 

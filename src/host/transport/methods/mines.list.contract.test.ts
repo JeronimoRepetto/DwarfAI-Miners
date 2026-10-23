@@ -25,7 +25,7 @@ import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnostics
 import { RecordingEventBus } from '../../kernel/fakes/RecordingEventBus'
 import { RecordingStopAll } from '../../kernel/fakes/RecordingStopAll'
 import { SequenceIdGenerator } from '../../kernel/fakes/SequenceIdGenerator'
-import { createMines } from '../../modules/mines'
+import { createMines, DEFAULT_TIER_THRESHOLDS } from '../../modules/mines'
 import { NodeFs } from '../../platform/fs/NodeFs'
 import { SqliteTransactionRunner } from '../../platform/sqlite/SqliteTransactionRunner'
 import { openTemplateCopy } from '../../platform/sqlite/testing/templateDb'
@@ -196,6 +196,7 @@ async function host() {
     seat(DELTA, true)
   })
   const mines = createMines({
+    thresholds: DEFAULT_TIER_THRESHOLDS,
     db,
     transactions,
     mapSites: [],

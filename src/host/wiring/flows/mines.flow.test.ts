@@ -24,6 +24,7 @@ import {
   PROTOCOL_VERSION,
   evtFrameSchema,
   methodCapability,
+  snapshotChunkSchema,
   resFrameSchema,
   sectionCapability,
   type FolderPath
@@ -352,7 +353,8 @@ async function bootHost(options: HostOptions = {}) {
     settle,
     call,
     declare,
-    evts
+    evts,
+    sections
   }
 }
 
@@ -387,6 +389,45 @@ describe('the mines module wired into the Host (ISSUE-093)', () => {
     ])
     // The board frames reach the attached UI: the mine's last frame is the measured one.
     expect(h.evts('mine.changed').at(-1)).toMatchObject({ mine: { id: mineId, state: 'active' } })
+  })
+
+  // AMENDMENT-26 (owner-approved 2026-10-23; 14 §3.6 `MineWire.score`): the score rides the `mines` section and the
+  // existing `mine.changed` frame, from the walk's measurement and the Host's active thresholds.
+  it('[US-MINES-008.AC01, US-MINES-008.AC03] the mines section and mine.changed carry a measured mine score, and a re-measure that moves it sends a new one', async () => {
+    const h = await bootHost()
+    const path = h.folder('score-seam', 2_048)
+    const mineId = await h.declare(path)
+    // Declared and walking, never measured: no score yet.
+    expect(h.evts('mine.changed').at(-1)).not.toHaveProperty('mine.score')
+    await h.settle()
+
+    const minesSection = () => {
+      const chunk = snapshotChunkSchema.parse({
+        section: 'mines',
+        data: h.sections.get('mines')?.provider()
+      })
+      if (chunk.section !== 'mines') throw new Error('not the mines section')
+      return chunk.data.find((mine) => mine.id === mineId)
+    }
+    expect(minesSection()).toMatchObject({ tier: 'bronze', score: { kb: 2, nextTierKb: 350 } })
+    expect(h.evts('mine.changed').at(-1)).toMatchObject({
+      mine: { id: mineId, state: 'active', score: { kb: 2, nextTierKb: 350 } }
+    })
+
+    // The folder grows past Copper's floor (two distinct files, each under the bundle ceiling); the re-measure keeps
+    // the last score while it walks (S3.10).
+    h.folder('score-seam', 200 * 1_024)
+    writeFileSync(join(path, 'lode.ts'), 'y'.repeat(200 * 1_024))
+    h.wired.walks.remeasure(mineId)
+    expect(h.evts('mine.changed').at(-1)).toMatchObject({
+      mine: { state: 'measuring', score: { kb: 2, nextTierKb: 350 } }
+    })
+    await h.settle()
+
+    expect(h.evts('mine.changed').at(-1)).toMatchObject({
+      mine: { id: mineId, state: 'active', tier: 'copper', score: { kb: 400, nextTierKb: 1_500 } }
+    })
+    expect(minesSection()).toMatchObject({ score: { kb: 400, nextTierKb: 1_500 } })
   })
 
   it('[S3.01, S3.08] a mine created from an observed session waits unrecorded until the automatic walk measures it', async () => {

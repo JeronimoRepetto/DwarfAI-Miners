@@ -7,6 +7,7 @@ import {
   mineIdOf,
   mineNameOf,
   openMine,
+  scoreOf,
   transition,
   type Mine,
   type MineBirth,
@@ -15,7 +16,7 @@ import {
   type MineTransitionId
 } from './mine'
 import { canonicalMinePath } from './minePath'
-import { DEFAULT_TIER_THRESHOLDS } from './tier'
+import { DEFAULT_TIER_THRESHOLDS, tierThresholdsFrom } from './tier'
 
 const clock = new FakeClock(1_700_000_000_000)
 const T0 = clock.now()
@@ -447,5 +448,47 @@ describe('Mine aggregate: machine 3 (07 §3, 06 §4.1–§4.2)', () => {
         transition: null
       })
     }
+  })
+})
+
+// AMENDMENT-26 (owner-approved 2026-10-23; 06 §0.2 view note): the score is derived, never stored.
+describe('scoreOf (06 §0.2 Mine view score)', () => {
+  it('[US-MINES-008.AC01, US-MINES-008.AC04] a measured mine scores its weight in KB toward the next floor; a never-measured or unrecorded one has no score', () => {
+    expect(scoreOf(mineIn('active'), DEFAULT_TIER_THRESHOLDS)).toEqual({
+      kb: 400,
+      nextTierKb: 1_500
+    })
+    // Re-measuring (S3.10) and unenterable mines keep their last weight, so their score.
+    expect(scoreOf(mineIn('measuring', { measured: true }), DEFAULT_TIER_THRESHOLDS)).toEqual({
+      kb: 400,
+      nextTierKb: 1_500
+    })
+    expect(scoreOf(mineIn('unenterable', { measured: true }), DEFAULT_TIER_THRESHOLDS)).toEqual({
+      kb: 400,
+      nextTierKb: 1_500
+    })
+    expect(scoreOf(mineIn('unrecorded'), DEFAULT_TIER_THRESHOLDS)).toBeNull()
+    expect(scoreOf(mineIn('measuring'), DEFAULT_TIER_THRESHOLDS)).toBeNull()
+    // An unrecorded mine never shows a score, whatever it holds.
+    const measured = mineIn('active')
+    expect(scoreOf({ ...measured, state: 'unrecorded' }, DEFAULT_TIER_THRESHOLDS)).toBeNull()
+    // The next floor is the active thresholds' (an environment override moves it).
+    const overridden = tierThresholdsFrom({ TIER_SILVER_KB: '900' }).thresholds
+    expect(scoreOf(measured, overridden)).toEqual({ kb: 400, nextTierKb: 900 })
+  })
+
+  it('[US-MINES-008.AC02] a mine at the top tier has no next floor', () => {
+    const top = transition(
+      mineIn('measuring', { measured: true }),
+      {
+        type: 'measured',
+        sourceWeight: { bytes: 100_000 * 1024 },
+        thresholds: DEFAULT_TIER_THRESHOLDS
+      },
+      LATER
+    ).mine
+    if (top === null) throw new Error('fixture measurement refused')
+    expect(top.tier).toBe('uranium')
+    expect(scoreOf(top, DEFAULT_TIER_THRESHOLDS)).toEqual({ kb: 100_000, nextTierKb: null })
   })
 })

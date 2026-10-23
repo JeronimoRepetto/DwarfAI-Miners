@@ -81,6 +81,11 @@ export interface MinesDeps {
   bus: DomainEventBus<MineLifecycleEvent> & Pick<DomainEventBus<MineRemovalEvent>, 'publish'>
   hostEpoch: HostEpoch
   /**
+   * The tier thresholds read once at Host start (06 §4.1): the walks classify by them and the Mine view's score names
+   * the next tier's floor by them (AMENDMENT-26). `host/wiring` passes the same value to `measurement`.
+   */
+  thresholds: TierThresholds
+  /**
    * The walk a created, reattached or found-again mine is due: `host/wiring` binds it to
    * `Mines.measurement(…).walkDue` of this instance.
    */
@@ -153,7 +158,11 @@ export function createMines(deps: MinesDeps): Mines {
   const style = hostVolumeRules(deps.clock).style
   const paths = new NodePathProbe()
   // Interim: the present-dwarf counts come from the repository's join until ISSUE-094.
-  const readModel = new MineReadModel({ repository, presentDwarfs: repository })
+  const readModel = new MineReadModel({
+    repository,
+    presentDwarfs: repository,
+    thresholds: deps.thresholds
+  })
   const queries: MinesQueries = {
     list: (query) => readModel.list(query),
     get: (mineId) => readModel.get(mineId),
