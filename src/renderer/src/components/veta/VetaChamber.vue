@@ -6,7 +6,7 @@
  * heavy brass outline, and that dwarf raises "?" (attention level 1); an asleep dwarf shows "z".
  *
  * The dwarfs play on the window's one frame clock (`SpriteStrip`), each on the sheet its Host status plays, a worker
- * asleep held still (only the foreman's sleep is drawn). A status change patches the dwarf in place, its sheet swapped
+ * asleep held still on its sheet's first frame (only the foreman's sleep is drawn). A status change patches the dwarf in place, its sheet swapped
  * and its marks redrawn, never rebuilding its element (NFR-PERF-03, S20.14). Anchored at the right or bottom end
  * (`reverse`), the latest dwarf is first in DOM order, so a new one goes in at the far end and nothing moves.
  *
@@ -38,7 +38,7 @@ import { labelPlace, type LabelBox } from '../../lib/veta/dwarfLabel'
 import { portraitMark } from '../../lib/dwarf/portrait'
 import { designTierLabel } from '../../lib/presentation'
 import { dwarfClips, settledClips } from '../../lib/sprite/dwarfSequence'
-import { loopOf, type SpriteClip } from '../../lib/sprite/spriteSheet'
+import type { SpriteClip, SpriteSheet } from '../../lib/sprite/spriteSheet'
 import type { MineTier } from '../../types'
 import SpriteStrip from '../dwarf/SpriteStrip.vue'
 import DwarfLabel from './DwarfLabel.vue'
@@ -175,19 +175,27 @@ const arriving = computed(() =>
 
 /**
  * The sheet a dwarf plays: its idle sheet while it walks; once it walked in, its status sheet from the top
- * (`start-working` first for a working dwarf); otherwise the sheet its Host status plays. A worker asleep is held on one
- * frame.
+ * (`start-working` first for a working dwarf); otherwise the sheet its Host status plays.
  */
 function clipsOf(dwarf: DwarfWire): readonly SpriteClip[] {
   const asleep = dwarf.status === 'asleep'
   const working = dwarf.status === 'working'
   if (walkOf(dwarf) !== undefined) return settledClips(dwarf.rank, false, false)
-  const clips =
-    props.arrived?.has(dwarf.id) === true && !asleep
-      ? dwarfClips(dwarf.rank, false, undefined, working, undefined, true)
-      : settledClips(dwarf.rank, asleep, working)
-  if (!asleep || dwarf.rank === 'foreman') return clips
-  return [loopOf({ ...clips[0]!.sheet, frames: 1 })]
+  return props.arrived?.has(dwarf.id) === true && !asleep
+    ? dwarfClips(dwarf.rank, false, undefined, working, undefined, true)
+    : settledClips(dwarf.rank, asleep, working)
+}
+
+/**
+ * A worker asleep, settled in its chamber, is held still on the first frame of its sleep sheet (only the foreman's
+ * sleep is drawn). It is drawn as the strip's `still` picture, over the sheet's whole strip: a clip cut to one frame
+ * would also draw the strip one cell wide, squeezing every frame of the sheet into the sprite box at once.
+ */
+function heldOf(dwarf: DwarfWire): SpriteSheet | undefined {
+  if (dwarf.status !== 'asleep' || dwarf.rank === 'foreman' || walkOf(dwarf) !== undefined) {
+    return undefined
+  }
+  return clipsOf(dwarf)[0]!.sheet
 }
 
 /** Mirrored to face right, as a dwarf with no station is; walking out it turns away from the anchor. */
@@ -240,7 +248,13 @@ function facesRight(dwarf: DwarfWire): boolean {
         @pointerenter="hoverDwarf(dwarf.id, $event)"
         @pointerleave="hoverDwarf(null)"
       >
-        <SpriteStrip :clips="clipsOf(dwarf)" :phase-clips="1" :flip="facesRight(dwarf)" />
+        <SpriteStrip
+          :sheet="heldOf(dwarf)"
+          :still="heldOf(dwarf) !== undefined"
+          :clips="heldOf(dwarf) === undefined ? clipsOf(dwarf) : undefined"
+          :phase-clips="1"
+          :flip="facesRight(dwarf)"
+        />
         <span v-if="dwarf.status === 'asking'" class="veta-dwarf__ask" data-veta-ask>{{
           portraitMark('asking')
         }}</span>
