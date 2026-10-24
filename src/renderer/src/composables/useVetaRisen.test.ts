@@ -320,6 +320,20 @@ describe('useVetaRisen', () => {
     expect(risen.machine.value.state).toBe('risen-chat')
   })
 
+  // APPENDED for AMENDMENT-27 (owner, 2026-10-24): the history request (07 S24.13).
+  it("[US-DLG-006.AC02, S24.13] a mine-history request asks UI main for the Panel on the history of the chat's mine and dwarf", async () => {
+    const { risen, log, motionEnds } = world()
+    await risen.dispatch({ type: 'dwarf-hit', dwarfId: BORIN, mineId: MORIA })
+    await motionEnds()
+    log.length = 0
+    await risen.dispatch({ type: 'history' })
+    await settle()
+    expect(log).toEqual([
+      `moveToMode {"mode":"panel","mineId":"${MORIA}","dwarfId":"${BORIN}","slot":"history"}`
+    ])
+    expect(risen.machine.value.state).toBe('risen-chat')
+  })
+
   it('[S24.18, US-VETA-009.AC02] a chat carried into Veta rises with its draft and view from the session store', async () => {
     const { risen, log } = world({ drafts: { [BORIN]: 'carried from the Panel' } })
     await risen.dispatch({ type: 'arrive', mineId: MORIA, dwarfId: BORIN, present: true })

@@ -218,6 +218,33 @@ describe('the risen chat hand-off (ISSUE-293)', () => {
     )
   })
 
+  // APPENDED for AMENDMENT-27 (owner, 2026-10-24): the history request, built (07 S24.13; decision "Veta history").
+  it("[US-DLG-006.AC02, S24.13] a mine-history request moves to the Panel on the history, on this dwarf's tab, keeping the draft", async () => {
+    world = await mountVeta(TWO_MINES, { runs: true })
+    dwarf(BORIN).click()
+    await flushPromises()
+    const box = world.root.get('[data-veta-risen] textarea')
+    await box.setValue('typed in Veta')
+    const before = world.patches.length
+
+    await world.root.get('[data-veta-risen] .dm-msg__tools button[title="More"]').trigger('click')
+    const row = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (item) => item.textContent?.trim() === 'Mine history'
+    )
+    expect(row).toBeDefined()
+    // The menu floats on the body, outside the risen card: its press is the menu's own, never a press outside (S24.08).
+    row!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    await flushPromises()
+    row!.click()
+    await flushPromises()
+    // One move, naming the chat's mine and dwarf and the history slot: the Panel opens on that dwarf's tab (S27.01).
+    expect(world.moves).toEqual([{ mode: 'panel', mineId: MORIA, dwarfId: BORIN, slot: 'history' }])
+    // The run's flush still carries the draft to the session store, kept for when that chat opens in the Panel.
+    expect(world.patches.slice(before)).toEqual(
+      expect.arrayContaining([{ kind: 'draft', dwarfId: BORIN, text: 'typed in Veta' }])
+    )
+  })
+
   it('[US-MSG-010.AC03] a chat risen from Veta labels its tool Open in the Panel', async () => {
     world = await mountVeta(TWO_MINES)
     dwarf(BORIN).click()

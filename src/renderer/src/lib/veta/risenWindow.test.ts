@@ -401,3 +401,25 @@ describe('machine 24 hand-offs (ISSUE-293)', () => {
     }
   })
 })
+
+// APPENDED for ISSUE-293 (AMENDMENT-27, owner 2026-10-24): the history request (07 S24.13; decision "Veta history").
+describe('machine 24 history request (ISSUE-293)', () => {
+  it("[US-DLG-006.AC02, S24.13] a mine-history request in the risen chat asks for the Panel on the history of the chat's mine and dwarf, the chat staying risen", () => {
+    const asked = run([{ type: 'history' }], RISEN_BORIN)
+    expect(ids(asked.steps)).toEqual(['S24.13'])
+    expect(asked.steps[0]).toMatchObject({
+      effects: [{ kind: 'move-to-panel', mineId: MORIA, dwarfId: BORIN, slot: 'history' }]
+    })
+    expect(asked.machine).toEqual(RISEN_BORIN)
+    for (const from of [
+      FOLDED,
+      run([{ type: 'departed', dwarfId: BORIN, cause: 'stopped' }], RISEN_BORIN).machine
+    ]) {
+      expect(run([{ type: 'history' }], from).steps[0]).toEqual({
+        ok: false,
+        from: from.state,
+        event: 'history'
+      })
+    }
+  })
+})

@@ -22,8 +22,8 @@
  *
  * "▢ Open in the Panel" asks for the Panel on the chat's mine and dwarf (S24.12), the run carrying the chat; the window
  * folds when it hides (S24.14). A mode change into Veta carrying a chat rises it as a click does, once landed (S24.18).
- * The history request (S24.13) waits on the Panel being able to open on the history (`ModeTransition.slot`, an
- * amendment), so it is not modelled yet (ISSUE-293). A step 07 does not list is rejected and the machine is held.
+ * A mine-history request in the chat (S24.13) asks for the Panel the same way on the mine's history, the run carrying
+ * the slot (`ModeTransition.slot`, AMENDMENT-27). A step 07 does not list is rejected and the machine is held.
  *
  * The geometry (DS/docs/screens/veta.md, Layout; the prototype's `veta.js` numbers): 444 px wide, as tall as the room
  * beside the strip less 40 px held between 360 and 600 px, 14 px from the strip, centred on the dwarf or button that
@@ -93,6 +93,8 @@ export type RisenEvent =
   | { readonly type: 'lost' }
   /** "▢ Open in the Panel" in the chat header (S24.12). */
   | { readonly type: 'open-in-panel' }
+  /** A mine-history request in the chat (S24.13). */
+  | { readonly type: 'history' }
   /** A mode change into Veta carrying a chat landed (S24.18); `present` whether its dwarf is still there. */
   | {
       readonly type: 'arrive'
@@ -126,8 +128,16 @@ export type RisenEffect =
   | { readonly kind: 'bring-mine'; readonly mineId: MineId }
   /** The refused rise logged (`veta.placement`, `unplaced`). */
   | { readonly kind: 'log-refused' }
-  /** `moveToMode {mode: 'panel', mineId, dwarfId}`: machine 27 runs the move, machine 9 carries the chat. */
-  | { readonly kind: 'move-to-panel'; readonly mineId: MineId; readonly dwarfId: DwarfId }
+  /**
+   * `moveToMode {mode: 'panel', mineId, dwarfId, slot?}`: machine 27 runs the move, machine 9 carries the chat; `slot`
+   * `'history'` opens the Panel on the mine's history (S24.13).
+   */
+  | {
+      readonly kind: 'move-to-panel'
+      readonly mineId: MineId
+      readonly dwarfId: DwarfId
+      readonly slot?: 'history'
+    }
 
 export type RisenStep =
   | {
@@ -341,6 +351,22 @@ function transition(machine: RisenWindow, event: RisenEvent, context: RisenConte
         id: 'S24.12',
         to: machine,
         effects: [{ kind: 'move-to-panel', mineId: openChat.mineId, dwarfId: openChat.dwarfId }]
+      }
+    case 'history':
+      // S24.13 (AMENDMENT-27): the same hand-off, the Panel opening on the mine's history on this dwarf's tab; the run's
+      // flush keeps the draft for when that chat opens in the Panel. Veta itself has no history (decision "Veta history").
+      if (state !== 'risen-chat' || openChat === null) return null
+      return {
+        id: 'S24.13',
+        to: machine,
+        effects: [
+          {
+            kind: 'move-to-panel',
+            mineId: openChat.mineId,
+            dwarfId: openChat.dwarfId,
+            slot: 'history'
+          }
+        ]
       }
     case 'arrive':
       // S24.18: the carried chat rises as a click raises it, its draft and view given back by the session store.

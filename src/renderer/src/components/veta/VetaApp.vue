@@ -605,12 +605,14 @@ function pressed(event: PointerEvent): void {
   // The Host-state message holds the window: a press on it folds nothing behind it (ISSUE-296).
   if (hostStateShown.value) return
   const target = event.target as Element | null
-  // Outside the risen window, the strip included (S24.08); a press on a dwarf is its click's (S24.05).
+  // Outside the risen window, the strip included (S24.08); a press on a dwarf is its click's (S24.05). A menu the chat
+  // opened floats on the body (its ⋯ menu, `.dm-menu-float`): a press in it is the chat's own (S24.13, ISSUE-293).
   if (
     risenOpen.value &&
     target?.closest('[data-veta-risen]') == null &&
     target?.closest('[data-veta-dwarf]') == null &&
-    target?.closest('[data-veta-more-item]') == null
+    target?.closest('[data-veta-more-item]') == null &&
+    target?.closest('.dm-menu-float') == null
   ) {
     void risen.dispatch({ type: 'outside' })
   }
@@ -1462,6 +1464,7 @@ onBeforeUnmount(() => {
       @draft="risenDraft"
       @close="risen.dispatch({ type: 'esc', renaming: false })"
       @open-in-panel="risen.dispatch({ type: 'open-in-panel' })"
+      @history="risen.dispatch({ type: 'history' })"
     />
     <!-- An incompatible Host's Stop everything and quit goes to the Panel, which holds its confirmation (ISSUE-296). -->
     <VetaHostState
