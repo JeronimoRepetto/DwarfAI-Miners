@@ -51,15 +51,22 @@ function Get-RevertEntries {
   return , @($json | ConvertFrom-Json)
 }
 
-# Runs one Scoop command, echoes its whole output (Write-Host included) and answers it; a non-zero exit fails.
+# Runs one Scoop command and answers its output: every stream merged (`*>&1`: Write-Host, stdout, stderr and errors),
+# echoed whole after the command. A non-zero exit fails, with Scoop's output repeated in a log group.
 function Invoke-Scoop([string[]] $Arguments) {
   $ErrorActionPreference = 'Continue'
   $global:LASTEXITCODE = 0
-  Write-Host "> scoop $($Arguments -join ' ')"
+  $command = "scoop $($Arguments -join ' ')"
+  Write-Host "> $command"
   $output = & scoop @Arguments *>&1 | Out-String
   $code = $LASTEXITCODE
   Write-Host $output
-  if ($code -ne 0) { Fail "scoop $($Arguments -join ' ') exited $code" }
+  if ($code -ne 0) {
+    Write-Host "::group::Scoop's output of the failed step ($command)"
+    Write-Host $output
+    Write-Host '::endgroup::'
+    Fail "$command exited $code; Scoop said: $(($output -split "`r?`n" | Where-Object { $_.Trim() }) -join ' | ')"
+  }
   return $output
 }
 
@@ -105,7 +112,11 @@ try {
   git -C $bucket add --all
   git -C $bucket -c user.name=dwarfai-ci -c user.email=dwarfai-ci@localhost commit --quiet -m "dwarfai $version"
   if ($LASTEXITCODE -ne 0) { Fail 'the local bucket commit failed' }
-  Invoke-Scoop @('bucket', 'add', 'dwarfai-ci', $bucket) | Out-Null
+  # `scoop bucket add` takes a git URL, never a bare path: Scoop's Convert-RepositoryUri (lib/buckets.ps1) refuses a
+  # path with backslashes ("is not a valid Git URL!", package run 40101840270), then it runs `git ls-remote` and
+  # `git clone` on the URL. A `file:///C:/…` URL passes both (git-clone "GIT URLS").
+  $bucketUri = 'file:///' + ($bucket -replace '\\', '/')
+  Invoke-Scoop @('bucket', 'add', 'dwarfai-ci', $bucketUri) | Out-Null
 
   $revertsBefore = (Get-RevertEntries).Count
   $app = Join-Path $scoopDir 'apps' 'dwarfai'
