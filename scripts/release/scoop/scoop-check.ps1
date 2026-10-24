@@ -70,6 +70,17 @@ function Invoke-Scoop([string[]] $Arguments) {
   return $output
 }
 
+# The version Scoop recorded for the app folder. Scoop writes the installed manifest as `scoop-manifest.json` and
+# reads `manifest.json` only as the fallback of older installs (lib/manifest.ps1 installed_manifest; package run
+# 40103804211 found no `manifest.json`), so this reads them in the same order.
+function Get-InstalledVersion([string] $AppDir) {
+  foreach ($name in @('scoop-manifest.json', 'manifest.json')) {
+    $file = Join-Path $AppDir $name
+    if (Test-Path $file -PathType Leaf) { return (Get-Content $file -Raw | ConvertFrom-Json).version }
+  }
+  Fail "Scoop recorded no installed manifest in $AppDir (scoop-manifest.json or manifest.json)"
+}
+
 function Assert-Path([string] $Path, [string] $What) {
   if (-not (Test-Path $Path)) { Fail "$What is missing: $Path" }
 }
@@ -130,7 +141,7 @@ try {
   Assert-Path (Join-Path $current 'resources' 'app.asar') 'the installed resources'
   Assert-Path $shim 'the bin shim'
   Assert-Path $shortcut 'the Start menu shortcut'
-  $installed = (Get-Content (Join-Path $current 'manifest.json') -Raw | ConvertFrom-Json).version
+  $installed = Get-InstalledVersion $current
   if ($installed -ne $version) { Fail "install left version $installed current, not $version" }
   if ($installOutput -match 'pre_uninstall') { Fail 'scoop install ran pre_uninstall' }
   if ((Get-RevertEntries).Count -ne $revertsBefore) { Fail 'scoop install ran --revert-integrations' }
@@ -144,7 +155,7 @@ try {
   git -C (Join-Path $scoopDir 'buckets' 'dwarfai-ci') pull --quiet --ff-only
   if ($LASTEXITCODE -ne 0) { Fail 'the installed bucket did not pull the bumped manifest' }
   $updateOutput = Invoke-Scoop @('update', 'dwarfai')
-  $updated = (Get-Content (Join-Path $current 'manifest.json') -Raw | ConvertFrom-Json).version
+  $updated = Get-InstalledVersion $current
   if ($updated -ne $bumped) { Fail "update left version $updated current, not $bumped" }
   Assert-Path (Join-Path $current 'DwarfAI-Miners.exe') 'the updated exe'
   if ((Get-RevertEntries).Count -ne $revertsBefore) { Fail 'scoop update ran --revert-integrations' }
@@ -168,6 +179,10 @@ try {
   Write-Host ("P-SCOOP ok: install $version (hash from SHA256SUMS checked by Scoop; exe, shim and shortcut present; " +
     "no revert), update to $bumped (pre_uninstall ran: $hookOnUpdate; no revert), uninstall (revert ran once, " +
     "outcome=$($revert.outcome) errCode=$($revert.errCode); app folder and shim removed)")
+}
+catch {
+  # A terminating error of the script itself still ends in the one P-SCOOP line, with where it happened.
+  Fail "$($_.Exception.Message) (scoop-check.ps1 line $($_.InvocationInfo.ScriptLineNumber))"
 }
 finally {
   if ($null -ne $server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }
