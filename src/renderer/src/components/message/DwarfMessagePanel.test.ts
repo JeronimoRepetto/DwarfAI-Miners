@@ -4088,7 +4088,8 @@ describe('DwarfMessagePanel Host asks (ISSUE-138)', () => {
     expect(wrapper.find('.dm-composer').exists()).toBe(false)
   })
 
-  it('[VQA-03] the status line tells a Host question from a Host permission by the ask the Host holds', async () => {
+  // QA finding VQA-03 (#1513): a Host ask never sets the legacy `pendingQuestion`.
+  it('[US-MSG-011.AC02] the status line tells a Host question from a Host permission by the ask the Host holds', async () => {
     await followHostAsks([hostAsk()])
     const asking = { id: DWARF, textDelivery: 'terminal', status: 'waiting', hostStatus: 'asking' }
     const question = panel({ dwarf: defaultDwarf(asking as never) })
