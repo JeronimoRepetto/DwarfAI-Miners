@@ -11,17 +11,28 @@
  * - Where keyboard focus goes after an unpin is machine 29's (`focusRequest`): the next line, else the one before it,
  *   else the stack itself (tabindex -1), never dropped (AC04).
  * - The pin in focus has no line: its chat stands in the line's place, unpinned by the chat's own × or a middle click.
- * - With more lines than fit, the open chat keeps its room and is never covered; the lines above and below it share
- *   what is left, each side scrolling inside its own region, and nothing draws past the stack (Valle QA VQA-01).
+ * - The lines and the open chat are one list that scrolls as one, carrying the open chat with it; the open chat keeps a
+ *   fixed room and is never covered, and nothing draws past the stack (Valle QA VQA-01; owner check 2026-10-24).
+ * - The open chat wears the brass outline the deck gives its pane in focus, so where it starts and ends reads at once.
+ * - Opening a chat brings it into view, head first, and plays the prototype's reflow: the lines slide to their place
+ *   while the chat unrolls from its head down (`lib/valle/stackOpen`); reduced motion opens it at once.
  *
  * With nothing pinned the guidance line takes the place of the lines (07 machine 38; US-VALLE-014; ISSUE-310): a pure read
  * of the pins, nothing stored.
  *
  * Presentational: the set, its focus and every decision are the Valle root's (`useVallePins`).
  */
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { prefersReducedMotion } from '../../lib/scene/sceneMotion'
 import { STACK_EMPTY_TEXT, stackState } from '../../lib/valle/emptyStates'
 import type { FocusRequest, PinKey, PinView } from '../../lib/valle/pins'
+import {
+  STACK_OPEN_MOTION,
+  openScrollTop,
+  slideFrames,
+  stackOpenMs,
+  unrollFrames
+} from '../../lib/valle/stackOpen'
 import PixelIcon from '../icon/PixelIcon.vue'
 
 const props = defineProps<{
@@ -35,31 +46,69 @@ const root = ref<HTMLElement | null>(null)
 /** Machine 38: with nothing pinned the guidance line takes the place of the lines (S38.01). */
 const empty = computed(() => stackState({ pins: props.pins }) === 'stack-empty')
 
-/** A part of the list: the lines above the open chat, the open chat, then the lines below it. */
-type StackPart =
-  | { readonly kind: 'above' | 'below'; readonly label: string; readonly pins: readonly PinView[] }
-  | { readonly kind: 'open'; readonly pin: PinView }
+const list = ref<HTMLElement | null>(null)
+
+/** The list's parts, a line or the open chat, each by its pin. */
+function partsByPin(): Map<string, HTMLElement> {
+  const parts = new Map<string, HTMLElement>()
+  for (const part of list.value?.children ?? []) {
+    const pin = part.getAttribute('data-pin')
+    if (pin !== null) parts.set(pin, part as HTMLElement)
+  }
+  return parts
+}
+
+/** Where each part stood before the focus moved, for the lines to slide from (FLIP). */
+let before: Map<string, number> | null = null
 
 /**
- * The list in its three parts. The pin in focus has no line of its own: its chat takes the line's place
- * (`DS/prototype/organisms/chat-stack/chat-stack.js` render). The lines on each side of it are a region of their own,
- * which scrolls when they do not fit (Valle QA VQA-01, a package gap resolved in development: the design draws three
- * pins and is silent on more). An empty side has no region.
+ * Brings the open chat into view, head first, then plays the reflow: every line the change moved slides from where it
+ * stood, and the chat that opened unrolls from its head down, over `--dur-panel` (`DS` chat-stack.js render).
  */
-const parts = computed<readonly StackPart[]>(() => {
-  const at = props.pins.findIndex((pin) => pin.key === props.focus)
-  const above = at === -1 ? props.pins : props.pins.slice(0, at)
-  const below = at === -1 ? [] : props.pins.slice(at + 1)
-  return [
-    ...(above.length > 0
-      ? [{ kind: 'above' as const, label: 'Pinned chats above', pins: above }]
-      : []),
-    ...(at === -1 ? [] : [{ kind: 'open' as const, pin: props.pins[at]! }]),
-    ...(below.length > 0
-      ? [{ kind: 'below' as const, label: 'Pinned chats below', pins: below }]
-      : [])
-  ]
-})
+function showOpened(key: PinKey | null, stood: Map<string, number> | null): void {
+  const host = list.value
+  if (host === null || key === null) return
+  const parts = partsByPin()
+  const opened = parts.get(key)
+  if (opened === undefined) return
+  const view = host.getBoundingClientRect()
+  const box = opened.getBoundingClientRect()
+  const top = openScrollTop(
+    { scrollTop: host.scrollTop, height: view.height },
+    { top: box.top - view.top + host.scrollTop, height: box.height }
+  )
+  if (top !== null) host.scrollTop = top
+  const duration = stackOpenMs(prefersReducedMotion())
+  if (stood === null || duration === 0) return
+  const timing = { duration, easing: STACK_OPEN_MOTION.easing }
+  for (const [pin, part] of parts) {
+    if (pin === key || typeof part.animate !== 'function') continue
+    const was = stood.get(pin)
+    const dy = was === undefined ? 0 : was - part.getBoundingClientRect().top
+    if (dy !== 0) part.animate(slideFrames(dy), timing)
+  }
+  if (typeof opened.animate === 'function') opened.animate(unrollFrames(), timing)
+}
+
+watch(
+  () => props.focus,
+  () => {
+    before = new Map(
+      [...partsByPin()].map(([pin, part]) => [pin, part.getBoundingClientRect().top])
+    )
+  },
+  { flush: 'pre' }
+)
+watch(
+  () => props.focus,
+  (key) => {
+    const stood = before
+    before = null
+    showOpened(key, stood)
+  },
+  { flush: 'post' }
+)
+onMounted(() => showOpened(props.focus, null))
 
 watch(
   () => props.focusRequest,
@@ -100,56 +149,53 @@ function onAuxClick(event: MouseEvent, key: PinKey): void {
       <span class="dm-cstack__title">Pinned chats</span>
       <span class="dm-cstack__count">{{ pins.length > 0 ? pins.length : '' }}</span>
     </header>
-    <div class="dm-cstack__list">
-      <template v-for="part in parts" :key="part.kind">
+    <div ref="list" class="dm-cstack__list">
+      <template v-for="pin in pins" :key="pin.key">
         <div
-          v-if="part.kind === 'open'"
+          v-if="pin.key === focus"
           class="dm-cstack__open"
           tabindex="-1"
           data-expanded="true"
-          :data-pin="part.pin.key"
-          :data-pin-mine="part.pin.mineId"
-          :data-pin-state="part.pin.state"
-          :data-read-only="part.pin.readOnly ? 'true' : 'false'"
-          :aria-label="part.pin.text.name"
-          @auxclick="onAuxClick($event, part.pin.key)"
+          :data-pin="pin.key"
+          :data-pin-mine="pin.mineId"
+          :data-pin-state="pin.state"
+          :data-read-only="pin.readOnly ? 'true' : 'false'"
+          :aria-label="pin.text.name"
+          @auxclick="onAuxClick($event, pin.key)"
         >
-          <slot name="chat" :pin="part.pin" />
+          <slot name="chat" :pin="pin" />
         </div>
-        <div v-else class="dm-cstack__lines" role="group" :aria-label="part.label">
-          <div
-            v-for="pin in part.pins"
-            :key="pin.key"
-            class="dm-cstack__row m-mat"
-            role="button"
-            tabindex="0"
-            data-expanded="false"
-            :data-pin="pin.key"
-            :data-pin-mine="pin.mineId"
-            :data-pin-state="pin.state"
-            :data-needs="pin.text.needs ? 'true' : 'false'"
-            :aria-label="pin.text.lineLabel"
-            @click="emit('select', pin.key)"
-            @keydown="onLineKey($event, pin.key)"
-            @auxclick="onAuxClick($event, pin.key)"
+        <div
+          v-else
+          class="dm-cstack__row m-mat"
+          role="button"
+          tabindex="0"
+          data-expanded="false"
+          :data-pin="pin.key"
+          :data-pin-mine="pin.mineId"
+          :data-pin-state="pin.state"
+          :data-needs="pin.text.needs ? 'true' : 'false'"
+          :aria-label="pin.text.lineLabel"
+          @click="emit('select', pin.key)"
+          @keydown="onLineKey($event, pin.key)"
+          @auxclick="onAuxClick($event, pin.key)"
+        >
+          <span v-if="pin.kind === 'add'" class="dm-ctab__add" aria-hidden="true"
+            ><PixelIcon name="add"
+          /></span>
+          <slot v-else name="portrait" :pin="pin" />
+          <span class="dm-cstack__name">{{ pin.text.name }}</span>
+          <span class="dm-cstack__state">{{ pin.text.line }}</span>
+          <button
+            type="button"
+            class="dm-cstack__x"
+            tabindex="-1"
+            :aria-label="pin.text.unpinLabel"
+            title="Unpin"
+            @click.stop="emit('unpin', pin.key)"
           >
-            <span v-if="pin.kind === 'add'" class="dm-ctab__add" aria-hidden="true"
-              ><PixelIcon name="add"
-            /></span>
-            <slot v-else name="portrait" :pin="pin" />
-            <span class="dm-cstack__name">{{ pin.text.name }}</span>
-            <span class="dm-cstack__state">{{ pin.text.line }}</span>
-            <button
-              type="button"
-              class="dm-cstack__x"
-              tabindex="-1"
-              :aria-label="pin.text.unpinLabel"
-              title="Unpin"
-              @click.stop="emit('unpin', pin.key)"
-            >
-              <span aria-hidden="true">×</span>
-            </button>
-          </div>
+            <span aria-hidden="true">×</span>
+          </button>
         </div>
       </template>
     </div>
@@ -189,9 +235,9 @@ function onAuxClick(event: MouseEvent, key: PinKey): void {
   color: var(--ink-faint);
 }
 /*
- * Valle QA VQA-01 (the design is silent past three pins): the list never draws past its row of the stack. Its parts
- * are the lines above, the open chat and the lines below; the line regions give way first, the open chat never does.
- * Should their floors together still not fit, the list scrolls as a whole.
+ * Valle QA VQA-01, reworked for the owner check of 2026-10-24 (the design is silent past three pins): the list never
+ * draws past its row of the stack. It is the stack's one scroll: the lines above, the open chat and the lines below
+ * scroll together, so scrolling carries the open chat with it; the open chat's log is the only other scroll.
  */
 .dm-cstack__list {
   display: flex;
@@ -207,24 +253,29 @@ function onAuxClick(event: MouseEvent, key: PinKey): void {
   line-height: 1.4;
   color: var(--ink-faint);
 }
-/* A side's lines: as tall as they are, or down to one whole line, scrolling what no longer fits. */
-.dm-cstack__lines {
-  display: flex;
-  flex-direction: column;
-  flex: 0 1 auto;
-  gap: 4px;
-  min-height: calc(44px + 2 * var(--px, 2px));
-  overflow-y: auto;
-}
 /*
- * The open chat takes what the lines leave and never gives any of it up: at least the design's 240 px and at least half
- * the list, so many lines never squeeze its conversation to a sliver, more when its own content needs more (no
- * min-height, so the flex item's automatic minimum, its content, holds).
+ * The open chat's room: what the lines leave when they are few (the prototype's `flex: 1 1 auto`), and never less than
+ * the list's height less two lines when they are many, so in view it shows a neighbour line on each side and its log
+ * keeps most of the column; at least the design's 240 px, never more than the list. It never shrinks: the list scrolls.
+ * A line's pitch is its 44 px plate, its 2 px margins and the list's 4 px gap.
  */
 .dm-cstack__open {
+  position: relative;
   display: flex;
-  flex: 1 0 max(240px, 50%);
+  flex: 1 0 auto;
   flex-direction: column;
+  min-height: min(100%, max(240px, 100% - 2 * (44px + 2 * var(--px, 2px) + 4px)));
+}
+/*
+ * Its outline, head to composer: the brass edge the deck gives its pane in focus (`DS/prototype/organisms/chat-deck/
+ * chat-deck.css` `.dm-cdeck__pane.is-focus::after`), on an overlay that is painted and never hit.
+ */
+.dm-cstack__open::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 2px var(--brass);
 }
 /*
  * The MessagePanel or the Add panel in the chat zone fills it and shrinks with it down to its own min-content width
