@@ -22,8 +22,8 @@ import {
   type EffortPicker,
   type ModelPicker
 } from '../../lib/launch/modelTuning'
-import { providerChips } from '../../lib/launch/providerChips'
-import type { AgentProviderOption, HeldPermissionMode } from '../../types'
+import { providerChips, type ProviderChipSource } from '../../lib/launch/providerChips'
+import type { AgentProviderOption } from '../../types'
 import AddPanel from './AddPanel.vue'
 import type { IntegrationNotice } from '../../composables/useAgentLaunch'
 // APPENDED for ISSUE-261: the launch model's transitions the story cases below drive the panel with.
@@ -84,10 +84,15 @@ const CODEX_OFFERED: AgentProviderOption = { provider: 'codex', installed: true,
  */
 function panel(overrides: Partial<Record<string, unknown>> = {}) {
   const chosen = (overrides.chosen ?? null) as 'claude' | 'codex' | typeof OTHER_CHOICE | null
+  const offeredModes = (overrides.offeredModes ?? ['ask-first']) as string[]
   return mount(AddPanel, {
     props: {
       mineName: 'DwarfAI-Miners',
-      chips: providerChips([CLAUDE, CODEX_OFFERED], chosen),
+      // APPENDED for ISSUE-228: each entry's offered permission modes (14 §3.6 `offeredModes`), Ask first by default.
+      chips: providerChips(
+        [CLAUDE, CODEX_OFFERED].map((entry) => ({ ...entry, offeredModes })),
+        chosen
+      ),
       phase: (overrides.phase ?? 'provider-selection') as LaunchPhase,
       enabled: (overrides.enabled ?? false) as boolean,
       command: (overrides.command ?? '') as string,
@@ -101,7 +106,7 @@ function panel(overrides: Partial<Record<string, unknown>> = {}) {
       // APPENDED for #635 (MESSAGE-QUESTIONS 2): what the launch model holds for the three selects.
       model: (overrides.model ?? null) as string | null,
       effort: (overrides.effort ?? null) as string | null,
-      permissionMode: (overrides.permissionMode ?? null) as HeldPermissionMode | null,
+      permissionMode: (overrides.permissionMode ?? null) as string | null,
       // APPENDED for #635 (MESSAGE-QUESTIONS 14/16/17): the launch-failure notice's cause.
       failure: (overrides.failure ?? null) as LaunchFailure | null,
       // APPENDED for ISSUE-235: the OpenCode notice and the eyebrow's reading, passed only by the cases that set them.
@@ -305,9 +310,11 @@ describe('the model, effort and permission row', () => {
       modelPicker: LIVE_MODEL_PICKER,
       effortPicker: { visible: true, efforts: ['low', 'medium', 'high'] },
       permissionsVisible: true,
+      // AMENDED for ISSUE-228 (was: held Claude's `plan`): a mode the chosen entry offers.
+      offeredModes: ['ask-first', 'plan-only'],
       model: 'claude-haiku-4-5',
       effort: 'high',
-      permissionMode: 'plan'
+      permissionMode: 'plan-only'
     })
     const shown = (label: string) =>
       (wrapper.get(`select[aria-label="${label}"]`).element as HTMLSelectElement).value
@@ -315,7 +322,7 @@ describe('the model, effort and permission row', () => {
     expect([shown('Model'), shown('Effort'), shown('Permissions')]).toEqual([
       'claude-haiku-4-5',
       'high',
-      'plan'
+      'plan-only'
     ])
   })
 
@@ -327,7 +334,8 @@ describe('the model, effort and permission row', () => {
   it.each([
     ['Model', 'model', 'claude-haiku-4-5'],
     ['Effort', 'effort', 'high'],
-    ['Permissions', 'permissionMode', 'plan']
+    // AMENDED for ISSUE-228 (was: held Claude's `plan`): a mode the chosen entry offers.
+    ['Permissions', 'permissionMode', 'plan-only']
   ])(
     'keeps a %s picked off its select once the host holds it, through the next render',
     async (label, event, value) => {
@@ -336,7 +344,8 @@ describe('the model, effort and permission row', () => {
         phase: 'known-provider-ready',
         modelPicker: LIVE_MODEL_PICKER,
         effortPicker: { visible: true, efforts: ['low', 'medium', 'high'] },
-        permissionsVisible: true
+        permissionsVisible: true,
+        offeredModes: ['ask-first', 'plan-only']
       })
       const select = wrapper.get(`select[aria-label="${label}"]`)
 
@@ -461,33 +470,31 @@ describe('the model, effort and permission row', () => {
     expect(optionTexts(wrapper, 'Permissions')).toEqual(['Permissions: Default'])
   })
 
-  it('draws every non-bypass permission mode for a held Claude session, and reports the one chosen', async () => {
+  // AMENDED for ISSUE-228 (was: "draws every non-bypass permission mode for a held Claude session, and reports the one
+  // chosen", held Claude's five SDK modes): the select lists the modes the chosen entry offers (ADR-011 item 1).
+  it('[US-LAUNCH-001.AC04, US-LAUNCH-001.AC13] draws the modes the chosen entry offers, Ask first first, and reports the one chosen', async () => {
     const wrapper = panel({
       chosen: 'claude',
       phase: 'known-provider-ready',
       modelPicker: LIVE_MODEL_PICKER,
-      permissionsVisible: true
+      permissionsVisible: true,
+      offeredModes: ['ask-first', 'plan-only']
     })
     const select = wrapper.get('select[aria-label="Permissions"]')
 
-    // AMENDED for #635 (was: the SDK's raw mode names): the design's words where it has them.
     expect(select.findAll('option').map((option) => option.text())).toEqual([
       'Permissions: Ask first',
-      'Permissions: Accept edits',
-      'Permissions: Plan only',
-      "Permissions: Don't ask",
-      'Permissions: Auto'
+      'Permissions: plan-only'
     ])
-    expect(select.findAll('option').map((option) => option.attributes('value'))).not.toContain(
-      'bypassPermissions'
-    )
+    expect((select.element as HTMLSelectElement).value).toBe('ask-first')
 
-    await select.setValue('plan')
-    expect(wrapper.emitted('permissionMode')).toEqual([['plan']])
+    await select.setValue('plan-only')
+    expect(wrapper.emitted('permissionMode')).toEqual([['plan-only']])
   })
 
-  /* #635 (PO decision 2026-09-28): Codex's own modes, in the design's words, and the pick sticks. */
-  it("draws Codex's three permission modes, reports the one chosen, and shows it held", async () => {
+  // AMENDED for ISSUE-228 (was: "draws Codex's three permission modes, reports the one chosen, and shows it held", #635):
+  // Codex offers Ask first like every supplier that can ask (owner, 2026-10-24).
+  it('[US-LAUNCH-001.AC07, US-LAUNCH-001.AC06] draws Codex’s offered mode, Ask first, reports it chosen, and shows it held', async () => {
     const wrapper = panel({
       chosen: 'codex',
       phase: 'known-provider-ready',
@@ -496,21 +503,17 @@ describe('the model, effort and permission row', () => {
     })
     const select = wrapper.get('select[aria-label="Permissions"]')
     expect(select.attributes('disabled')).toBeUndefined()
-    // AMENDED for #635 (MESSAGE-QUESTIONS 24; was: 'Permissions: Ask first'): a detached
-    // `codex exec` can ask no one, so its no-flag mode is named for what it is.
     expect(select.findAll('option').map((option) => option.text())).toEqual([
-      'Permissions: Codex default',
-      'Permissions: Auto in workspace',
-      'Permissions: Read only'
+      'Permissions: Ask first'
     ])
 
-    await select.setValue('workspace-write')
-    expect(wrapper.emitted('permissionMode')).toEqual([['workspace-write']])
+    await select.setValue('ask-first')
+    expect(wrapper.emitted('permissionMode')).toEqual([['ask-first']])
 
-    await wrapper.setProps({ permissionMode: 'workspace-write' })
+    await wrapper.setProps({ permissionMode: 'ask-first' })
     expect(
       (wrapper.get('select[aria-label="Permissions"]').element as HTMLSelectElement).value
-    ).toBe('workspace-write')
+    ).toBe('ask-first')
   })
 
   // AMENDED for #635 (was: 'is absent once the session has launched'). The design keeps the
@@ -2170,9 +2173,16 @@ describe('the launch-failure notice (#635)', () => {
  * so each case reads the panel the person would see after the gestures it names.
  */
 describe('ISSUE-261: the Add panel form and the Jev card', () => {
-  const CATALOG: AgentProviderOption[] = (
+  // AMENDED for ISSUE-228: each entry with its offered permission modes as the Host answers them (Ask first for every
+  // supplier that can ask; Antigravity none).
+  const CATALOG: ProviderChipSource[] = (
     ['claude', 'codex', 'opencode', 'antigravity'] as const
-  ).map((provider) => ({ provider, installed: true, launchable: true }))
+  ).map((provider) => ({
+    provider,
+    installed: true,
+    launchable: true,
+    offeredModes: provider === 'antigravity' ? [] : ['ask-first']
+  }))
   const MODELS: ModelPicker = {
     visible: true,
     models: [
@@ -2307,7 +2317,8 @@ describe('ISSUE-261: the Add panel form and the Jev card', () => {
       expect(shownSelects(switched).map((select) => select.text)).toEqual([
         'Model: sonnet',
         'Effort: low',
-        'Permissions: Codex default'
+        // AMENDED for ISSUE-228 (was: 'Permissions: Codex default'): Codex's entry offers Ask first.
+        'Permissions: Ask first'
       ])
 
       const typed = typeCommand(chooseProvider(opened(), OTHER_CHOICE), 'my-agent --yes')

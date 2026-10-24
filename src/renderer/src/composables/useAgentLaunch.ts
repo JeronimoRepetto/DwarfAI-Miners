@@ -57,7 +57,6 @@ import {
 import {
   effortPicker,
   modelPicker,
-  permissionsVisible,
   type EffortPicker,
   type ModelPicker
 } from '../lib/launch/modelTuning'
@@ -267,7 +266,10 @@ export interface AgentLaunch {
   modelPicker: ComputedRef<ModelPicker>
   /** What the effort select should draw, empty when the chosen provider has none. */
   effortPicker: ComputedRef<EffortPicker>
-  /** Whether the Permissions select belongs on screen — held Claude only. */
+  /**
+   * Whether the Permissions select holds values: the chosen entry offers a permission mode (ADR-011 item 1; AMENDED
+   * for ISSUE-228, was: held Claude and Codex by provider).
+   */
   permissionsVisible: ComputedRef<boolean>
   /** The Add Panel's Jev option (#509) — availability, the person's toggle, and the routing card/line. */
   jev: ComputedRef<JevState>
@@ -365,6 +367,8 @@ export function useAgentLaunch(): AgentLaunch {
       ? undefined
       : (providers.value as ProviderEntry[]).find((entry) => entry.provider === choice)
   })
+  /** The chosen provider's offered permission modes (14 §3.6 `offeredModes`; ADR-011 item 1), in offer order. */
+  const offeredModes = computed(() => [...(chosenEntry.value?.offeredModes ?? [])])
   /** ADR-011 item 7: the chosen provider's permission requests wait for an integration that is off. */
   const gated = computed(() => chosenEntry.value?.answerChannel === 'gated-off')
   const integrationNotice = computed((): IntegrationNotice => {
@@ -565,7 +569,7 @@ export function useAgentLaunch(): AgentLaunch {
 
     const mine = mineId.value as MineId
     const requestId = mintRequestId()
-    const params = launchParamsOf(state.value, mine, requestId, retryOf)
+    const params = launchParamsOf(state.value, mine, requestId, retryOf, offeredModes.value)
     const custom = customLaunchParamsOf(state.value, mine, requestId, retryOf)
     // A command of the person's own (#194) goes on A-39: it names no provider
     // because there is none — the whole reason it is a channel of its own
@@ -658,7 +662,7 @@ export function useAgentLaunch(): AgentLaunch {
     refusal,
     modelPicker: computed(() => modelPicker(catalogs.value, state.value.choice)),
     effortPicker: computed(() => effortPicker(catalogs.value, state.value.choice)),
-    permissionsVisible: computed(() => permissionsVisible(state.value.choice)),
+    permissionsVisible: computed(() => offeredModes.value.length > 0),
     jev,
     open,
     close,
@@ -677,7 +681,7 @@ export function useAgentLaunch(): AgentLaunch {
     pickManually,
     observe,
     integrationNotice,
-    offeredModes: computed(() => [...(chosenEntry.value?.offeredModes ?? [])]),
+    offeredModes,
     pausedForNotice: computed(() => pausedForNotice.value),
     jevAccepted: computed(() => state.value.jev.autoAccept && !pausedForNotice.value),
     enableIntegration

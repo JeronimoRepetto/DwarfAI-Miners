@@ -6,6 +6,7 @@ import type { HostLaunch } from '../readModel/launches'
 import {
   chooseEffort,
   chooseModel,
+  choosePermissionMode,
   chooseProvider,
   closedLaunch,
   commitCommand,
@@ -75,6 +76,34 @@ describe('A-35 in its 14 shape (ISSUE-001)', () => {
     })
     // Other… is a custom command (A-39), never an A-35 launch.
     expect(launchParamsOf({ ...ready(), choice: OTHER_CHOICE }, MINE, REQUEST)).toBeNull()
+  })
+
+  // ADDED for ISSUE-228 (ADR-011 item 1; 14 §3.4 `LaunchParams.permissionMode`, one of the entry's offered modes).
+  it('[US-LAUNCH-001.AC04, US-LAUNCH-001.AC13, ADR-011] a supplier launch carries the held offered mode, or the first offered one with none held', () => {
+    expect(launchParamsOf(ready(), MINE, REQUEST, undefined, ['ask-first'])).toMatchObject({
+      way: { kind: 'supplier', providerId: 'claude' },
+      permissionMode: 'ask-first'
+    })
+    const offered = ['ask-first', 'plan-only']
+    const held = choosePermissionMode(ready(), 'plan-only')
+    expect(launchParamsOf(held, MINE, REQUEST, undefined, offered)?.permissionMode).toBe(
+      'plan-only'
+    )
+    // A held mode the entry does not offer now (a switch, a refreshed list) is never sent: the first is.
+    const stale = choosePermissionMode(ready(), 'read-only')
+    expect(launchParamsOf(stale, MINE, REQUEST, undefined, offered)?.permissionMode).toBe(
+      'ask-first'
+    )
+  })
+
+  it('[US-LAUNCH-001.AC14, ADR-011] no permission mode travels when the entry offers none, nor on the Jev way', () => {
+    const held = choosePermissionMode(ready(), 'ask-first')
+    expect(launchParamsOf(held, MINE, REQUEST)).not.toHaveProperty('permissionMode')
+    expect(launchParamsOf(held, MINE, REQUEST, undefined, [])).not.toHaveProperty('permissionMode')
+    const jev = toggleJev(setJevSettings(held, READY))
+    expect(launchParamsOf(jev, MINE, REQUEST, undefined, ['ask-first'])).not.toHaveProperty(
+      'permissionMode'
+    )
   })
 
   it('[US-LAUNCH-003.AC02] with Let Jev choose on the launch is the Host Jev way, its switches carried', () => {

@@ -56,7 +56,15 @@ export interface ProviderChip {
   choice: LaunchChoice
   label: string
   state: ChipState
+  /**
+   * The permission modes the chip's supplier's entry offers now (14 §3.6 `offeredModes`; ADR-011 item 1), in offer
+   * order, which the Permissions select lists once the chip is chosen. Absent when the entry carries none (Other…).
+   */
+  permissionModes?: readonly string[]
 }
+
+/** A provider as the chip row reads it: its A-36 entry, with the offered permission modes when the answer has them. */
+export type ProviderChipSource = AgentProviderOption & { readonly offeredModes?: readonly string[] }
 
 function chipState(choice: LaunchChoice, chosen: LaunchChoice | null): ChipState {
   if (chosen === null) return 'default'
@@ -78,14 +86,19 @@ function chipState(choice: LaunchChoice, chosen: LaunchChoice | null): ChipState
  * lib/shell/builtDestinations' `offeredProviders`, the one Settings' default provider reads too.
  */
 export function providerChips(
-  providers: readonly AgentProviderOption[],
+  providers: readonly ProviderChipSource[],
   chosen: LaunchChoice | null
 ): ProviderChip[] {
-  const chips: ProviderChip[] = offeredProviders(providers).map((entry) => ({
-    choice: entry.provider,
-    label: entry.provider,
-    state: chipState(entry.provider, chosen)
-  }))
+  // `offeredProviders` keeps each entry as given, so its offered modes travel with it.
+  const offered = new Set<AgentProviderOption>(offeredProviders(providers))
+  const chips: ProviderChip[] = providers
+    .filter((entry) => offered.has(entry))
+    .map((entry) => ({
+      choice: entry.provider,
+      label: entry.provider,
+      state: chipState(entry.provider, chosen),
+      ...(entry.offeredModes === undefined ? {} : { permissionModes: [...entry.offeredModes] })
+    }))
   chips.push({
     choice: OTHER_CHOICE,
     label: OTHER_CHIP_LABEL,
