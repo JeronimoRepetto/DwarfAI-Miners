@@ -215,7 +215,12 @@ async function nameWorkers({ scenario, window, ids, log, stopped }) {
       if (worker.name !== null && !(await renameDwarf(window, id, worker.name))) {
         log(`${worker.name}: the app kept its own name`)
       }
-      log(`${worker.name ?? key} (${worker.rank}) arrived in ${mine.name}`)
+      const row = rows.find((r) => r.id === id)
+      // What the Host answers for it: a worker the person cannot write to shows the composer note.
+      log(
+        `${worker.name ?? key} (${worker.rank}) arrived in ${mine.name}` +
+          ` (process ${row?.processState ?? '?'}, receives messages: ${row?.canReceiveMessages === true ? 'yes' : 'no'})`
+      )
     }
     await sleep(500)
   }
@@ -224,6 +229,8 @@ async function nameWorkers({ scenario, window, ids, log, stopped }) {
 /** The hold loop: keeps the scene alive until `stopped()`. */
 async function hold({ scenario, speed, window, ids, busy, log, stopped }) {
   const idleSince = new Map()
+  /** How many follow-ups each foreman was sent: the next is the one after (`holdPlan`). */
+  const sent = new Map()
   let round = 0
   while (!stopped()) {
     const byId = new Map(Object.entries(ids).map(([key, id]) => [id, key]))
@@ -245,6 +252,7 @@ async function hold({ scenario, speed, window, ids, busy, log, stopped }) {
         key,
         status: dwarf.status,
         idleSince: idleSince.get(key) ?? now,
+        sent: sent.get(key) ?? 0,
         busyUntil: busy.get(key)
       })
     }
@@ -252,6 +260,7 @@ async function hold({ scenario, speed, window, ids, busy, log, stopped }) {
     for (const send of sends) {
       if (await sendText(window, ids[send.key], send.text)) {
         idleSince.delete(send.key)
+        sent.set(send.key, (sent.get(send.key) ?? 0) + 1)
         const { provider } = scenarioDwarfs(scenario).find((d) => d.key === send.key)
         busy.set(send.key, Date.now() + scriptedLengthMs(scenario, provider, send.text, speed))
         log(`${send.key} told: ${send.text}`)

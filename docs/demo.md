@@ -35,15 +35,15 @@ One mine per dwarf universe and one mine named like a software project, in the o
 strip show them. Each mine has one foreman, the only dwarf the demo launches; its workers are the subagents its CLI
 spawns (Claude) or its sub-threads (Codex), and a worker's own subagent is a worker²:
 
-| Mine                | Tier    | Foreman                                       | Workers (worker² under its parent)                                       |
-| ------------------- | ------- | --------------------------------------------- | ------------------------------------------------------------------------ |
-| `Moria`             | Uranium | Balin, Claude: asks a permission              | Óin, Ori (finishes and walks out), Glóin (Gimli under him), Dwalin       |
-| `Heigh-Ho Mine`     | Silver  | Doc, Codex: asks two questions                | Grumpy, Happy (Dopey under him), Sleepy (falls asleep), Bashful, Sneezy  |
-| `Nidavellir`        | Silver  | Brokkr, Claude                                | Eitri, Dvalin (finishes and walks out)                                   |
-| `Boatmurdered`      | Copper  | Urist McMiner, Claude                         | Urist McMason                                                            |
-| `Karak Eight Peaks` | Bronze  | Gotrek, Claude                                | Belegar                                                                  |
-| `Erebor`            | Gold    | Thorin, Claude                                | Fíli (Kíli under him), Bombur (falls asleep), Bofur (arrives after 75 s) |
-| `ore-ledger`        | Copper  | the app's own name, Codex: asks two questions | one worker under the app's own name                                      |
+| Mine                | Tier    | Foreman                          | Workers (worker² under its parent)                                       |
+| ------------------- | ------- | -------------------------------- | ------------------------------------------------------------------------ |
+| `Moria`             | Uranium | Balin, Claude: asks a permission | Óin, Ori (finishes and walks out), Glóin (Gimli under him), Dwalin       |
+| `Heigh-Ho Mine`     | Silver  | Doc, Codex: asks two questions   | Grumpy, Happy (Dopey under him), Sleepy (falls asleep), Bashful, Sneezy  |
+| `Nidavellir`        | Silver  | Brokkr, Claude                   | Eitri, Dvalin (finishes and walks out)                                   |
+| `Boatmurdered`      | Copper  | Urist McMiner, Claude            | Urist McMason                                                            |
+| `Karak Eight Peaks` | Bronze  | Gotrek, Claude                   | Belegar                                                                  |
+| `Erebor`            | Gold    | Thorin, Claude                   | Fíli (Kíli under him), Bombur (falls asleep), Bofur (arrives after 75 s) |
+| `ore-ledger`        | Copper  | Nori, Codex: asks two questions  | Dori                                                                     |
 
 The foremen are launched one after the other through the app and given their names with the app's own Rename. Each
 foreman's stub, from its first turn on, spawns its workers one by one, as the real CLI does: it writes each subagent's
@@ -86,10 +86,13 @@ the demo's stubs (see "The hard guard").
 ### Changing names and words
 
 `scripts/demo/scenarios/showcase.json` holds every mine name, tier, foreman, worker, parent, name, prompt, reply,
-question and timing; no code changes are needed to rename a mine or a dwarf. Set a dwarf's `name` to `null` to keep the
-name the app gives it. `pnpm vitest run scripts/demo` checks the file still keeps the showcase's promises (one foreman
-per mine, workers and worker², asks only from foremen, questions only from Codex, sleepers, a late arrival off screen,
-exactly one mine named like a software project). A mine name is letters, digits, spaces, hyphens and apostrophes.
+question and timing; no code changes are needed to rename a mine or a dwarf. Every dwarf carries a name; `null` would
+keep the name the app gives it, which the tests refuse. A dwarf's first reply is its own `reply`; after that it answers
+with its kind of work's `moreReplies` in turn (`behaviors.<name>.moreReplies`), so a worker on its next pass, a foreman
+asked again, or a foreman's next follow-up never says the same words twice in a row. `pnpm vitest run scripts/demo`
+checks the file still keeps the showcase's promises (one foreman per mine, every dwarf named, no reply twice in a row,
+workers and worker², asks only from foremen, questions only from Codex, sleepers, a late arrival off screen, exactly one
+mine named like a software project). A mine name is letters, digits, spaces, hyphens and apostrophes.
 
 ### A flow to record
 

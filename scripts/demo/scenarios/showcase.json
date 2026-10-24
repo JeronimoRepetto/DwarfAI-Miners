@@ -306,7 +306,7 @@
       "enterable": true,
       "foreman": {
         "key": "ledger",
-        "name": null,
+        "name": "Nori",
         "provider": "codex",
         "behavior": "question",
         "asks": true,
@@ -316,7 +316,7 @@
       "workers": [
         {
           "key": "ledger-tests",
-          "name": null,
+          "name": "Dori",
           "parent": "ledger",
           "startMs": 12000,
           "end": "loop",
@@ -350,7 +350,12 @@
         ["Edit", "docs/halls.md"]
       ],
       "stepMs": 11000,
-      "tokens": 540000
+      "tokens": 540000,
+      "moreReplies": [
+        "Walked the seams again: two more props had settled, both wedged tight and marked on the survey.",
+        "The survey is up to date. One tunnel I had marked as sound needs shoring after all; it is on the list now.",
+        "Checked the deepest gallery twice. Dry, propped and lit; nothing new to report there."
+      ]
     },
     "refactor": {
       "steps": [
@@ -360,7 +365,12 @@
         ["Bash", "pnpm vitest run core"]
       ],
       "stepMs": 9000,
-      "tokens": 420000
+      "tokens": 420000,
+      "moreReplies": [
+        "Second pass done: the scheduler no longer polls, it waits for the rail to free up. Same tests, all green.",
+        "Split the scheduler in two, routing and timing, so each can be tested alone. 15 tests pass.",
+        "Removed the old rail lock nobody used any more. One file less, nothing else changed."
+      ]
     },
     "profile": {
       "steps": [
@@ -372,7 +382,12 @@
         ["Bash", "node bench/run.mjs"]
       ],
       "stepMs": 13000,
-      "tokens": 660000
+      "tokens": 660000,
+      "moreReplies": [
+        "Profiled again after the change: the slowest stage is now the sieve, at 12 ms a cart.",
+        "Ran the bench three times to be sure. The numbers hold within 2 ms.",
+        "Cached the scale readings per cart; the stage dropped from 9 ms to 4 ms."
+      ]
     },
     "tests": {
       "steps": [
@@ -385,7 +400,12 @@
         ["Bash", "pnpm vitest run timer"]
       ],
       "stepMs": 12000,
-      "tokens": 480000
+      "tokens": 480000,
+      "moreReplies": [
+        "Added four more tests for the edge cases: an empty shift, a double handover and two clocks out of step.",
+        "Every test passes on the first run now; the flaky one waited on a real clock and uses a fake one instead.",
+        "Covered the last branch nobody tested. The suite is up to 31 cases, all green."
+      ]
     },
     "permission": {
       "steps": [
@@ -401,7 +421,12 @@
         "target": "src/gates/doorLog.ts"
       },
       "replyDenied": "I left `src/gates/doorLog.ts` as it was. Tell me where the door log should live instead.",
-      "tokens": 510000
+      "tokens": 510000,
+      "moreReplies": [
+        "The door log is updated: one door was rehung and swings freely now.",
+        "Checked the wiring once more. Every door answers; the log shows the last three repairs.",
+        "Rewired the north door as well. The log has a line for each door and its state."
+      ]
     },
     "question": {
       "steps": [
@@ -427,7 +452,12 @@
           }
         ]
       },
-      "tokens": 420000
+      "tokens": 420000,
+      "moreReplies": [
+        "Going with {answer}. The second count matches the first, so the entries are sealed.",
+        "Going with {answer}. The migration ran again on a fresh copy and gave the same totals.",
+        "Going with {answer}. Moved the last stragglers and checked them by hand."
+      ]
     },
     "nap": {
       "steps": [
@@ -435,7 +465,12 @@
         ["Edit", "docs/rota.md"]
       ],
       "stepMs": 4000,
-      "tokens": 120000
+      "tokens": 120000,
+      "moreReplies": [
+        "Fixed one more typo while I was there.",
+        "Nothing else needed fixing.",
+        "Read it through once more; it is fine now."
+      ]
     },
     "tune": {
       "steps": [
@@ -447,7 +482,12 @@
         ["Bash", "pnpm vitest run forge"]
       ],
       "stepMs": 12000,
-      "tokens": 570000
+      "tokens": 570000,
+      "moreReplies": [
+        "Tuned it again after a full shift: the numbers held, one value nudged by a strike.",
+        "Ran the bench with a cold start too. Within 5% of the warm runs.",
+        "Settled the last value. The table is written down beside the anvil."
+      ]
     },
     "docs": {
       "steps": [
@@ -458,7 +498,12 @@
         ["Edit", "docs/steps.md"]
       ],
       "stepMs": 14000,
-      "tokens": 360000
+      "tokens": 360000,
+      "moreReplies": [
+        "Added pictures of each step and a short list of what to do when a step goes wrong.",
+        "Read the guide aloud to a newcomer and fixed the two places that confused them.",
+        "Shortened the guide by a third; nothing important was lost."
+      ]
     },
     "map": {
       "steps": [
@@ -470,7 +515,12 @@
         ["Bash", "pnpm vitest run maps"]
       ],
       "stepMs": 12000,
-      "tokens": 450000
+      "tokens": 450000,
+      "moreReplies": [
+        "Added the new side tunnel to the map, with its depth and its lanterns.",
+        "Redrew the legend so the three lantern colours read at a glance.",
+        "Checked the map against the tunnels on foot: two markers moved a few paces."
+      ]
     },
     "check": {
       "steps": [
@@ -481,7 +531,12 @@
         ["Edit", "reports/inspection.md"]
       ],
       "stepMs": 15000,
-      "tokens": 390000
+      "tokens": 390000,
+      "moreReplies": [
+        "Checked again an hour later: nothing new has come loose.",
+        "Found one more thing to tighten and tightened it. The report has the details.",
+        "All clear on the second round. Signed off in the report."
+      ]
     },
     "report": {
       "steps": [
@@ -492,7 +547,12 @@
         ["Edit", "reports/kitchens.md"]
       ],
       "stepMs": 12000,
-      "tokens": 330000
+      "tokens": 330000,
+      "moreReplies": [
+        "Fresh report written: one more oven is cooling down, the rest are steady.",
+        "Nothing changed since the last report except the bread count, which went up.",
+        "Report updated and pinned by the door."
+      ]
     },
     "follow-up": {
       "steps": [
@@ -502,7 +562,12 @@
         ["Bash", "pnpm vitest run"]
       ],
       "stepMs": 13000,
-      "tokens": 360000
+      "tokens": 360000,
+      "moreReplies": [
+        "Done. One more small fix along the way, noted in the log.",
+        "All checked again; nothing else needs a second pass.",
+        "Finished, and the notes say what is left for tomorrow."
+      ]
     },
     "question-roster": {
       "steps": [
@@ -528,7 +593,12 @@
           }
         ]
       },
-      "tokens": 420000
+      "tokens": 420000,
+      "moreReplies": [
+        "Going with {answer}. The roster for next week follows the same rule.",
+        "Going with {answer}. Swapped two shifts so nobody digs Friday and Saturday both.",
+        "Going with {answer}. Everyone has their shifts on the board by the entrance."
+      ]
     }
   },
   "fallback": {

@@ -10,3 +10,12 @@ export function behaviorFor(script, text) {
   const words = String(text).trim()
   return script.behaviors?.[words] ?? script.fallback ?? EMPTY
 }
+
+/**
+ * The reply of the `n`th time a behaviour runs (from 0): its `replies` in turn, so a dwarf asked the same thing again,
+ * or a worker on its next pass, never says the same words twice in a row. A behaviour with one reply keeps it.
+ */
+export function replyOf(behavior, n) {
+  const replies = behavior.replies ?? []
+  return replies.length === 0 ? behavior.reply : replies[n % replies.length]
+}

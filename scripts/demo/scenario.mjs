@@ -112,6 +112,11 @@ function stepsOf(scenario, name, speed) {
   }
 }
 
+/** `list` turned left by `by` places. */
+function rotated(list, by) {
+  return list.length === 0 ? list : list.map((_, at) => list[(at + by) % list.length])
+}
+
 /** One foreman behaviour with its reply and the subagents its CLI spawns, at `speed`. */
 function foremanBehavior(scenario, foreman, speed) {
   const { steps, stepMs, tokens, template } = stepsOf(scenario, foreman.behavior, speed)
@@ -124,6 +129,7 @@ function foremanBehavior(scenario, foreman, speed) {
       description: worker.prompt,
       prompt: worker.prompt,
       reply: worker.reply,
+      replies: [worker.reply, ...(work.template.moreReplies ?? [])],
       startMs: Math.round(worker.startMs / speed),
       steps: work.steps,
       stepMs: work.stepMs,
@@ -136,6 +142,7 @@ function foremanBehavior(scenario, foreman, speed) {
     stepMs,
     ask: template.ask ?? null,
     reply: foreman.reply,
+    replies: [foreman.reply, ...(template.moreReplies ?? [])],
     ...(template.replyDenied === undefined ? {} : { replyDenied: template.replyDenied }),
     tokens,
     spawns
@@ -155,12 +162,15 @@ export function stubScriptOf(scenario, provider, speed) {
     behaviors[foreman.prompt] = foremanBehavior(scenario, foreman, speed)
   }
   scenario.followUps.forEach((text, index) => {
-    const { steps, stepMs, tokens } = stepsOf(scenario, 'follow-up', speed)
+    const { steps, stepMs, tokens, template } = stepsOf(scenario, 'follow-up', speed)
     behaviors[text] = {
       steps,
       stepMs,
       ask: null,
       reply: scenario.followUpReplies[index],
+      // The shared alternates start at a different place for each follow-up, so two follow-ups in a row never
+      // answer alike.
+      replies: [scenario.followUpReplies[index], ...rotated(template.moreReplies ?? [], index)],
       tokens,
       spawns: []
     }
@@ -211,7 +221,8 @@ export function assignWorkers(scenario, ids, rows) {
 /**
  * The hold loop's sends for this look: `views` are the dwarfs as the Host shows them (`key`, `status`, `idleSince`,
  * `busyUntil`). Only a foreman is ever sent anything (its workers are its CLI's): one idle or asleep for at least
- * `holdIdleMs` (divided by `speed`) gets the follow-up of this `round`, offset by its place in the scenario; an asking
+ * `holdIdleMs` (divided by `speed`) gets its next follow-up: the one after the `sent` it already had (the `round`
+ * when a view does not say), offset by its place in the scenario, so it is never sent the same one twice in a row; an asking
  * foreman gets its own prompt again, so its ask comes back. Nothing goes to a foreman working, asking, or whose last
  * scripted turn cannot have ended yet (`busyUntil`): the Host can show a dwarf idle before it observed the turn.
  */
@@ -225,7 +236,9 @@ export function holdPlan(scenario, views, now, speed, round) {
     if (view.status !== 'idle' && view.status !== 'asleep') continue
     if (now - view.idleSince < scenario.holdIdleMs / speed) continue
     const d = everyone[index]
-    const text = d.asks ? d.prompt : scenario.followUps[(round + index) % scenario.followUps.length]
+    const text = d.asks
+      ? d.prompt
+      : scenario.followUps[((view.sent ?? round) + index) % scenario.followUps.length]
     sends.push({ key: view.key, text })
   }
   return sends
