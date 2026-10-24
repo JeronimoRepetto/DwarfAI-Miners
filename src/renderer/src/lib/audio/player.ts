@@ -88,10 +88,12 @@ export interface AudioPlayer {
    * reaches its own end, which is what drives the music gap for a track whose
    * duration never became readable. `loop` wraps the sound at its end instead,
    * so `onEnded` never fires for it — see the note in the real player below.
+   * `startAtMs` opens it part-way in: a track handed over from another window
+   * carries on from where it was (AMENDMENT-28).
    */
   open: (
     src: string,
-    options?: { volume?: number; onEnded?: () => void; loop?: boolean }
+    options?: { volume?: number; onEnded?: () => void; loop?: boolean; startAtMs?: number }
   ) => AudioClip
 }
 
@@ -117,6 +119,14 @@ export function createElementAudioPlayer(): AudioPlayer {
       element.loop = options?.loop === true
       element.volume = clamp01(options?.volume ?? 0)
       if (options?.onEnded) element.addEventListener('ended', options.onEnded)
+      if (options?.startAtMs !== undefined && options.startAtMs > 0) {
+        try {
+          // Before the metadata has loaded this is the element's default playback start position, applied once it has.
+          element.currentTime = options.startAtMs / 1000
+        } catch {
+          // A position the element refuses starts the track from its beginning: `play`'s own rule.
+        }
+      }
 
       let ramp: ReturnType<typeof setInterval> | undefined
       /** How much of the running ramp is left, so it can be re-aimed. */

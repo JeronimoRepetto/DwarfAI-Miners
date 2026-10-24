@@ -582,3 +582,54 @@ describe('useModeTransition — a run carrying the history slot (ISSUE-293, AMEN
     expect(heard).toEqual(['arrival chat', 'landed chat'])
   })
 })
+
+/*
+ * APPENDED for AMENDMENT-28 (owner ruling 2026-10-24, "one music, one playlist"): the window a run leaves hands its
+ * music over as the run starts, and the window it enters takes it over at t0.
+ */
+describe('useModeTransition — the music of a run (AMENDMENT-28)', () => {
+  it('[US-SHELL-005.AC03, NFR-SND-07] the source hands its music over as the run starts, and the target takes it over at t0 before it hears it entered', async () => {
+    const s = setup()
+    s.transition.registerMusic({
+      leave: () => s.events.push('music leave'),
+      enter: () => void s.events.push('music enter')
+    })
+    s.transition.onEntered(() => s.events.push('entered'))
+    s.push({ role: 'source', from: 'panel', to: 'valle' })
+    // At once, before t0, with the open chat's flush: the source's music stops with the hand-over.
+    expect(s.events).toEqual(['patch draft', 'patch chat-view', 'music leave'])
+    s.clock.advance(16)
+    await flush()
+    s.finish()
+    await flush()
+    expect(s.events.filter((e) => e.startsWith('music'))).toEqual(['music leave'])
+
+    s.events.length = 0
+    s.push({ role: 'target', transitionId: 't-2', from: 'valle', to: 'panel' })
+    await flush()
+    expect(s.events).not.toContain('music enter')
+    s.clock.advance(16)
+    await flush()
+    expect(s.events.filter((e) => e === 'music enter' || e === 'entered')).toEqual([
+      'music enter',
+      'entered'
+    ])
+    s.finish()
+    await flush()
+    expect(s.events.filter((e) => e.startsWith('music'))).toEqual(['music enter'])
+  })
+
+  it('[US-SHELL-005.AC03] an unregistered music hears nothing more', async () => {
+    const s = setup()
+    const heard: string[] = []
+    const stop = s.transition.registerMusic({
+      leave: () => heard.push('leave'),
+      enter: () => void heard.push('enter')
+    })
+    stop()
+    s.push({ role: 'source', from: 'panel', to: 'valle' })
+    s.clock.advance(16)
+    await flush()
+    expect(heard).toEqual([])
+  })
+})

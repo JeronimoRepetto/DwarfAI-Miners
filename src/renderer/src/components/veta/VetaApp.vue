@@ -107,6 +107,8 @@ import { useWindowVetaPresence } from '../../composables/useVetaPresence'
 import { useDwarfQuestion } from '../../composables/useDwarfQuestion'
 import { useWindowVetaRisen } from '../../composables/useVetaRisen'
 import { modeTransitionPart } from '../../composables/useModeTransition'
+import { useAudio, type AudioVisibility } from '../../composables/useAudio'
+import type { AudioPlayer } from '../../lib/audio/player'
 import { prefersReducedMotion } from '../../lib/scene/sceneMotion'
 import { SHIPPED_MODES } from '../../lib/shell/builtDestinations'
 import {
@@ -193,6 +195,34 @@ const closed = computed(
 const sessions = computed(() => state.value !== null && !closed.value)
 
 const root = ref<HTMLElement | null>(null)
+
+const props = defineProps<{
+  /** Injected by the tests; the real one is one `Audio` element per clip. */
+  audioPlayer?: AudioPlayer
+}>()
+
+/*
+ * The music in Veta (owner ruling 2026-10-24, which supersedes "Veta plays no mine" for the music alone; AMENDMENT-28):
+ * the one music of the app plays here too, unless the person stopped it, turned Music off or set its volume to 0. Veta
+ * still plays no mine sound (NFR-SND-03): no mine is ever this engine's scene, so no room tone, working bed or crew sound
+ * can open. Its gate is Veta's own shown state — the page's visibility, hidden from the end of a run Veta left until a
+ * run enters it again, since a hidden frameless window does not reliably report itself hidden (VQA-09) — and it sounds
+ * no Panel cue.
+ */
+const pageShown = (): boolean => document.visibilityState === 'visible'
+let leftRun = false
+const vetaShown = shallowRef(pageShown())
+const vetaShownChanged = (): void => {
+  vetaShown.value = pageShown() && !leftRun
+}
+const vetaVisibility: AudioVisibility = {
+  read: () => Promise.resolve(vetaShown.value),
+  listen: (listener) => watch(vetaShown, (now) => listener(now))
+}
+const audio = useAudio({ player: props.audioPlayer, visibility: vetaVisibility, panelCue: false })
+let stopAudio: (() => void) | undefined
+let stopMusicHandoff: (() => void) | undefined
+let stopEntering: (() => void) | undefined
 
 /** Gives the focus back to what opened an overlay (S22.03, S22.16), when it is still drawn. */
 function focusOpener(target: Opener): void {
@@ -800,6 +830,7 @@ function hovered(event: PointerEvent): void {
 
 /** Hidden mid-drag (S21.10, S10.08): the island goes back where it was; an open overlay closes (S22.17). */
 function visibility(): void {
+  vetaShownChanged()
   // Shown: the fit is measured on each show (S25.01, S25.02).
   if (document.visibilityState !== 'hidden') {
     overflow.remeasure()
@@ -1284,7 +1315,18 @@ onMounted(() => {
   // draft and view kept. A hidden frameless window does not reliably report itself hidden (`visibilitychange`).
   stopLeaving = modeTransitionPart().onLeft(() => {
     void risen.dispatch({ type: 'interrupt', why: 'hidden' })
+    leftRun = true
+    vetaShownChanged()
   })
+  // AMENDMENT-28: a run entering Veta shows it again at t0 (the music was taken over just before); one leaving it hands
+  // the music to the window it enters.
+  stopEntering = modeTransitionPart().onEntered(() => {
+    leftRun = false
+    vetaShownChanged()
+  })
+  stopMusicHandoff = modeTransitionPart().registerMusic({ leave: audio.leave, enter: audio.enter })
+  void audio.sync()
+  stopAudio = audio.listen()
   document.addEventListener('keydown', escape)
   window.addEventListener('resize', resized)
 })
@@ -1299,6 +1341,10 @@ onBeforeUnmount(() => {
   risen.stop()
   stopLanding?.()
   stopLeaving?.()
+  stopEntering?.()
+  stopMusicHandoff?.()
+  stopAudio?.()
+  audio.dispose()
   choreo.stop()
   motion.dispose()
   board.stop()

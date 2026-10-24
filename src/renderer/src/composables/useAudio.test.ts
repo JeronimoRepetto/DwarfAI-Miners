@@ -4,7 +4,9 @@ import { createFakeWindowApi } from '../../../contracts/ipc/testing/fakeWindowAp
 import type { AudioPreferences } from '../types'
 import { DEFAULT_AUDIO_PREFERENCES } from '../types'
 import { createFakeAudioPlayer, type FakeAudioPlayer } from '../lib/audio/fakeAudioPlayer'
-import { AUDIO_TICK_MS, useAudio } from './useAudio'
+import type { UiSessionMusic } from '@dwarfai/contracts'
+import { MUSIC_TRACK_SRC } from '../lib/audio/audioAssets'
+import { AUDIO_TICK_MS, useAudio, type AudioVisibility, type MusicSession } from './useAudio'
 
 type VisibilityListener = (visible: boolean) => void
 
@@ -453,5 +455,174 @@ describe('useAudio', () => {
     stop()
     expect(push).toBeUndefined()
     surface.dispose()
+  })
+
+  /*
+   * APPENDED for AMENDMENT-28 (owner ruling 2026-10-24: "one music, one playlist"; music in Veta). Each mode window has
+   * its own engine; the music moves between them through the UI-main session store. The window a run leaves writes
+   * where its music was and stops it; the window the run enters adopts it. Only the first window of the run reads
+   * "Music at startup".
+   */
+  describe('one music across the mode windows (owner ruling 2026-10-24)', () => {
+    /** The UI-main session store's music slot, shared by every window of the run. */
+    function sharedStore(): MusicSession & { music: UiSessionMusic | undefined } {
+      const store = {
+        music: undefined as UiSessionMusic | undefined,
+        read: () =>
+          Promise.resolve(store.music === undefined ? undefined : structuredClone(store.music)),
+        write: (music: UiSessionMusic) => {
+          store.music = structuredClone(music)
+        }
+      }
+      return store
+    }
+
+    /** A mode window's own shown state (Valle's and Veta's), pushed by the test. */
+    function shownState(initial: boolean): AudioVisibility & { set(shown: boolean): void } {
+      let shown = initial
+      let listener: ((visible: boolean) => void) | undefined
+      return {
+        read: () => Promise.resolve(shown),
+        listen: (next) => {
+          listener = next
+          return () => {
+            listener = undefined
+          }
+        },
+        set(next) {
+          shown = next
+          listener?.(next)
+        }
+      }
+    }
+
+    function music<T extends { src: string }>(clips: readonly T[]): T[] {
+      return clips.filter((clip) => (MUSIC_TRACK_SRC as readonly string[]).includes(clip.src))
+    }
+
+    it('[US-SHELL-005.AC03, NFR-SND-07] the window a run enters plays the same track from where the window it left was, in the same order', async () => {
+      const session = sharedStore()
+      const panelPlayer = createFakeAudioPlayer()
+      const vallePlayer = createFakeAudioPlayer()
+      const valleShown = shownState(false)
+      const panel = useAudio({ player: panelPlayer, random: () => 0.5, session })
+      // Valle shuffles with another draw: what it plays must be the Panel's all the same.
+      const valle = useAudio({
+        player: vallePlayer,
+        random: () => 0,
+        session,
+        visibility: valleShown,
+        panelCue: false
+      })
+      await panel.sync()
+      await valle.sync()
+      const stopValle = valle.listen()
+      expect(music(vallePlayer.live())).toHaveLength(0)
+      const track = music(panelPlayer.live())[0]!
+      track.seekMs(73_400)
+
+      // The run to Valle: the Panel leaves at once; at t0 Valle enters and is shown.
+      panel.leave()
+      expect(music(panelPlayer.live())).toHaveLength(0)
+      const entered = valle.enter()
+      valleShown.set(true)
+      await entered
+
+      const playing = music(vallePlayer.live())
+      expect(playing.map((clip) => [clip.src, clip.positionMs()])).toEqual([[track.src, 73_400]])
+      expect(playing[0]!.playing).toBe(true)
+      expect(valle.musicPlaying.value).toBe(true)
+      // The rest of the round is the Panel's order.
+      expect(session.music!.queue).toHaveLength(MUSIC_TRACK_SRC.length - 1)
+      const order = [...session.music!.queue]
+      playing[0]!.end()
+      vi.advanceTimersByTime(1000 + AUDIO_TICK_MS)
+      expect(music(vallePlayer.live()).map((clip) => clip.src)).toEqual([order[0]])
+
+      // And back: the Panel takes up what Valle was playing, not what it had itself.
+      music(vallePlayer.live())[0]!.seekMs(2_000)
+      valle.leave()
+      valleShown.set(false)
+      await panel.enter()
+      expect(music(panelPlayer.live()).map((clip) => [clip.src, clip.positionMs()])).toEqual([
+        [order[0], 2_000]
+      ])
+      expect(music([...panelPlayer.live(), ...vallePlayer.live()])).toHaveLength(1)
+      stopValle()
+      panel.dispose()
+      valle.dispose()
+    })
+
+    it('[US-SHELL-005.AC02] music the person stopped stays stopped in every window, until they start it again', async () => {
+      const session = sharedStore()
+      const panelPlayer = createFakeAudioPlayer()
+      const vetaPlayer = createFakeAudioPlayer()
+      const vetaShown = shownState(false)
+      const panel = useAudio({ player: panelPlayer, random: () => 0.5, session })
+      const veta = useAudio({ player: vetaPlayer, session, visibility: vetaShown, panelCue: false })
+      await panel.sync()
+      await veta.sync()
+      panel.toggleMusic()
+      panel.leave()
+      const entered = veta.enter()
+      vetaShown.set(true)
+      await entered
+      expect(veta.musicPlaying.value).toBe(false)
+      expect(music(vetaPlayer.clips)).toHaveLength(0)
+      // A later show of the same window does not read "Music at startup" again.
+      vetaShown.set(false)
+      vetaShown.set(true)
+      await veta.sync()
+      expect(music(vetaPlayer.clips)).toHaveLength(0)
+
+      veta.toggleMusic()
+      expect(music(vetaPlayer.live())).toHaveLength(1)
+      panel.dispose()
+      veta.dispose()
+    })
+
+    it('[US-SHELL-005.AC01] the first window of the run reads Music at startup; a window shown again keeps its own music', async () => {
+      const session = sharedStore()
+      const valleShown = shownState(true)
+      const valle = useAudio({
+        player,
+        random: () => 0.5,
+        session,
+        visibility: valleShown,
+        panelCue: false
+      })
+      await valle.sync()
+      const first = music(player.live())[0]!
+      first.seekMs(30_000)
+      // An older hand-over in the store is not adopted on a minimise and restore: this window holds the music.
+      session.write({
+        on: true,
+        track: MUSIC_TRACK_SRC[0]!,
+        positionMs: 5,
+        queue: [],
+        lastPlayed: null
+      })
+      valleShown.set(false)
+      valleShown.set(true)
+      await valle.sync()
+      expect(music(player.live())).toEqual([first])
+      expect(first.positionMs()).toBe(30_000)
+      valle.dispose()
+    })
+
+    it('[NFR-SND-07] a window that left plays nothing on a later show until it enters again', async () => {
+      const session = sharedStore()
+      const panel = useAudio({ player, random: () => 0.5, session })
+      await panel.sync()
+      const stop = panel.listen()
+      panel.leave()
+      ;(pushVisibility as VisibilityListener)(false)
+      ;(pushVisibility as VisibilityListener)(true)
+      vi.advanceTimersByTime(AUDIO_TICK_MS * 4)
+      expect(music(player.live())).toHaveLength(0)
+      expect(session.music?.on).toBe(true)
+      stop()
+      panel.dispose()
+    })
   })
 })

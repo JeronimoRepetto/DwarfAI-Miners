@@ -215,6 +215,8 @@ async function revealDwarfChat(target: { mineId: string; dwarfId: string | null 
 // chat, S24.13; US-DLG-006.AC02) lands on that mine's history instead, on the carried dwarf's tab. Its draft and view
 // wait in the session store, and come back when that dwarf's chat opens here (useModeTransition).
 let stopHandoffArrival: (() => void) | undefined
+/** The music's part in a mode run (AMENDMENT-28), unregistered with the window. */
+let stopMusicHandoff: (() => void) | undefined
 async function revealHistory(target: { mineId: string; dwarfId: string }): Promise<void> {
   showMineFromNotification(target.mineId)
   // The mine watch closes the history when the mine changes: the history opens after it ran, not before.
@@ -314,6 +316,8 @@ const {
   musicPlaying,
   ambienceMuted,
   sync: syncAudio,
+  leave: leaveAudio,
+  enter: enterAudio,
   listen: listenAudio,
   toggleMusic,
   toggleAmbienceMute,
@@ -1117,6 +1121,10 @@ onMounted(() => {
     slot === 'history' ? revealHistory(chat) : revealDwarfChat(chat)
   )
   /* --- end of the ISSUE-293 block ------------------------------------------- */
+  /* --- One music across the modes (owner ruling 2026-10-24; AMENDMENT-28) — one block, appended --- */
+  // A run this window leaves hands its music to the window it enters, which takes it over at t0.
+  stopMusicHandoff = modeTransitionPart().registerMusic({ leave: leaveAudio, enter: enterAudio })
+  /* --- end of the AMENDMENT-28 block ------------------------------------------ */
   /* --- Typography preferences (#370) — one block, appended ----------------- */
   // Adopts the stored faces, and listens to main's broadcast of them — which
   // since #635 only ever comes from this window's own Settings, applied twice.
@@ -1167,6 +1175,7 @@ onBeforeUnmount(() => {
   /* --- Notification reveal (ISSUE-114) — one block, appended ---------------- */
   unlistenRevealDwarfChat?.()
   stopHandoffArrival?.()
+  stopMusicHandoff?.()
   disposeModeAtLaunch()
   /* --- end of the ISSUE-114 block ------------------------------------------- */
   /* --- Typography preferences (#370) — one block, appended ----------------- */

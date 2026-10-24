@@ -97,3 +97,38 @@ describe('createPlaylist', () => {
     expect(playlist.next()).toBeUndefined()
   })
 })
+
+/*
+ * APPENDED for AMENDMENT-28 (owner ruling 2026-10-24, "one music, one playlist"): a mode window hands its playlist to
+ * the next one, which carries on in the same shuffled order instead of drawing its own.
+ */
+describe('a playlist handed over', () => {
+  it('[US-SHELL-005.AC03] carries on in the same order, and keeps the no-repeat rule across the next round', () => {
+    const source = createPlaylist(SIX, seededRandom(11))
+    source.next()
+    source.next()
+    const handed = source.state()
+    expect(handed.queue).toHaveLength(4)
+    expect(handed.lastPlayed).toBeDefined()
+
+    // The receiving window shuffles with its own randomness: the order it plays is still the source's.
+    const target = createPlaylist(SIX, seededRandom(99))
+    target.restore(handed)
+    const rest = [target.next(), target.next(), target.next(), target.next()]
+    expect(rest).toEqual(handed.queue)
+    // The next round never opens on the track that closed this one.
+    expect(target.next()).not.toBe(rest[3])
+  })
+
+  it('[US-SHELL-005.AC03] hands over a copy, and drops what it does not hold', () => {
+    const source = createPlaylist(SIX, seededRandom(3))
+    source.next()
+    const handed = source.state()
+    handed.queue.length = 0
+    expect(source.state().queue).toHaveLength(5)
+
+    const target = createPlaylist(['a', 'b'], seededRandom(4))
+    target.restore({ queue: ['z', 'b', 'a', 'b'], lastPlayed: 'z' })
+    expect(target.state()).toEqual({ queue: ['b', 'a'], lastPlayed: undefined })
+  })
+})

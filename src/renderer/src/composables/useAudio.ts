@@ -1,4 +1,5 @@
 import { readonly, ref } from 'vue'
+import type { UiSessionMusic } from '@dwarfai/contracts'
 import type { AudioPreferences, DwarfRole } from '../types'
 import { useAudioPreferences } from './useAudioPreferences'
 import {
@@ -56,7 +57,18 @@ export interface AudioVisibility {
   listen(listener: (visible: boolean) => void): () => void
 }
 
+/**
+ * The music slot of the UI-main session store (AMENDMENT-28): where the window a run leaves writes its music, and
+ * where the window the run enters reads it.
+ */
+export interface MusicSession {
+  read(): Promise<UiSessionMusic | undefined>
+  write(music: UiSessionMusic): void
+}
+
 export interface UseAudioOptions {
+  /** The UI-main session store's music slot; `window.api`'s A-N17 and A-N18 unless a test names its own. */
+  session?: MusicSession
   /** Injected by the tests; the real one is one `Audio` element per clip. */
   player?: AudioPlayer
   random?: () => number
@@ -74,6 +86,12 @@ const PANEL_VISIBILITY: AudioVisibility = {
   listen: (listener) => window.api.onPanelVisibility(listener)
 }
 
+/** The UI-main session store's music slot over `window.api` (A-N17 `getUiSession`, A-N18 `patchUiSession`). */
+const UI_SESSION_MUSIC: MusicSession = {
+  read: async () => (await window.api.getUiSession()).music,
+  write: (music) => window.api.patchUiSession({ kind: 'music', music })
+}
+
 export function useAudio(options: UseAudioOptions = {}) {
   // The stored settings, read and written through the engine-free part (ISSUE-304); the engine follows what it adopts.
   const preferences = useAudioPreferences()
@@ -85,6 +103,13 @@ export function useAudio(options: UseAudioOptions = {}) {
   const visibility = options.visibility ?? PANEL_VISIBILITY
   const music = options.music ?? true
   const panelCue = options.panelCue ?? true
+  const session = options.session ?? UI_SESSION_MUSIC
+  /** Whether a sync has run: only the first one reads "Music at startup". */
+  let synced = false
+  /** Whether this window holds the music: synced, and not left by a run since (AMENDMENT-28). */
+  let holdsMusic = false
+  /** The sync running now, which a second call shares. */
+  let syncing: Promise<void> | undefined
 
   const engine = createAudioEngine({
     player: options.player ?? createElementAudioPlayer(),
@@ -123,16 +148,33 @@ export function useAudio(options: UseAudioOptions = {}) {
   }
 
   /**
-   * Adopt the stored settings and the window's real visibility, then start the
-   * music if the settings say it should be playing.
+   * Adopt the stored settings and the window's real visibility, then the music:
+   * the music another window handed over, or, in the first window of the run,
+   * "Music at startup".
    *
    * A bridge that cannot answer leaves the DEFAULTS in place and still starts,
    * which is the honest reading: the settings are unreachable, not set to off,
    * and the default is on. Silence would be the panel inventing a choice
    * nobody made — the same rule the settings panel follows when it refuses to
    * print a version it could not read.
+   *
+   * ONE MUSIC (owner ruling 2026-10-24; AMENDMENT-28): every mode window has its
+   * own engine, so the music moves between them. The window a run leaves writes
+   * where its music was to the UI-main session store and stops it (`leave`); the
+   * next sync of a window that does not hold the music adopts it — the same
+   * track from where it was, the same shuffled round, on or off as the person
+   * left it (`enter` makes the window let go of what it held first). A window
+   * that holds the music keeps it: a minimise and restore is not a hand-over.
+   * Calls made while one is running share it.
    */
-  async function sync(): Promise<void> {
+  function sync(): Promise<void> {
+    syncing ??= syncOnce().finally(() => {
+      syncing = undefined
+    })
+    return syncing
+  }
+
+  async function syncOnce(): Promise<void> {
     // The last known settings are still the most honest thing to play at, and the next successful call corrects them.
     await preferences.read()
     engine.setSettings(settings.value)
@@ -148,10 +190,46 @@ export function useAudio(options: UseAudioOptions = {}) {
       // a silent app with nothing on screen to explain it, and the push
       // corrects this the first time the window is shown or hidden.
     }
-    if (music && settings.value.musicAtStartup) {
-      musicPlaying.value = true
-      engine.setMusicOn(true)
+    if (music && !holdsMusic) {
+      const shared = await session.read().catch(() => undefined)
+      if (shared !== undefined) {
+        musicPlaying.value = shared.on
+        engine.adoptMusic(shared, shared.on)
+      } else if (!synced) {
+        // The first window of the run: nothing was handed over, so "Music at startup" says (US-SHELL-005.AC01).
+        if (settings.value.musicAtStartup) musicPlaying.value = true
+        engine.setMusicOn(musicPlaying.value)
+      } else {
+        // Nothing to take over (the store was emptied): this window's own Music slot goes on as it was.
+        engine.setMusicOn(musicPlaying.value)
+      }
+      holdsMusic = true
     }
+    synced = true
+  }
+
+  /**
+   * The window is leaving a run (ADR-025 item 3; owner ruling 2026-10-24): where its music is goes to the UI-main
+   * session store for the window the run enters, and the music stops here at once, so two windows never play together.
+   */
+  function leave(): void {
+    if (!music) return
+    const handed = engine.handOffMusic()
+    holdsMusic = false
+    session.write({ on: musicPlaying.value, ...handed })
+  }
+
+  /**
+   * The window is entering a run, at `t0` (ADR-025 item 3): it takes over the music the window the run left handed
+   * over, whatever it held before — a window loaded hidden holds only the "Music at startup" it read then. Called before
+   * the window's own shown state opens the gate, so nothing of its own starts first.
+   */
+  function enter(): Promise<void> {
+    if (!music) return sync()
+    holdsMusic = false
+    engine.setMusicOn(false)
+    // A sync already running read the store while this window still held the music: one more follows it.
+    return syncing === undefined ? sync() : syncing.then(sync)
   }
 
   /**
@@ -287,6 +365,8 @@ export function useAudio(options: UseAudioOptions = {}) {
     musicPlaying,
     ambienceMuted,
     sync,
+    leave,
+    enter,
     listen,
     toggleMusic,
     toggleAmbienceMute,
