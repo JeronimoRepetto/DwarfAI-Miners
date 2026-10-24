@@ -1,0 +1,147 @@
+// L8 OS lane (17 §1.8): the observed-subagent route's console reading and navigation keys
+// (AMENDMENT-29) over the real kernel `NodeProcessControl` and a real `powershell.exe`, against a stub
+// lead terminal the test starts itself (`STUB` below, run as `node -e`), never a real Claude Code
+// and never a visible terminal. Windows only: elsewhere the route offers nothing.
+//
+// The stub draws a Claude Code 2.1.310 screen of fixtures/claude/observer/2.1.310 into the hidden
+// console every `windowsHide` child gets, and reports every key its console input receives. Proves:
+// what the route reads back through `CONOUT$` is the screen drawn, glyphs intact, and reads as the
+// same screen; ↓, ↑ and Enter arrive as the keys a terminal sends. Every process is the test's own and
+// is ended by closing its stdin, then awaited.
+import { tmpdir } from 'node:os'
+import { afterEach, describe, expect, it } from 'vitest'
+import type { ProcessIdentity } from '../../../../kernel/domain/processIdentity'
+import type { SpawnedProcess } from '../../../../kernel/ports/processControl'
+import { NodeScheduler } from '../../../../platform/clock/NodeScheduler'
+import { NodeProcessControl } from '../../../../platform/process/NodeProcessControl'
+import { readAgentConsole } from './claudeAgentConsole'
+import {
+  agentConsoleScreen,
+  agentConsoleScreenFile,
+  type AgentConsoleScreenName
+} from './testing/agentConsoleScreens'
+import { WindowsConsoleScreen } from './WindowsConsoleScreen'
+
+/**
+ * The stub lead terminal (17 §1.8: a stub process, never a provider CLI), run as
+ * `node -e STUB <screen.json>` in the hidden console every `windowsHide` child gets: it widens that
+ * console to 160 columns (the captures are 138 wide), clears it and draws the rows of <screen.json> top-left (`CONOUT$` through a tty stream, so the
+ * text reaches the buffer as UTF-16), then reads its OWN console's input (`CONIN$`, raw mode),
+ * printing `ready` and then one `key <hex>` line per chunk. It exits when its stdin ends, or after
+ * 30 s. `//./CONOUT$` and `//./CONIN$`: Node resolves the bare names as relative file names.
+ */
+const STUB = String.raw`
+const { openSync, readFileSync } = require('node:fs')
+const { spawnSync } = require('node:child_process')
+// The captures are 138 columns wide: widen this hidden console first (mode.com, no shell).
+spawnSync('mode.com', ['con:', 'cols=160', 'lines=60'], { stdio: 'inherit', shell: false })
+const { ReadStream, WriteStream } = require('node:tty')
+const cap = setTimeout(() => process.exit(0), 30000)
+const rows = JSON.parse(readFileSync(process.argv[1], 'utf8')).rows
+const out = new WriteStream(openSync('//./CONOUT$', 'r+'))
+out.write('\u001b[2J\u001b[H' + rows.join('\r\n'), () => {
+  const input = new ReadStream(openSync('//./CONIN$', 'r+'))
+  input.setRawMode(true)
+  input.on('data', (chunk) => process.stdout.write('key ' + Buffer.from(chunk).toString('hex') + '\n'))
+  process.stdout.write('ready\n')
+})
+process.stdin.on('end', () => {
+  clearTimeout(cap)
+  process.exit(0)
+})
+process.stdin.resume()
+`
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** The environment a stub process gets: only what node needs to start. */
+function stubEnv(): Record<string, string> {
+  const env: Record<string, string> = {}
+  for (const name of ['PATH', 'Path', 'SystemRoot', 'windir', 'TEMP', 'TMP']) {
+    const value = process.env[name]
+    if (value !== undefined) env[name] = value
+  }
+  return env
+}
+
+describe.runIf(process.platform === 'win32')(
+  'WindowsConsoleScreen on Windows: a stub lead terminal (AMENDMENT-29)',
+  () => {
+    const control = new NodeProcessControl()
+    const children: SpawnedProcess[] = []
+    const taskErrors: unknown[] = []
+
+    afterEach(async () => {
+      for (const child of children) child.stdin?.end()
+      await Promise.all(
+        children.splice(0).map((child) => Promise.race([child.exited, sleep(10_000)]))
+      )
+      expect(taskErrors.splice(0)).toEqual([])
+    })
+
+    /** Starts the stub on `screen`, resolves once it drew and listens, with what it printed. */
+    async function stub(
+      screen: AgentConsoleScreenName
+    ): Promise<{ identity: ProcessIdentity; out: () => string }> {
+      const child = control.spawn({
+        executable: process.execPath,
+        args: ['-e', STUB, agentConsoleScreenFile(screen)],
+        env: stubEnv(),
+        cwd: tmpdir(),
+        processGroup: 'inherit',
+        stdio: 'pipe'
+      })
+      children.push(child)
+      let out = ''
+      child.stdout?.on('data', (chunk: Buffer) => (out += chunk.toString('utf8')))
+      for (let waited = 0; !out.includes('ready\n') && waited < 15_000; waited += 50) {
+        await sleep(50)
+      }
+      expect(out).toContain('ready\n')
+      return { identity: await child.identity, out: () => out }
+    }
+
+    function screen(): WindowsConsoleScreen {
+      return new WindowsConsoleScreen({
+        processes: control,
+        platform: 'win32',
+        env: process.env,
+        cwd: tmpdir(),
+        scheduler: new NodeScheduler({ onTaskError: (error) => taskErrors.push(error) })
+      })
+    }
+
+    it('[ADR-012, ADR-014] reads back the screen the lead terminal shows, glyphs intact, as the same screen', async () => {
+      const { identity } = await stub('view-golf-list')
+      const read = await screen().read(identity)
+      expect(read.kind).toBe('screen')
+      const lines = read.kind === 'screen' ? read.lines : []
+      const drawn = agentConsoleScreen('view-golf-list')
+      expect(lines.slice(0, drawn.length)).toEqual(drawn)
+      expect(readAgentConsole(lines)).toEqual(readAgentConsole(drawn))
+    }, 60_000)
+
+    it('[ADR-012, ADR-014] ↓, ↑ and Enter reach that terminal as the keys a terminal sends', async () => {
+      const { identity, out } = await stub('lead-input-empty')
+      const keys = screen()
+      for (const key of ['down', 'up', 'enter'] as const) {
+        expect(await keys.press(identity, key)).toBe('pressed')
+      }
+      for (let waited = 0; out().split('key ').length < 4 && waited < 10_000; waited += 50) {
+        await sleep(50)
+      }
+      expect(
+        out()
+          .split('\n')
+          .filter((line) => line.startsWith('key '))
+      ).toEqual(['key 1b5b42', 'key 1b5b41', 'key 0d'])
+    }, 60_000)
+
+    it('[ADR-014] a process that is gone is never attached to', async () => {
+      const { identity } = await stub('lead-input-empty')
+      const recycled = { ...identity, processStartTimeMs: identity.processStartTimeMs + 60_000 }
+      expect(await screen().read(recycled)).toEqual({ kind: 'gone' })
+      expect(await screen().press(recycled, 'down')).toBe('gone')
+    }, 60_000)
+  }
+)

@@ -595,3 +595,56 @@ describe('ConversationSender: a message with files (#1463)', () => {
     expect(h.turns.turns[1]?.attachments).toEqual([])
   })
 })
+
+/*
+ * APPENDED for AMENDMENT-29 (owner, 2026-10-24): a message typed into an observed subagent's own
+ * view reaches its transcript as a `queued_command` attachment (origin human) only when the subagent
+ * takes it at its next step (spike §3): that echo, a person entry of the subagent, is its ✓✓. A
+ * subagent's reply never counts as a reply (above), so without this rule it could never be reacted.
+ */
+describe('ConversationSender: an observed subagent reacts on its queued_command echo (AMENDMENT-29)', () => {
+  const AGENT = 'a7725068ba6a77d24'
+  const MARKER = 'SPIKE-MARKER-7Q3X reply with the word marked.'
+  const SUBAGENT_RECEIPT: TurnHandOver = {
+    ...TRANSCRIPT_RECEIPT,
+    confidence: 'unconfirmed',
+    correlation: 'relay-29'
+  }
+
+  it("[S7.05, S-022-1] the subagent transcript's echo of the text, at or after the send, is ✓✓ with no reply needed", async () => {
+    const h = harness()
+    const messageId = await h.send(29, MARKER)
+    h.turns.answer({ ok: true, value: SUBAGENT_RECEIPT })
+    await settle()
+    expect(h.stored()).toMatchObject({ phase: 'delivered', confidence: 'unconfirmed' })
+
+    h.ingest([person(MARKER, T0 + 22_928, { providerAgentId: AGENT })])
+    expect(h.stored()).toMatchObject({ phase: 'reacted', confidence: 'unconfirmed' })
+    expect(h.bus.ofType('MessageReactedTo').map((e) => e.payload)).toEqual([
+      { messageId, dwarfId: DWARF }
+    ])
+  })
+
+  it('[S7.05, S-022-1] the echo ingested before the receipt is ✓✓ once the receipt names transcript-match', async () => {
+    const h = harness()
+    await h.send(30, MARKER)
+    h.ingest([person(MARKER, T0 + 5, { providerAgentId: AGENT })])
+    h.turns.answer({ ok: true, value: SUBAGENT_RECEIPT })
+    await settle()
+    expect(h.stored()?.phase).toBe('reacted')
+  })
+
+  it('[S7.05, S-022-1] a subagent line from before the send, of other words, or from the live stream is no echo', async () => {
+    const h = harness()
+    await h.send(31, MARKER)
+    h.turns.answer({ ok: true, value: SUBAGENT_RECEIPT })
+    await settle()
+    h.ingest([
+      person(MARKER, T0 - 1, { providerAgentId: AGENT }),
+      person('reply with the word marked', T0 + 5, { providerAgentId: AGENT })
+    ])
+    h.ingest([person(MARKER, T0 + 5, { providerAgentId: AGENT })], 'live-stream')
+    expect(h.stored()?.phase).toBe('delivered')
+    expect(h.bus.ofType('MessageReactedTo')).toEqual([])
+  })
+})

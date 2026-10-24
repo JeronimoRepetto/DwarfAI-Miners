@@ -172,10 +172,27 @@ export function parseClaudeLine(text: string): ClaudeRecord | null {
   return { type: parsed.type, raw: parsed, at: instantOf(parsed.timestamp) }
 }
 
-/** The deterministic id of a line's record (15 §5): its `uuid`, else offset and line hash. */
+/**
+ * The deterministic id of a line's record (15 §5): its `uuid`; else, for an attachment, one made from
+ * its own fields; else offset and line hash.
+ *
+ * AMENDMENT-29: Claude Code 2.1.310 writes the `queued_command` attachment of a message typed into a
+ * subagent's view with no `uuid` (spike §3). Its id is `attachment:<type>:<source_uuid>:<timestamp>`,
+ * never its bytes or offset, so the same line in other bytes (CRLF, unknown fields) is the same
+ * message (HO-37, C-19), as the harness's ending records are keyed in `stepTranscript`.
+ */
 export function eventIdOf(record: ClaudeRecord, text: string, offset: number): string {
   const uuid = asString(record.raw.uuid)
   if (uuid !== undefined) return uuid
+  const attachment = record.raw.attachment
+  if (record.type === 'attachment' && isRecord(attachment)) {
+    const kind = asString(attachment.type)
+    const source = asString(attachment.source_uuid)
+    const at = asString(record.raw.timestamp)
+    if (kind !== undefined && source !== undefined && at !== undefined) {
+      return `attachment:${kind}:${source}:${at}`
+    }
+  }
   return `${offset}:${createHash('sha1').update(text).digest('hex')}`
 }
 

@@ -1,0 +1,31 @@
+{
+  "$comment": "Hand-written from the AMENDMENT-29 spike (odd/handoff/spike-claude-subagent-terminal-input.md §3, Claude Code 2.1.310): a message the person typed into a subagent's own view of the lead terminal reaches that subagent's transcript as an `attachment` line of type `queued_command` whose origin is `human` (the line as the spike quoted it, with no uuid and a synthetic source_uuid; the validation run of 2026-10-24 recorded the same line WITH a uuid, so both are read: a uuid when present, else attachment:<type>:<source_uuid>:<timestamp>), when the subagent takes it at its next step. It is the person's message of that subagent (#180), its ✓✓ evidence (AMENDMENT-29), no turn start and no usage. Shared by subagent-queued-message-crlf.jsonl and -with-extra.jsonl.",
+  "warnings": 0,
+  "sessions": [
+    {
+      "providerSessionId": "01a0b000-0000-7000-8000-000000000729",
+      "providerAgentId": "a7725068ba6a77d24",
+      "cwd": "C:worksample-project",
+      "at": 1792854480000,
+      "parent": {
+        "providerSessionId": "01a0b000-0000-7000-8000-000000000729",
+        "providerAgentId": null
+      }
+    }
+  ],
+  "entries": [
+    {
+      "role": "person",
+      "text": "Run ping -n 31 127.0.0.1 five times.",
+      "providerTime": 1792854480000
+    },
+    {
+      "role": "person",
+      "text": "SPIKE-MARKER-7Q3X reply with the word marked.",
+      "providerTime": 1792854523914
+    }
+  ],
+  "activity": ["turn-started"],
+  "turnEnds": [],
+  "usage": []
+}

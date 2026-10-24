@@ -1,0 +1,15 @@
+{
+  "rows": [
+    "⏺ (transcript scrubbed)",
+    " Run ping four times then report back, this description is deliberately very long to see how the terminal label shows it in full or cut… ─",
+    "❯ Message @general-purpose…",
+    "──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  (status line scrubbed)",
+    "  ↑/↓ to select · Enter to view",
+    "",
+    "❯ ◯ main",
+    "  ◯ general-purpose  Run ping four times (golf)                                                                   1m 2s · ↓ 58.2k tokens",
+    "  ◯ general-purpose  Run ping four times (hotel)                                                                  1m 2s · ↓ 58.2k tokens",
+    "  ● general-purpose  Run ping four times then report back, this description is deliberately very long to see how… 1m 1s · ↓ 58.2k tokens"
+  ]
+}

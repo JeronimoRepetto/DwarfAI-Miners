@@ -1,0 +1,15 @@
+{
+  "rows": [
+    "⏺ (transcript scrubbed)",
+    "───────────────────────────────────────────────────────────────────────────────────────────────────────────── Run ping four times (golf) ─",
+    "❯ Message @general-purpose…",
+    "──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  (status line scrubbed)",
+    "  ↑/↓ to select · ctrl+x ctrl+k to stop all agents",
+    "",
+    "  ◯ main",
+    "❯ ● general-purpose  Run ping four times (golf)                                                                     41s · ↓ 58.2k tokens",
+    "  ◯ general-purpose  Run ping four times (hotel)                                                                    40s · ↓ 58.2k tokens",
+    "  ◯ general-purpose  Run ping four times then report back, this description is deliberately very long to see how t… 40s · ↓ 58.2k tokens"
+  ]
+}

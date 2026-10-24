@@ -1,0 +1,15 @@
+{
+  "rows": [
+    "⏺ (transcript scrubbed)",
+    "──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "❯",
+    "──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  (status line scrubbed)",
+    "  ⏵⏵ bypass permissions on (shift+tab to cycle)",
+    "",
+    "  ● main",
+    "  ◯ general-purpose  Run ping four times (golf)                                                                   1m 4s · ↓ 58.2k tokens",
+    "  ◯ general-purpose  Run ping four times (hotel)                                                                  1m 4s · ↓ 58.2k tokens",
+    "  ◯ general-purpose  Run ping four times then report back, this description is deliberately very long to see how… 1m 3s · ↓ 58.2k tokens"
+  ]
+}

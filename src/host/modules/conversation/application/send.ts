@@ -676,7 +676,12 @@ function noteEcho(
   const claimed = watching.find(
     (w) => !w.echoSeen && echoesSentText(entry.text, w.text, w.files) && at >= w.sentAt
   )
-  if (claimed !== undefined) claimed.echoSeen = true
+  if (claimed === undefined) return
+  claimed.echoSeen = true
+  // AMENDMENT-29: a subagent's echo (its transcript's `queued_command`, written when the subagent
+  // takes the message at its next step, spike §3) is its reaction evidence: a subagent's own reply
+  // never counts as one (`entriesIngested`).
+  if (entry.providerAgentId !== undefined) claimed.repliedAfterEcho = true
 }
 
 /** What `MessageLog.settleDelivery` stores for a delivery machine 7 just produced. */

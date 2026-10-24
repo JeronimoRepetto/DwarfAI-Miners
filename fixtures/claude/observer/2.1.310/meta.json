@@ -1,0 +1,18 @@
+{
+  "providerVersion": "2.1.310",
+  "capturedAt": "2026-10-24",
+  "capturedBy": "maintainer",
+  "os": "win32",
+  "scrubbed": true,
+  "synthetic": false,
+  "source": "CONOUT$ captures of a real Claude Code 2.1.310 lead terminal (Windows 11, one interactive haiku session in a throwaway folder, background general-purpose subagents running ping), taken with WindowsConsoleScreen through scripts/spikes/claude-subagent-input/route.mjs on 2026-10-24 (AMENDMENT-29 validation run; appendix of odd/handoff/spike-claude-subagent-terminal-input.md). Each console-<state>.json holds the rows of the visible window from the input box down, as read; the transcript area above the box became one line \"⏺ (transcript scrubbed)\" and the status line under the box \"  (status line scrubbed)\" (they showed a local path, account usage and cost). console-unrecognised.json is hand-written.",
+  "capabilities": {
+    "observe": true,
+    "subagents": "transcript",
+    "subagentViewLabel": "description, cut short with … past 135 characters",
+    "agentViewPlaceholder": "Message @<agentType>…",
+    "freshSessionPlaceholder": "Try \"…\"",
+    "promptSeparator": "U+00A0",
+    "keys": ["down", "up", "enter"]
+  }
+}

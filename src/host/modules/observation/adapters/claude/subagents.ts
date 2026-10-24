@@ -50,6 +50,14 @@ export function transcriptFileOf(path: string): TranscriptLocation | null {
   return { kind: 'session', sessionId: session[1]! }
 }
 
+/** A sidecar's file name (`agent-<agentId>.meta.json`), with its agent id. */
+const SIDECAR_FILE = /^agent-([A-Za-z0-9_-]+)\.meta\.json$/
+
+/** The agent id a sidecar's file name carries, or null when the name is not a sidecar's. */
+export function agentIdOfSidecar(name: string): string | null {
+  return SIDECAR_FILE.exec(name)?.[1] ?? null
+}
+
 /** The parent agent a sidecar names, or null when it names none or cannot be read. */
 export function parentAgentIdOf(sidecarText: string): string | null {
   let parsed: unknown
@@ -61,4 +69,20 @@ export function parentAgentIdOf(sidecarText: string): string | null {
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null
   const parent = (parsed as Record<string, unknown>).parentAgentId
   return typeof parent === 'string' && parent !== '' ? parent : null
+}
+
+/**
+ * The `description` a sidecar names (the Agent call's description; AMENDMENT-29: the rule label of
+ * the subagent's view in the lead's terminal), trimmed, or null when it names none or cannot be read.
+ */
+export function descriptionOf(sidecarText: string): string | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(sidecarText)
+  } catch {
+    return null
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null
+  const description = (parsed as Record<string, unknown>).description
+  return typeof description === 'string' && description.trim() !== '' ? description.trim() : null
 }

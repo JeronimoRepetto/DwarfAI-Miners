@@ -8,8 +8,17 @@
 //   aimed at the process identity observation recorded and re-checked just before writing (ADR-012
 //   item 3, ADR-014 item 1). The receipt is ✓ `unconfirmed` (no protocol ack exists) with
 //   `transcript-match` evidence: ✓✓ only on the transcript echo of the relay text (S-022-1) and a
-//   reply after it. Without a recorded process identity (a subagent, a session no registry names)
-//   there is no send path: nothing is typed by guess.
+//   reply after it. Without a recorded process identity (a session no registry names) there is no
+//   send path: nothing is typed by guess.
+// - An observed Claude SUBAGENT (AMENDMENT-29, owner 2026-10-24): never the lead's relay above, which
+//   would hand the text to the lead's own conversation. On a Windows Host, with its lead session's
+//   recorded process identity, the subagent route (ClaudeSubagentConsoleSend) types it into that
+//   subagent's own view of the lead's terminal, verified by its description, or refuses. ✓
+//   `unconfirmed` once typed; ✓✓ on the subagent transcript's `queued_command` echo (S-022-1 rule,
+//   AMENDMENT-29). Elsewhere, or without the lead's process, there is no send path, as before. Its
+//   refusals are `channel-error`s (S7.06: the person may clear a draft and Retry) whose reasons are
+//   the owner-approved sentences of SUBAGENT_REFUSAL_COPY (2026-10-24). A subagent view takes
+//   no file (unmeasured), so a message with files is refused whole.
 // - An observed Codex thread (X3): the text is queued on the thread's own queue for its next turn
 //   (CodexThreadQueue, `codex queue --thread`), never written into its terminal, so never mid-turn.
 //   ✓ `unconfirmed` once persisted on the queue, ✓✓ on the rollout echo (`transcript-match`).
@@ -36,6 +45,11 @@ import type {
   TurnSendFailure,
   TurnSendResult
 } from '../../ports/turnSender'
+import type {
+  ClaudeSubagentConsoleSend,
+  SubagentRefusal,
+  SubagentSendOutcome
+} from './ClaudeSubagentConsoleSend'
 import type { CodexQueueOutcome, CodexThreadQueue } from './CodexThreadQueue'
 import { pastedPathOf } from './consoleText'
 import type { ConsoleTextDelivery, TextWriteOutcome } from './ConsoleTextDelivery'
@@ -46,6 +60,11 @@ export interface ObservedSendTarget {
   providerSessionId: string
   /** The process identity observation recorded for the session (ADR-014 item 2), or null. */
   process: ProcessIdentity | null
+  /**
+   * AMENDMENT-29: the agent id of an observed Claude subagent (its `ProviderIdentity.providerAgentId`);
+   * `process` is then its LEAD session's process identity, whose terminal shows the subagent's view.
+   */
+  providerAgentId?: string
 }
 
 export interface ObservedSessionTurnSenderDeps {
@@ -53,9 +72,30 @@ export interface ObservedSessionTurnSenderDeps {
   targets: { targetOf(dwarfId: DwarfId): ObservedSendTarget | null }
   terminal: Pick<ConsoleTextDelivery, 'write'>
   codex: Pick<CodexThreadQueue, 'queue'>
+  /** The observed-subagent route (AMENDMENT-29); absent, a subagent has no send path. */
+  subagents?: Pick<ClaudeSubagentConsoleSend, 'reaches' | 'send'>
 }
 
-type SendPath = { kind: 'terminal'; process: ProcessIdentity } | { kind: 'queue'; thread: string }
+/**
+ * The reasons a subagent route's refusal shows in the failed bubble (S7.06), owner-approved
+ * 2026-10-24 ("Tienes mi OK"). Like the relay's other reasons above, they are the Host's own words,
+ * shown as sent: no copy dictionary holds Host refusal reasons.
+ */
+export const SUBAGENT_REFUSAL_COPY = Object.freeze({
+  draft:
+    "Not sent: there is unsent text in the foreman's terminal. Send or clear it there, then try again.",
+  ambiguous:
+    "Not sent: another worker in this mine has the same task, so DwarfAI can't tell them apart.",
+  'not-found':
+    "Not sent: this worker's view wasn't found in the foreman's terminal. It may have finished.",
+  unrecognised: "Not sent: DwarfAI can't read the foreman's terminal for this Claude Code version.",
+  files: "Files can't be sent to a worker. Send the text alone, or write to the foreman."
+})
+
+type SendPath =
+  | { kind: 'terminal'; process: ProcessIdentity }
+  | { kind: 'queue'; thread: string }
+  | { kind: 'subagent' }
 
 const CLOSED: TurnSendResult = { ok: false, error: { kind: 'session-closed' } }
 
@@ -71,6 +111,20 @@ const WRITE_FAILURE: Record<Exclude<TextWriteOutcome, 'written'>, TurnSendFailur
     reason: 'the terminal of that session cannot be targeted'
   },
   incomplete: { kind: 'channel-error', reason: 'the write into the terminal did not complete' }
+}
+
+/** The route's failures read as the relay's own: the same terminal, the same honest reasons. */
+const SUBAGENT_FAILURE: Record<
+  Exclude<SubagentSendOutcome['kind'], 'delivered' | 'refused'>,
+  TurnSendFailure
+> = WRITE_FAILURE
+
+const REFUSAL_COPY: Record<SubagentRefusal, string> = {
+  draft: SUBAGENT_REFUSAL_COPY.draft,
+  ambiguous: SUBAGENT_REFUSAL_COPY.ambiguous,
+  'not-found': SUBAGENT_REFUSAL_COPY['not-found'],
+  'unrecognised-screen': SUBAGENT_REFUSAL_COPY.unrecognised,
+  'unsupported-version': SUBAGENT_REFUSAL_COPY.unrecognised
 }
 
 const QUEUE_FAILURE: Record<Exclude<CodexQueueOutcome, 'queued'>, TurnSendFailure> = {
@@ -95,6 +149,7 @@ export class ObservedSessionTurnSender implements TurnSender {
       return channelError('a hand-off is not relayed into an observed session')
     }
     const files = turn.attachments.map((file) => file.path)
+    if (path.kind === 'subagent') return this.sendToSubagent(dwarfId, turn, files.length > 0)
     if (path.kind === 'terminal') {
       if (files.some((file) => pastedPathOf(file) === null)) {
         return channelError("an attached file's path cannot be typed into a terminal")
@@ -118,12 +173,39 @@ export class ObservedSessionTurnSender implements TurnSender {
     return queued === 'queued' ? handedOver(turn) : { ok: false, error: QUEUE_FAILURE[queued] }
   }
 
+  private async sendToSubagent(
+    dwarfId: DwarfId,
+    turn: TurnInput,
+    withFiles: boolean
+  ): Promise<TurnSendResult> {
+    if (withFiles) return channelError(SUBAGENT_REFUSAL_COPY.files)
+    let outcome: SubagentSendOutcome
+    try {
+      outcome = await this.deps.subagents!.send(dwarfId, turn.text)
+    } catch {
+      outcome = { kind: 'incomplete' }
+    }
+    switch (outcome.kind) {
+      case 'delivered':
+        return handedOver(turn)
+      case 'refused':
+        return channelError(REFUSAL_COPY[outcome.reason])
+      default:
+        return { ok: false, error: SUBAGENT_FAILURE[outcome.kind] }
+    }
+  }
+
   private pathOf(dwarfId: DwarfId): SendPath | null {
     const target = this.deps.targets.targetOf(dwarfId)
     if (target === null) return null
     switch (target.providerId) {
       case 'claude':
-        return target.process === null ? null : { kind: 'terminal', process: target.process }
+        if (target.process === null) return null
+        if (target.providerAgentId !== undefined) {
+          // A subagent: its own view only (AMENDMENT-29), never the lead's relay.
+          return this.deps.subagents?.reaches() === true ? { kind: 'subagent' } : null
+        }
+        return { kind: 'terminal', process: target.process }
       case 'codex':
         return { kind: 'queue', thread: target.providerSessionId }
       default:

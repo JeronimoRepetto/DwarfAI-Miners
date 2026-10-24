@@ -66,7 +66,7 @@
 //
 // Candidate decision (21 §6): `src/main/providers/claude/parse.ts` and `subagents.ts` are replaced;
 // the evidence is in `ClaudeObservationAdapter.conformance.test.ts`.
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { ProbeResult, ProcessIdentity } from '../../../../kernel/domain/processIdentity'
 import type { Instant, ProviderId, ProviderIdentity } from '../../../../kernel/domain/values'
 import type { Clock } from '../../../../kernel/ports/clock'
@@ -105,7 +105,14 @@ import {
   type RegistryEntry,
   type RegistryVerdict
 } from './reconcile'
-import { isTranscriptName, parentAgentIdOf, SIDECAR_MAX_BYTES, transcriptFileOf } from './subagents'
+import {
+  agentIdOfSidecar,
+  descriptionOf,
+  isTranscriptName,
+  parentAgentIdOf,
+  SIDECAR_MAX_BYTES,
+  transcriptFileOf
+} from './subagents'
 
 /** How far before a cursor a read with no kept stream state looks to rebuild it. */
 export const CLAUDE_LOOKBACK_BYTES = OBSERVATION_TAIL_GATE_BYTES
@@ -224,6 +231,23 @@ interface Checkpoint {
   state: TranscriptState
 }
 
+/**
+ * What the observed-subagent route reads of a subagent (AMENDMENT-29): its lead session's process
+ * identity, its sidecar's `description`, how many other subagents of the session not seen to end
+ * carry the same one, and the Claude Code version the session's latest record names.
+ */
+export interface ClaudeSubagentSendFacts {
+  lead: ProcessIdentity
+  description: string | null
+  twins: number
+  version: string | null
+}
+
+/** The key of one subagent of one session. */
+function agentKeyOf(sessionId: string, agentId: string): string {
+  return `${sessionId}:${agentId}`
+}
+
 function baseStreamId(streamId: string): string {
   return streamId.replace(/#\d+$/, '')
 }
@@ -257,6 +281,12 @@ export class ClaudeObservationAdapter implements ObservationAdapter, TranscriptR
   private readonly rootsOfSession = new Map<string, readonly number[]>()
   /** The sessions the last read registry names, whose process is not provably gone. */
   private named = new Set<string>()
+  /** AMENDMENT-29: each read subagent's sidecar path, by `<sessionId>:<agentId>`. */
+  private readonly sidecarOfAgent = new Map<string, string>()
+  /** AMENDMENT-29: the version the latest record of each session (or its subagents) names. */
+  private readonly versionOfSession = new Map<string, { version: string; at: number }>()
+  /** AMENDMENT-29: the subagents this Host run saw end, by `<sessionId>:<agentId>`. */
+  private readonly endedAgents = new Set<string>()
 
   constructor(private readonly options: ClaudeObservationAdapterOptions) {
     this.providerId = options.providerId
@@ -349,6 +379,7 @@ export class ClaudeObservationAdapter implements ObservationAdapter, TranscriptR
     for (const [offset, text] of lines) {
       const record = parseClaudeLine(text)
       if (record === null) continue
+      this.noteVersion(file.sessionId, record.raw.version, record.at)
       const step = stepTranscript(state, record, { text, offset }, context)
       state = step.state
       out.events.push(...step.events)
@@ -356,6 +387,12 @@ export class ClaudeObservationAdapter implements ObservationAdapter, TranscriptR
     }
     if (batch.next.value > start) {
       this.checkpoints.set(source.streamId, { offset: batch.next.value, state })
+    }
+    for (const event of out.events) {
+      const agentId = event.identity.providerAgentId
+      if (event.kind === 'closed' && agentId !== undefined) {
+        this.endedAgents.add(agentKeyOf(event.identity.providerSessionId, agentId))
+      }
     }
     // A session's own transcript states its closure; a subagent ends with its session (INV-36).
     const closedAt = file.agentId === null ? this.closedAt.get(file.sessionId) : undefined
@@ -380,6 +417,78 @@ export class ClaudeObservationAdapter implements ObservationAdapter, TranscriptR
       return null
     }
     return this.registered.get(identity.providerSessionId) ?? null
+  }
+
+  /**
+   * AMENDMENT-29: the process identity of a SUBAGENT's lead session (its registry entry through the
+   * #45 guard, as `processIdentityOf` answers for the session), whose terminal shows the subagent's
+   * view; null for a session's own identity, another provider, or a lead with none recorded.
+   */
+  leadProcessOf(identity: ProviderIdentity): ProcessIdentity | null {
+    if (identity.providerId !== this.providerId || identity.providerAgentId === undefined) {
+      return null
+    }
+    return this.registered.get(identity.providerSessionId) ?? null
+  }
+
+  /**
+   * AMENDMENT-29: what the observed-subagent route needs of a subagent, read fresh: null when it is
+   * no subagent this adapter read, or its lead has no recorded process. Its `description` is read
+   * from its sidecar; every other sidecar of the session's `subagents/` folder whose agent was not
+   * seen to end and that names the same description is a twin. A folder that cannot be listed, or a
+   * sibling sidecar that cannot be read, counts as a twin: the route then refuses (fail closed).
+   */
+  async subagentSendFactsOf(identity: ProviderIdentity): Promise<ClaudeSubagentSendFacts | null> {
+    const lead = this.leadProcessOf(identity)
+    const agentId = identity.providerAgentId
+    if (lead === null || agentId === undefined) return null
+    const sessionId = identity.providerSessionId
+    const sidecarPath = this.sidecarOfAgent.get(agentKeyOf(sessionId, agentId))
+    if (sidecarPath === undefined) return null
+    const description = descriptionOf(await this.readSidecar(sidecarPath))
+    let twins = 0
+    if (description !== null) {
+      const folder = dirname(sidecarPath)
+      let names: string[]
+      try {
+        names = (await this.options.fs.listDir(folder)).map((entry) => entry.name)
+      } catch {
+        names = []
+        twins = 1
+      }
+      for (const name of names) {
+        const other = agentIdOfSidecar(name)
+        if (other === null || other === agentId) continue
+        if (this.endedAgents.has(agentKeyOf(sessionId, other))) continue
+        const text = await this.readSidecar(join(folder, name))
+        if (text === '' || descriptionOf(text) === description) twins += 1
+      }
+    }
+    return {
+      lead,
+      description,
+      twins,
+      version: this.versionOfSession.get(sessionId)?.version ?? null
+    }
+  }
+
+  /** A sidecar's text, or '' when it cannot be read. */
+  private async readSidecar(path: string): Promise<string> {
+    try {
+      return await this.options.fs.readTextHead(path, SIDECAR_MAX_BYTES)
+    } catch {
+      return ''
+    }
+  }
+
+  /** Keeps the version the latest record of a session names (AMENDMENT-29). */
+  private noteVersion(sessionId: string, version: unknown, at: number | null): void {
+    if (typeof version !== 'string' || version === '') return
+    const known = this.versionOfSession.get(sessionId)
+    const when = at ?? Number.NEGATIVE_INFINITY
+    if (known === undefined || when >= known.at) {
+      this.versionOfSession.set(sessionId, { version, at: when })
+    }
   }
 
   entries(
@@ -618,6 +727,10 @@ export class ClaudeObservationAdapter implements ObservationAdapter, TranscriptR
         agentId: location.agentId,
         parentAgentId: await this.parentAgentOf(location.sidecarPath)
       }
+      this.sidecarOfAgent.set(
+        agentKeyOf(location.sessionId, location.agentId),
+        location.sidecarPath
+      )
     }
     this.fileOfStream.set(baseStreamId(source.streamId), file)
     return file

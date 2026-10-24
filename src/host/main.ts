@@ -126,6 +126,8 @@ import { ConsoleKeystrokeDelivery } from './modules/conversation/adapters/observ
 import { CodexThreadQueue } from './modules/conversation/adapters/observed-send/CodexThreadQueue'
 import { ConsoleTextDelivery } from './modules/conversation/adapters/observed-send/ConsoleTextDelivery'
 import { ObservedSessionTurnSender } from './modules/conversation/adapters/observed-send/ObservedSessionTurnSender'
+import { ClaudeSubagentConsoleSend } from './modules/conversation/adapters/observed-send/ClaudeSubagentConsoleSend'
+import { WindowsConsoleScreen } from './modules/conversation/adapters/observed-send/WindowsConsoleScreen'
 import { createDiagnostics, logLevelFromEnv } from './modules/diagnostics'
 import { ProviderHistoryScanner } from './modules/ledger/adapters/ProviderHistoryScanner'
 import { SqliteLedgerRepository } from './modules/ledger/adapters/SqliteLedgerRepository'
@@ -1091,14 +1093,31 @@ async function bootHost(base: HostBase): Promise<void> {
             scheduler
           })
           const observedObservation = modules.observation
+          // AMENDMENT-29: an observed Claude subagent's own view of its lead's terminal (Windows
+          // only), read and driven through the same kernel ProcessControl (R17).
+          const subagentConsoles = observedObservation.observation.subagentConsoles
+          const subagentRoute = new ClaudeSubagentConsoleSend({
+            screen: new WindowsConsoleScreen({
+              processes: processControl,
+              platform: hostRuntime().os as NodeJS.Platform,
+              env: process.env,
+              cwd: homedir(),
+              scheduler
+            }),
+            terminal: observedTerminal,
+            facts: subagentConsoles,
+            platform: hostRuntime().os as NodeJS.Platform
+          })
           // Crew's delivery-route read (INV-33), from observation alone: crew's view calls it.
           const observedRoutes = new ObservedSessionTurnSender({
             targets: observedRouteTargets({
               identities: observedObservation.observation.identities,
-              processes: observedObservation.crew.processIdentities
+              processes: observedObservation.crew.processIdentities,
+              subagents: subagentConsoles
             }),
             terminal: observedTerminal,
-            codex: codexQueue
+            codex: codexQueue,
+            subagents: subagentRoute
           })
           modules.crew = servedCrew.wire({
             db,
@@ -1157,10 +1176,12 @@ async function bootHost(base: HostBase): Promise<void> {
               targets: observedSendTargets({
                 dwarfs: modules.crew.crew.queries,
                 observation: observedObservation.observation.queries,
-                processes: observedObservation.crew.processIdentities
+                processes: observedObservation.crew.processIdentities,
+                subagents: subagentConsoles
               }),
               terminal: observedTerminal,
-              codex: codexQueue
+              codex: codexQueue,
+              subagents: subagentRoute
             }),
             diagnostics: log,
             // The Host's own check of every attachment path, at describe and again at send

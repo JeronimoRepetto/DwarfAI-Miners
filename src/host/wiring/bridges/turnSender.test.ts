@@ -284,3 +284,48 @@ describe('TurnSender bridge: the user binary the observed Codex queue runs (ADR-
     expect(await installedBinaryOf([])).toBeNull()
   })
 })
+
+/*
+ * APPENDED for AMENDMENT-29 (owner, 2026-10-24): an observed Claude subagent is a target with its
+ * agent id and its LEAD session's process identity, whose terminal shows the subagent's view.
+ */
+describe('TurnSender bridge: an observed subagent is a target through its lead (AMENDMENT-29)', () => {
+  const LEAD = { pid: 9, processStartTimeMs: 2, bootId: 'b' }
+  const SUBAGENT: ProviderIdentity = {
+    providerId: 'claude',
+    providerSessionId: 'session-1',
+    providerAgentId: 'a7725068ba6a77d24'
+  }
+
+  it('[ADR-014, INV-33] the send targets name the agent and the lead process observation recorded', () => {
+    const targets = (lead: typeof LEAD | null, withSubagents = true) =>
+      observedSendTargets({
+        dwarfs: { get: () => ({ identity: SUBAGENT, departed: false, owned: false }) },
+        observation: { observedSessionOf: () => ({ dwarfId: DWARF, streamIds: ['s'] }) },
+        processes: { processIdentityOf: () => null },
+        ...(withSubagents ? { subagents: { leadProcessOf: () => lead } } : {})
+      })
+    expect(targets(LEAD).targetOf(DWARF)).toEqual({
+      providerId: 'claude',
+      providerSessionId: 'session-1',
+      providerAgentId: 'a7725068ba6a77d24',
+      process: LEAD
+    })
+    expect(targets(null).targetOf(DWARF)?.process).toBeNull()
+    expect(targets(LEAD, false).targetOf(DWARF)?.process).toBeNull()
+  })
+
+  it('[ADR-014, INV-33] the route targets name the agent and the lead process, from observation alone', () => {
+    const targets = observedRouteTargets({
+      identities: { identityOf: () => SUBAGENT },
+      processes: { processIdentityOf: () => null },
+      subagents: { leadProcessOf: () => LEAD }
+    })
+    expect(targets.targetOf(DWARF)).toEqual({
+      providerId: 'claude',
+      providerSessionId: 'session-1',
+      providerAgentId: 'a7725068ba6a77d24',
+      process: LEAD
+    })
+  })
+})

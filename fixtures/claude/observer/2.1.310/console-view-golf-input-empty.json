@@ -1,0 +1,15 @@
+{
+  "rows": [
+    "⏺ (transcript scrubbed)",
+    "───────────────────────────────────────────────────────────────────────────────────────────────────────────── Run ping four times (golf) ─",
+    "❯ Message @general-purpose…",
+    "──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  (status line scrubbed)",
+    "  ⏵⏵ bypass permissions on (shift+tab to cycle)",
+    "",
+    "  ◯ main",
+    "  ● general-purpose  Running first ping delay (30 seconds)                                                       1m 17s · ↓ 58.4k tokens",
+    "  ◯ general-purpose  Running second ping delay                                                                   1m 17s · ↓ 58.4k tokens",
+    "  ◯ general-purpose  Waiting on first ping delay                                                                 1m 16s · ↓ 58.2k tokens"
+  ]
+}
