@@ -3,7 +3,7 @@
   "regenerate": "node tools/readme-art.js --out <app repository>/docs/readme (in the DwarfAI-Miners design repository)",
   "scale": 2,
   "scaling": "Composed at 1x in art pixels, captured at 1x, then scaled up by exactly 2 with nearest-neighbour sampling. width and height below are CSS pixels; show a piece at that width for a pixel-exact picture on a 2x screen.",
-  "renderer": "Edg/153.0.4234.48",
+  "renderer": "Edg/155.0.4283.62",
   "assets": [
     {
       "id": "hero",
@@ -28,10 +28,10 @@
       "id": "card-column",
       "file": "cards/mine-interior.png",
       "width": 320,
-      "height": 836,
+      "height": 884,
       "type": "image/png",
-      "pixels": [640, 1672],
-      "bytes": 446016,
+      "pixels": [640, 1768],
+      "bytes": 508079,
       "sources": [
         "organisms/mine-column (dwarfai-miners)",
         "molecules/crew-roster",
@@ -46,17 +46,17 @@
       "height": 368,
       "type": "image/png",
       "pixels": [768, 736],
-      "bytes": 95712,
+      "bytes": 95675,
       "sources": ["molecules/mine-card (dwarfai-miners, deep-vault)"]
     },
     {
       "id": "card-ask",
       "file": "cards/question.png",
       "width": 384,
-      "height": 468,
+      "height": 516,
       "type": "image/png",
-      "pixels": [768, 936],
-      "bytes": 56966,
+      "pixels": [768, 1032],
+      "bytes": 64435,
       "sources": ["molecules/chat-bubble", "organisms/question-card (dwarfai-54)"]
     },
     {
@@ -122,6 +122,20 @@
       "bytes": 5090,
       "sources": [
         "atoms/icon (mines)",
+        "foundations/materials (wood, brass trim, rivets, rule)",
+        "foundations/type (display role)"
+      ]
+    },
+    {
+      "id": "plate-three-ways-to-watch",
+      "file": "plates/three-ways-to-watch.png",
+      "width": 644,
+      "height": 48,
+      "type": "image/png",
+      "pixels": [1288, 96],
+      "bytes": 5552,
+      "sources": [
+        "atoms/icon (valle)",
         "foundations/materials (wood, brass trim, rivets, rule)",
         "foundations/type (display role)"
       ]
@@ -251,7 +265,60 @@
         "foundations/materials (wood, brass trim, rivets, rule)",
         "foundations/type (display role)"
       ]
+    },
+    {
+      "id": "card-veta",
+      "file": "cards/veta.png",
+      "width": 644,
+      "height": 580,
+      "type": "image/png",
+      "pixels": [1288, 1160],
+      "bytes": 131012,
+      "sources": [
+        "organisms/veta-strip (bottom edge, anchored right, every sample dwarf)",
+        "molecules/mine-chamber",
+        "organisms/message-panel (dwarfai-54, asking)",
+        "screens/veta (the window and its pointer: .dm-vwin, positionWindow)",
+        "foundations/materials"
+      ]
+    },
+    {
+      "id": "card-valle-control",
+      "file": "cards/valle-control-room.png",
+      "width": 840,
+      "height": 764,
+      "type": "image/png",
+      "pixels": [1680, 1528],
+      "bytes": 622310,
+      "sources": [
+        "screens/valle (Control room, first visit, chat zone at its 340px minimum)",
+        "organisms/valle-bar",
+        "organisms/nav",
+        "organisms/mine-zone",
+        "organisms/chat-stack",
+        "organisms/needs-queue",
+        "molecules/splitter"
+      ]
+    },
+    {
+      "id": "card-valle-front",
+      "file": "cards/valle-work-front.png",
+      "width": 840,
+      "height": 764,
+      "type": "image/png",
+      "pixels": [1680, 1528],
+      "bytes": 452951,
+      "sources": [
+        "screens/valle (Work front on DwarfAI-Miners, first visit, mines list folded, opened on the chat of dwarfai-53)",
+        "organisms/valle-bar",
+        "organisms/nav",
+        "organisms/mine-rows",
+        "organisms/mine-zone",
+        "organisms/chat-deck",
+        "organisms/needs-queue",
+        "molecules/splitter"
+      ]
     }
   ],
-  "totalBytes": 1273848
+  "totalBytes": 2555168
 }
