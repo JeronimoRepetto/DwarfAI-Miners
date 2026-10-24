@@ -2,6 +2,8 @@
 import type {
   HostFrame,
   ModeTransition,
+  UiSessionMusic,
+  UiSessionPatch,
   MoveToModeParams,
   VetaLayoutRequest,
   VetaLayoutResult
@@ -11,6 +13,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createFakeWindowApi } from '../../../../contracts/ipc/testing/fakeWindowApi'
 import { FRAME_CLOCK_KEY } from '../../composables/useFramePlayer'
 import { modeTransitionPart } from '../../composables/useModeTransition'
+import { MUSIC_TRACK_SRC } from '../../lib/audio/audioAssets'
+import { createFakeAudioPlayer, type FakeAudioPlayer } from '../../lib/audio/fakeAudioPlayer'
+import { DEFAULT_AUDIO_PREFERENCES } from '../../types'
 import { createFrameClock, type FrameClock } from '../../lib/sprite/frameClock'
 import { checkIdleBudget } from '../../lib/sprite/idleBudget'
 import { FakeTickSource, fakeFrameClockEnv } from '../../lib/sprite/testing/FakeTickSource'
@@ -363,5 +368,108 @@ describe('a chat carried into a Veta window still reading the Host (VQA-08; 07 S
         expect.objectContaining({ kind: 'rise', dwarfId: BORIN })
       ])
     )
+  })
+})
+
+/*
+ * APPENDED for AMENDMENT-28 (owner ruling 2026-10-24: music also plays in Veta, unless the person stopped it; Veta still
+ * plays no mine sound, NFR-SND-03). Veta's one sound engine plays the music alone: no mine is ever its scene, so no
+ * room tone, no working bed and no crew sound can open. A run into Veta takes over the music the window it left handed
+ * over; a run out of it hands the music on.
+ */
+describe('the music in Veta (owner ruling 2026-10-24)', () => {
+  beforeEach(() => {
+    modeTransitionPart().dispose()
+  })
+  afterEach(() => {
+    modeTransitionPart().dispose()
+  })
+
+  const isMusic = (src: string): boolean => (MUSIC_TRACK_SRC as readonly string[]).includes(src)
+
+  async function mountWithMusic(music: UiSessionMusic | undefined) {
+    let heard: ((t: ModeTransition) => void) | null = null
+    const patches: UiSessionPatch[] = []
+    const player: FakeAudioPlayer = createFakeAudioPlayer()
+    ;(window as unknown as { api: unknown }).api = createFakeWindowApi({
+      getHostSnapshot: () =>
+        Promise.resolve(
+          snapshotPage(10, {
+            minesEverKnown: true,
+            mines: [mineWire(MORIA)],
+            dwarfs: [dwarfWire(BORIN, MORIA, { status: 'working' })]
+          })
+        ) as never,
+      getAudioPreferences: () => Promise.resolve({ ...DEFAULT_AUDIO_PREFERENCES }),
+      getUiSession: () =>
+        Promise.resolve({
+          drafts: {},
+          chatViews: {},
+          askPicks: {},
+          openChat: {},
+          currentMine: {},
+          valle: {},
+          ...(music === undefined ? {} : { music })
+        }) as never,
+      patchUiSession: (patch) => void patches.push(patch as UiSessionPatch),
+      onModeTransition: (h) => {
+        heard = h as (t: ModeTransition) => void
+        return () => (heard = null)
+      },
+      layoutVeta: () => Promise.resolve(PLACE)
+    })
+    const { clock } = countingClock()
+    const root = mount(VetaApp, {
+      attachTo: document.body,
+      props: { audioPlayer: player },
+      global: { provide: { [FRAME_CLOCK_KEY as symbol]: clock } }
+    })
+    await flushPromises()
+    const run = async (t: Pick<ModeTransition, 'from' | 'to' | 'role'>): Promise<void> => {
+      heard!({ transitionId: `run-${t.from}-${t.to}`, t0: Date.now() - 1_000, ...t })
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      await flushPromises()
+    }
+    return { root, player, patches, run }
+  }
+
+  it('[NFR-SND-03, US-SHELL-005.AC03] a run into Veta plays the music handed over, from where it was, and no mine sound', async () => {
+    const handed: UiSessionMusic = {
+      on: true,
+      track: MUSIC_TRACK_SRC[2]!,
+      positionMs: 64_000,
+      queue: [MUSIC_TRACK_SRC[0]!],
+      lastPlayed: MUSIC_TRACK_SRC[2]!
+    }
+    const veta = await mountWithMusic(handed)
+    mounted = veta.root
+    await veta.run({ from: 'panel', to: 'veta', role: 'target' })
+
+    const live = veta.player.live()
+    expect(live.map((clip) => [clip.src, clip.positionMs()])).toEqual([[handed.track, 64_000]])
+    expect(live[0]!.playing).toBe(true)
+    // A working dwarf on screen and still nothing of the mine: every clip ever opened here is music.
+    expect(veta.player.clips.every((clip) => isMusic(clip.src))).toBe(true)
+
+    // And a run out of Veta hands it on and stops it here.
+    live[0]!.seekMs(70_000)
+    await veta.run({ from: 'veta', to: 'valle', role: 'source' })
+    expect(veta.player.live()).toHaveLength(0)
+    expect(veta.patches.filter((p) => p.kind === 'music')).toEqual([
+      { kind: 'music', music: { ...handed, positionMs: 70_000 } }
+    ])
+  })
+
+  it('[US-SHELL-005.AC02, NFR-SND-03] music the person stopped stays stopped in Veta', async () => {
+    const veta = await mountWithMusic({
+      on: false,
+      track: null,
+      positionMs: 0,
+      queue: [...MUSIC_TRACK_SRC],
+      lastPlayed: null
+    })
+    mounted = veta.root
+    await veta.run({ from: 'panel', to: 'veta', role: 'target' })
+    expect(veta.player.clips).toHaveLength(0)
   })
 })

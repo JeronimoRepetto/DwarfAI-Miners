@@ -60,7 +60,7 @@ export function createFakeAudioPlayer(): FakeAudioPlayer {
       let volume = options?.volume ?? 0
       let ramp: { to: number; ms: number } | undefined
       let durationMs = Number.NaN
-      let positionMs = 0
+      let positionMs = options?.startAtMs ?? 0
       const loop = options?.loop === true
 
       const clip: FakeAudioClip = {

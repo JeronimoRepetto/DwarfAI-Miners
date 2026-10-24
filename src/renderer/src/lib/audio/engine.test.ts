@@ -254,6 +254,126 @@ describe('createAudioEngine — music (#174)', () => {
   })
 })
 
+/*
+ * APPENDED for AMENDMENT-28 (owner ruling 2026-10-24, "one music, one playlist"): each mode window has its own engine,
+ * so the music moves between them as a hand-over — the window a run leaves stops its track and says where it was, and
+ * the window the run enters carries on from there.
+ */
+describe('createAudioEngine — the music handed between windows', () => {
+  let time: { now: number }
+
+  function engineOver(player: FakeAudioPlayer, random: () => number): AudioEngine {
+    return createAudioEngine({
+      player,
+      tracks: TRACKS,
+      beds: BEDS,
+      voices: VOICES,
+      sfx: SFX,
+      crew: CREW,
+      random,
+      now: () => time.now
+    })
+  }
+
+  beforeEach(() => {
+    time = clock()
+  })
+
+  it('[US-SHELL-005.AC03, NFR-SND-07] the leaving window stops its track and the entering one plays the same track from where it was', () => {
+    const panelPlayer = createFakeAudioPlayer()
+    const vallePlayer = createFakeAudioPlayer()
+    const panel = engineOver(panelPlayer, inOrderRandom())
+    // Valle would draw another order: what it plays has to be the Panel's anyway.
+    const valle = engineOver(vallePlayer, () => 0)
+    panel.setMusicOn(true)
+    const track = panelPlayer.live()[0]!
+    track.setDurationMs(180_000)
+    track.seekMs(41_250)
+
+    const handed = panel.handOffMusic()
+    expect(handed).toEqual({
+      track: 't1.ogg',
+      positionMs: 41_250,
+      queue: ['t2.ogg', 't3.ogg'],
+      lastPlayed: 't1.ogg'
+    })
+    // No overlap: the window left plays nothing from here on, even shown.
+    expect(panelPlayer.live()).toHaveLength(0)
+    panel.setGates({ hidden: false, collapsed: false })
+    panel.tick()
+    expect(panelPlayer.live()).toHaveLength(0)
+
+    valle.adoptMusic(handed, true)
+    const resumed = vallePlayer.live()
+    expect(resumed).toHaveLength(1)
+    expect(resumed[0]!.src).toBe('t1.ogg')
+    expect(resumed[0]!.positionMs()).toBe(41_250)
+    expect(resumed[0]!.playing).toBe(true)
+
+    // Then the same round, in the Panel's order.
+    resumed[0]!.end()
+    time.now += MUSIC_GAP_MS
+    valle.tick()
+    expect(vallePlayer.live().map((clip) => clip.src)).toEqual(['t2.ogg'])
+  })
+
+  it('[NFR-SND-07] a hidden window holds what it adopted and starts it only once shown', () => {
+    const player = createFakeAudioPlayer()
+    const veta = engineOver(player, () => 0)
+    veta.setGates({ hidden: true, collapsed: false })
+    veta.adoptMusic(
+      { track: 't3.ogg', positionMs: 9_000, queue: ['t1.ogg'], lastPlayed: 't3.ogg' },
+      true
+    )
+    expect(player.clips).toHaveLength(0)
+
+    veta.setGates({ hidden: false, collapsed: false })
+    expect(player.live().map((clip) => [clip.src, clip.positionMs()])).toEqual([['t3.ogg', 9_000]])
+    // And handing it on before it was ever shown hands the same place on, not nothing.
+    const again = engineOver(createFakeAudioPlayer(), () => 0)
+    again.setGates({ hidden: true, collapsed: false })
+    again.adoptMusic({ track: 't2.ogg', positionMs: 500, queue: [], lastPlayed: 't2.ogg' }, true)
+    expect(again.handOffMusic()).toEqual({
+      track: 't2.ogg',
+      positionMs: 500,
+      queue: [],
+      lastPlayed: 't2.ogg'
+    })
+  })
+
+  it('[US-SHELL-005.AC02] music the person stopped stays stopped in the window that adopts it, and turning it on resumes the round', () => {
+    const player = createFakeAudioPlayer()
+    const valle = engineOver(player, () => 0)
+    valle.adoptMusic(
+      { track: null, positionMs: 0, queue: ['t3.ogg', 't1.ogg'], lastPlayed: 't2.ogg' },
+      false
+    )
+    valle.tick()
+    expect(player.clips).toHaveLength(0)
+
+    valle.setMusicOn(true)
+    expect(player.live().map((clip) => clip.src)).toEqual(['t3.ogg'])
+  })
+
+  it('[US-SHELL-005.AC03] between two tracks it hands over no track, and the next window starts the next one', () => {
+    const panelPlayer = createFakeAudioPlayer()
+    const panel = engineOver(panelPlayer, inOrderRandom())
+    panel.setMusicOn(true)
+    panelPlayer.live()[0]!.end()
+
+    const handed = panel.handOffMusic()
+    expect(handed).toEqual({
+      track: null,
+      positionMs: 0,
+      queue: ['t2.ogg', 't3.ogg'],
+      lastPlayed: 't1.ogg'
+    })
+    const vallePlayer = createFakeAudioPlayer()
+    engineOver(vallePlayer, () => 0).adoptMusic(handed, true)
+    expect(vallePlayer.live().map((clip) => [clip.src, clip.positionMs()])).toEqual([['t2.ogg', 0]])
+  })
+})
+
 describe('createAudioEngine — ambience (#173)', () => {
   let player: FakeAudioPlayer
   let time: { now: number }

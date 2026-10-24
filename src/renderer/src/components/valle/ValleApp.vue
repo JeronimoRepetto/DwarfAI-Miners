@@ -312,6 +312,14 @@ const audio = useAudio({
 })
 let stopCues: (() => void) | undefined
 let stopAudio: (() => void) | undefined
+/**
+ * One music across the modes (owner ruling 2026-10-24; AMENDMENT-28): a run Valle leaves hands its music to the window
+ * it enters, and a run entering Valle takes over the music handed over at t0, before the shown state opens the gate.
+ */
+const stopMusicHandoff = modeTransitionPart().registerMusic({
+  leave: audio.leave,
+  enter: audio.enter
+})
 let unmounted = false
 
 /** The window's observers over the Valle viewport: the on-screen report's and the zones' art clocks'. */
@@ -904,6 +912,7 @@ onUnmounted(() => {
   document.removeEventListener('visibilitychange', showingChanged)
   stopLeft()
   stopEntered()
+  stopMusicHandoff()
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('resize', resized)
   removeGate?.()

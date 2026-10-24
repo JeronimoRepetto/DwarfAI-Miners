@@ -90,6 +90,17 @@ export interface AudioEngineOptions {
   now?: () => number
 }
 
+/**
+ * The music as one window hands it to the next (owner ruling 2026-10-24, "one music, one playlist"; AMENDMENT-28): the
+ * track sounding and where it had got to, and what is left of the shuffled round. `track` is null between two tracks.
+ */
+export interface MusicHandoff {
+  track: string | null
+  positionMs: number
+  queue: string[]
+  lastPlayed: string | null
+}
+
 export interface AudioEngine {
   /** Adopt the persisted Audio settings; live sounds follow immediately. */
   setSettings: (settings: AudioPreferences) => void
@@ -114,6 +125,16 @@ export interface AudioEngine {
    * the clips and decides how many of them a mine may have at once.
    */
   playCrew: (event: CrewSoundEvent) => void
+  /**
+   * Hands the music over to another window: says where it is, then stops it, so two windows never play at once. Nothing
+   * plays here again until `adoptMusic` or `setMusicOn`.
+   */
+  handOffMusic: () => MusicHandoff
+  /**
+   * Carries on from the music another window handed over: the same track from where it was, then the same round.
+   * `on` is the Music slot's state; a hidden window holds it until it is shown.
+   */
+  adoptMusic: (handoff: MusicHandoff, on: boolean) => void
   /** Settle every deadline and check both seams. Cheap; call it often. */
   tick: () => void
   /** Release every sound. Nothing plays after this. */
@@ -160,6 +181,13 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
   /** The shell button's state for this run; #174 starts it on by default. */
   let musicOn = false
   let music: AudioClip | undefined
+  /** The track `music` plays, which the clip itself does not say. */
+  let musicSrc: string | undefined
+  /**
+   * A track handed over from another window and not started yet (AMENDMENT-28): the next track to open is this one,
+   * from where it was, rather than the playlist's next.
+   */
+  let resumeAt: { src: string; positionMs: number } | undefined
   /**
    * Whether the current track's closing fade has been asked for. Held so a
    * 4Hz tick does not re-aim the same ramp forty times across its last second,
@@ -233,13 +261,17 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
   // ── music ────────────────────────────────────────────────────────────────
 
   function startNextTrack(): void {
-    const src = playlist.next()
+    const resume = resumeAt
+    resumeAt = undefined
+    const src = resume?.src ?? playlist.next()
     // Nothing to play: #174 asks for silence rather than a placeholder track.
     if (src === undefined) return
     nextTrackAt = undefined
     musicFadingOut = false
+    musicSrc = src
     music = player.open(src, {
       volume: 0,
+      startAtMs: resume?.positionMs,
       // The fallback that makes the gap work for a track whose `duration`
       // never became readable — see musicTimeline on why that is ordinary.
       onEnded: () => {
@@ -254,8 +286,28 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
   function stopMusic(): void {
     music?.stop()
     music = undefined
+    musicSrc = undefined
+    resumeAt = undefined
     musicFadingOut = false
     nextTrackAt = undefined
+  }
+
+  /** The track sounding and where, or the one held to resume; nothing while a track fades out or a gap runs. */
+  function musicPlace(): { track: string | null; positionMs: number } {
+    if (resumeAt !== undefined) return { track: resumeAt.src, positionMs: resumeAt.positionMs }
+    if (
+      music === undefined ||
+      musicSrc === undefined ||
+      musicFadingOut ||
+      nextTrackAt !== undefined
+    ) {
+      return { track: null, positionMs: 0 }
+    }
+    const positionMs = music.positionMs()
+    return {
+      track: musicSrc,
+      positionMs: Number.isFinite(positionMs) ? Math.max(0, positionMs) : 0
+    }
   }
 
   function tickMusic(): void {
@@ -264,6 +316,7 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
       // The outgoing track has faded out and its second of silence is over.
       music?.stop()
       music = undefined
+      musicSrc = undefined
       startNextTrack()
       return
     }
@@ -553,6 +606,26 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
       })
       crew.push({ dwarfId: event.dwarfId, cue: event.cue, clip, count, gain })
       clip.play()
+    },
+    handOffMusic(): MusicHandoff {
+      const place = musicPlace()
+      const round = playlist.state()
+      // Stopped, not paused: the window a run leaves must not resume a track another window now plays.
+      stopMusic()
+      musicOn = false
+      return { ...place, queue: round.queue, lastPlayed: round.lastPlayed ?? null }
+    },
+    adoptMusic(handoff: MusicHandoff, on: boolean): void {
+      if (disposed) return
+      stopMusic()
+      playlist.restore({ queue: handoff.queue, lastPlayed: handoff.lastPlayed ?? undefined })
+      // A name this window does not hold is skipped: the round goes on with the next track it does hold.
+      if (handoff.track !== null && options.tracks.includes(handoff.track)) {
+        resumeAt = { src: handoff.track, positionMs: Math.max(0, handoff.positionMs) }
+      }
+      musicOn = on
+      if (!on || gates.hidden) return
+      startNextTrack()
     },
     tick(): void {
       if (disposed) return

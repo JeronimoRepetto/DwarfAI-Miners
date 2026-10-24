@@ -7,6 +7,7 @@ import type {
   EvtFrame,
   MessageId,
   MineId,
+  UiSessionMusic,
   UiSessionPatch,
   UiSessionSnapshot
 } from '@dwarfai/contracts'
@@ -23,6 +24,14 @@ const ASK = '0190a1b2-c3d4-7e5f-8a6b-7c8d9e0f1c01' as AskId
 const ANCHORED: ChatViewState = {
   scrollAnchor: { messageId: '0190a1b2-c3d4-7e5f-8a6b-7c8d9e0f1d01' as MessageId, offsetPx: 40 },
   selection: { start: 2, end: 2, direction: 'none' }
+}
+/** The music a window leaves behind (AMENDMENT-28). */
+const MUSIC: UiSessionMusic = {
+  on: true,
+  track: './assets/music-3.ogg',
+  positionMs: 41250,
+  queue: ['./assets/music-7.ogg', './assets/music-1.ogg'],
+  lastPlayed: './assets/music-3.ogg'
 }
 const EMPTY: UiSessionSnapshot = {
   drafts: {},
@@ -78,7 +87,8 @@ const EVERY_KIND: UiSessionPatch[] = [
   { kind: 'open-chat', host: 'panel', dwarfId: BORIN },
   { kind: 'current-mine', host: 'panel', mineId: MINE_A },
   { kind: 'valle', patch: { mosaicScrollLeft: 120, historyOpen: true } },
-  { kind: 'veta-risen-chat', dwarfId: BORIN }
+  { kind: 'veta-risen-chat', dwarfId: BORIN },
+  { kind: 'music', music: MUSIC }
 ]
 
 describe('the UI-main session store (ADR-024 items 1, 3; 14 §3.9)', () => {
@@ -153,6 +163,29 @@ describe('the UI-main session store (ADR-024 items 1, 3; 14 §3.9)', () => {
     for (const window of [panel, veta, valle]) window.sent.length = 0
     host.deliver(departed(BORIN))
     for (const window of [panel, veta, valle]) expect(window.sent).toEqual([])
+  })
+
+  /*
+   * APPENDED for AMENDMENT-28 (owner-approved 2026-10-24; owner ruling 2026-10-24 "one music, one playlist"): the
+   * window a run leaves writes the music it played; the window the run enters reads it back whole.
+   */
+  it('[US-SHELL-005.AC03] a music patch replaces the music slot whole and reaches the other windows', () => {
+    const { session, panel, veta, valle, fromPanel, fromValle } = world()
+
+    session.patch({ kind: 'music', music: MUSIC }, fromPanel)
+    expect(session.get().music).toEqual(MUSIC)
+    expect(valle.sent).toEqual([
+      [UI_SESSION_CHANGED_PUSH, { kind: 'music', music: MUSIC, origin: 'panel' }]
+    ])
+    expect(veta.sent).toHaveLength(1)
+    expect(panel.sent).toEqual([])
+
+    const stopped: UiSessionMusic = { ...MUSIC, on: false, track: null, positionMs: 0, queue: [] }
+    session.patch({ kind: 'music', music: stopped }, fromValle)
+    expect(session.get().music).toEqual(stopped)
+    // The snapshot is a copy: a reader changing it changes nothing here.
+    session.get().music!.queue.push('./assets/music-9.ogg')
+    expect(session.get().music).toEqual(stopped)
   })
 
   it('[S10.15, NFR-PERS-06] entering tray-only clears the whole session store', () => {

@@ -29,9 +29,22 @@ export function shuffleOrder<T>(items: readonly T[], random: () => number): T[] 
   return order
 }
 
+/**
+ * Where a playlist has got to: what is left of its round, in order, and the track that round handed out last (owner
+ * ruling 2026-10-24: the shuffled order carries over from one mode window to the next; AMENDMENT-28).
+ */
+export interface PlaylistState<T> {
+  queue: T[]
+  lastPlayed: T | undefined
+}
+
 export interface Playlist<T> {
   /** The next track, or undefined when there are none at all. */
   next: () => T | undefined
+  /** Where this playlist has got to, as a copy. */
+  state: () => PlaylistState<T>
+  /** Carries on from another playlist's state over the same items; an item this playlist does not hold is dropped. */
+  restore: (state: { queue: readonly T[]; lastPlayed: T | undefined }) => void
 }
 
 /**
@@ -69,6 +82,21 @@ export function createPlaylist<T>(items: readonly T[], random: () => number): Pl
       const track = queue.shift()
       if (track !== undefined) lastPlayed = track
       return track
+    },
+    state(): PlaylistState<T> {
+      return { queue: [...queue], lastPlayed }
+    },
+    restore(state): void {
+      // Only what this playlist holds, once each: a handed-over name it cannot play is skipped, never played as silence.
+      const known = new Set(items)
+      const seen = new Set<T>()
+      queue = state.queue.filter((item) => {
+        if (!known.has(item) || seen.has(item)) return false
+        seen.add(item)
+        return true
+      })
+      lastPlayed =
+        state.lastPlayed !== undefined && known.has(state.lastPlayed) ? state.lastPlayed : undefined
     }
   }
 }

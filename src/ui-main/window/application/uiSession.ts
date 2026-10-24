@@ -1,8 +1,9 @@
 // The UI-main session store (ADR-024 items 1, 3; ADR-033 item 4; 14 §2.2 A-N17…A-N19, §3.9): the state of the app run
 // that every window shares and no window owns — the draft and the chat view state per dwarf (in the `SessionStore`
-// port), the partial picks of an open question, the open chat and the current mine per host, Valle's session fields
-// and Veta's risen chat. Renderers read it whole (A-N17) and change it one patch at a time (A-N18); each patch reaches
-// every other mode window with the window it came from (A-N19), so each window mirrors the store.
+// port), the partial picks of an open question, the open chat and the current mine per host, Valle's session fields,
+// Veta's risen chat and the music the shown mode window plays (AMENDMENT-28). Renderers read it whole (A-N17) and
+// change it one patch at a time (A-N18); each patch reaches every other mode window with the window it came from
+// (A-N19), so each window mirrors the store.
 //
 // - Never persisted, never sent to the Host (INV-113): no patch kind reaches the client; the one thing asked of it is
 //   to hear the Host's frames.
@@ -133,6 +134,10 @@ export function createUiSession(deps: UiSessionDeps): UiSession {
         return
       case 'veta-risen-chat':
         fields.vetaRisenChat = p.dwarfId
+        return
+      case 'music':
+        // AMENDMENT-28: the music the window a run left was playing, replaced whole; the next window resumes it.
+        fields.music = structuredClone(p.music)
         return
     }
   }

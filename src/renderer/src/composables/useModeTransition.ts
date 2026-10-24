@@ -100,9 +100,25 @@ export interface ModeTransitionDeps {
   play(half: MotionTrack[]): Promise<void>
 }
 
+/**
+ * The window's music in a run (owner ruling 2026-10-24, "one music, one playlist"; AMENDMENT-28): every mode window has
+ * its own sound engine, so the music is handed from the window a run leaves to the window it enters.
+ */
+export interface MusicHandoffPart {
+  /** A run this window leaves has started: hand the music over and stop it here. */
+  leave(): void
+  /** A run this window enters reached `t0`: take over the music handed over. */
+  enter(): Promise<void> | void
+}
+
 export interface ModeTransitionPart {
   /** Registers the open chat's hand-off; answers the unregister. */
   register(handoff: ChatHandoff): () => void
+  /**
+   * Registers the window's music: `leave` as a run it leaves starts, with the open chat's flush and before `t0`, so the
+   * window it enters reads it; `enter` at that run's `t0`, before the window hears it entered. Answers the unregister.
+   */
+  registerMusic(music: MusicHandoffPart): () => void
   /** Opens the carried chat in this window before its draft and view are restored; answers the unregister. */
   onArrival(open: (chat: CarriedChat, slot: CarriedSlot) => Promise<void> | void): () => void
   /**
@@ -134,6 +150,7 @@ export function useModeTransition(deps: ModeTransitionDeps): ModeTransitionPart 
   let landed: ((chat: CarriedChat, slot: CarriedSlot) => void) | null = null
   let left: ((t: ModeTransition) => void) | null = null
   let entered: ((t: ModeTransition) => void) | null = null
+  let music: MusicHandoffPart | null = null
   /** A carried chat heard before this window registered how to open it (`onArrival`), opened once it does. */
   let unopened: { chat: CarriedChat; slot: CarriedSlot } | null = null
   /**
@@ -285,6 +302,8 @@ export function useModeTransition(deps: ModeTransitionDeps): ModeTransitionPart 
     const playAtT0 = (): void =>
       atT0(t.t0, () => {
         if (t.role === 'target') {
+          // The music first, so the window's own shown state, opened by `entered`, starts nothing of its own.
+          void music?.enter()
           deps.veil(false)
           // The window is shown again: what hides with it may come back (Valle's page, VQA-09).
           entered?.(t)
@@ -299,6 +318,8 @@ export function useModeTransition(deps: ModeTransitionDeps): ModeTransitionPart 
     if (t.role === 'source') {
       kept = null
       flush()
+      // With the flush, before t0: the window the run enters reads where the music was (AMENDMENT-28).
+      music?.leave()
       playAtT0()
       return
     }
@@ -362,6 +383,12 @@ export function useModeTransition(deps: ModeTransitionDeps): ModeTransitionPart 
       left = hear
       return () => {
         if (left === hear) left = null
+      }
+    },
+    registerMusic(next) {
+      music = next
+      return () => {
+        if (music === next) music = null
       }
     },
     onEntered(hear) {
@@ -431,6 +458,7 @@ export function modeTransitionPart(): ModeTransitionPart {
   if (typeof window === 'undefined' || typeof window.api?.onModeTransition !== 'function') {
     return {
       register: () => () => {},
+      registerMusic: () => () => {},
       onArrival: () => () => {},
       onMineArrival: () => () => {},
       onLanded: () => () => {},
@@ -442,6 +470,7 @@ export function modeTransitionPart(): ModeTransitionPart {
   const part = useModeTransition(defaultDeps())
   shared = {
     register: (handoff) => part.register(handoff),
+    registerMusic: (music) => part.registerMusic(music),
     onArrival: (open) => part.onArrival(open),
     onMineArrival: (open) => part.onMineArrival(open),
     onLanded: (hear) => part.onLanded(hear),
