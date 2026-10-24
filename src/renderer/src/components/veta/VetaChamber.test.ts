@@ -2,6 +2,7 @@
 import type { DwarfId, HostFrame } from '@dwarfai/contracts'
 import { flushPromises } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { MUSIC_TRACK_SRC } from '../../lib/audio/audioAssets'
 import { VETA_MOTION, outwardOf, walkInFrames, walkOutFrames } from '../../lib/veta/choreography'
 import {
   BALIN,
@@ -133,9 +134,14 @@ describe('VetaChamber in the shown Veta window (machine 26)', () => {
       expect(dwarf(DAIN)?.dataset.walk).toBe('out')
       await finishMotion()
       expect(dwarf(DAIN)).toBeNull()
-      // Nothing was opened or played: no footstep, no helmet clink, no ambience.
-      expect(opened).toEqual([])
-      expect(played).not.toHaveBeenCalled()
+      // Nothing of the mine was opened or played: no footstep, no helmet clink, no ambience.
+      // AMENDED for owner ruling 2026-10-24 (AMENDMENT-28): the music plays in Veta too, so it alone is left out.
+      const music = (src: string): boolean => (MUSIC_TRACK_SRC as readonly string[]).includes(src)
+      expect(opened.filter((src) => !music(src))).toEqual([])
+      const playedSrcs = played.mock.contexts.map((element) => (element as HTMLMediaElement).src)
+      expect(
+        playedSrcs.filter((src) => !MUSIC_TRACK_SRC.some((track) => src.endsWith(track)))
+      ).toEqual([])
     } finally {
       window.Audio = RealAudio
     }
