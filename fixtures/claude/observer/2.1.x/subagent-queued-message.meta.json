@@ -1,0 +1,6 @@
+{
+  "agentType": "general-purpose",
+  "description": "Run ping five times (echo)",
+  "toolUseId": "toolu_01QueuedSpawnE",
+  "spawnDepth": 1
+}
