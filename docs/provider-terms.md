@@ -10,7 +10,10 @@ was received and the channel it came through.
 
 ## Provider confirmations
 
-Release item R-02: the Anthropic and OpenAI rows must be filled before v1 is released (OQ-81).
+Release item R-02 (OQ-81): by owner decision on 2026-10-24, filling these rows is no longer
+required before v1. The README's provider notice (R-01) states that each provider's own terms
+apply, and DwarfAI never handles provider credentials. A confirmation the owner obtains later is
+still recorded here.
 
 | Provider  | Date | Channel | Confirmation text |
 | --------- | ---- | ------- | ----------------- |
