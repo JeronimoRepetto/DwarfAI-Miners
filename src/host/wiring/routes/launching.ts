@@ -337,7 +337,7 @@ export interface LaunchingWiringDeps {
   frames: LaunchFramePublisher
   suppliers: Pick<
     Suppliers,
-    'registry' | 'launchDriver' | 'sessions' | 'catalogue' | 'bindings' | 'releases'
+    'registry' | 'launchDriver' | 'sessions' | 'catalogue' | 'offeredMode' | 'bindings' | 'releases'
   >
   mines: Pick<MinesQueries, 'get' | 'folderOf'>
   crew: Pick<CrewCommands, 'arrive' | 'sessionClosed'>
@@ -457,6 +457,7 @@ function wireLaunching(deps: LaunchingWiringDeps): WiredLaunching {
       registry: suppliers.registry,
       launchDriver: suppliers.launchDriver,
       catalogue: suppliers.catalogue,
+      offeredMode: suppliers.offeredMode,
       bindings: suppliers.bindings
     },
     mines: deps.mines,

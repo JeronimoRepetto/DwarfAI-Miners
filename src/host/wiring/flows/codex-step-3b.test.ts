@@ -121,6 +121,47 @@ describe('step 3b Codex flow (21 §2 cut 3b)', () => {
     expect(JSON.stringify(server?.args)).not.toMatch(/token/i)
   })
 
+  it('[US-LAUNCH-001.AC13, ADR-011, INV-42] a Codex launch with Ask first is accepted and starts its thread asking on request, and an unknown mode is refused', async () => {
+    const w = world()
+    const recorded = allowRecording()
+    const transports: FixtureTransport[] = []
+    const h = await bootHost(w, {
+      epoch: 'epoch-228-a',
+      processes: ({ clock, scheduler }) => codexSpawn(clock, scheduler, recorded, transports),
+      installed: ['codex']
+    })
+    const mineId = await h.mine()
+    const ui = await h.attach()
+    const launch = (permissionMode: string) =>
+      h.call(ui, 'launching.launch', {
+        mineId,
+        way: { kind: 'supplier', providerId: 'codex' },
+        prompt: recorded.prompt,
+        permissionMode,
+        jevOn: false,
+        jevAutoAccept: false,
+        requestId: h.rid()
+      })
+
+    // ADR-011 item 1: a mode the entry does not offer is refused before any row.
+    expect(await launch('full-access')).toMatchObject({
+      ok: false,
+      error: { code: 'INVALID_PARAMS' }
+    })
+    expect(await launch('ask-first')).toMatchObject({ ok: true })
+    await h.run(4_000, ui)
+    expect(
+      evts<LaunchChanged>(ui, 'launch.changed').some((frame) => frame.launch.state === 'succeeded')
+    ).toBe(true)
+
+    // Ask first is the driver's own asking path: the thread asks on request, with no option added.
+    const sent = transports.flatMap((t) =>
+      t.sent.map((line) => JSON.parse(line) as { method?: string; params?: unknown })
+    )
+    const start = sent.find((message) => message.method === 'thread/start')
+    expect(start?.params).toMatchObject({ approvalPolicy: 'on-request' })
+  })
+
   it('[INV-60, US-LAUNCH-005.AC07] a Codex launch through the wired Host shows its first prompt once, though the driver echoes it', async () => {
     // GitHub #1430: the app-server's `userMessage` item of the first turn is the launch prompt's
     // echo, with no `echoOf` (the launch has no receipt): it merges into the launch's own row.

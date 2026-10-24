@@ -4,8 +4,13 @@
 import { describe, expect, it } from 'vitest'
 import { childEnv } from '../drivers/shared/childEnv'
 import type { PermissionModeCatalog } from '../../domain/profile'
-import type { CapabilityCeiling } from '../../domain/capabilities'
+import {
+  FAIL_CLOSED_CAPABILITIES,
+  type CapabilityCeiling,
+  type ProviderCapabilities
+} from '../../domain/capabilities'
 import { merge } from '../../domain/mergeCapabilities'
+import { offeredModes } from '../../domain/offeredModes'
 import { CATALOG_RECORDS, OPENCODE_ACP, publicLaunchOf } from './profiles'
 
 const claude = CATALOG_RECORDS.find((record) => record.profile.id === 'claude')
@@ -92,5 +97,45 @@ describe('the OpenCode catalog record', () => {
     const ceiling = opencode?.ceiling as CapabilityCeiling
     const row = { ...OPENCODE_ACP.row, resume: 'none' as const }
     expect(merge(ceiling, row)).toEqual(row)
+  })
+})
+
+/** The effective capabilities of a record whose driver measured `permission` (15 §2.1). */
+const withPermission = (permission: ProviderCapabilities['permission']): ProviderCapabilities => ({
+  ...FAIL_CLOSED_CAPABILITIES,
+  launch: true,
+  permission
+})
+
+describe('the permission modes of the catalog records', () => {
+  it('[US-LAUNCH-001.AC13, INV-42, ADR-011] every record whose permission ceiling can ask lists Ask first with its spec, and no other record lists a mode', () => {
+    for (const record of CATALOG_RECORDS) {
+      const { id, permissionModes } = record.profile
+      if (record.ceiling.permission === 'interactive') {
+        expect(permissionModes, id).toEqual(['ask-first'])
+        expect(record.modes?.specs, id).toEqual([
+          { id: 'ask-first', label: 'Ask first', needs: 'interactive', providerArgs: {} }
+        ])
+      } else {
+        expect(permissionModes, id).toEqual([])
+      }
+    }
+    expect(
+      CATALOG_RECORDS.filter((record) => record.profile.permissionModes.length > 0).map(
+        (record) => record.profile.id
+      )
+    ).toEqual(['claude', 'codex', 'opencode'])
+  })
+
+  it('[US-LAUNCH-001.AC11, US-LAUNCH-001.AC14, INV-42] each record offers Ask first only while its effective permission is interactive, never when policy-only or none', () => {
+    for (const record of CATALOG_RECORDS) {
+      const modes = record.modes ?? { specs: [], denyPolicyVerified: false }
+      const offered = (permission: ProviderCapabilities['permission']): string[] =>
+        offeredModes(record.profile, withPermission(permission), modes).map((mode) => mode.id)
+      const asks = record.ceiling.permission === 'interactive'
+      expect(offered('interactive'), record.profile.id).toEqual(asks ? ['ask-first'] : [])
+      expect(offered('policy-only'), record.profile.id).toEqual([])
+      expect(offered('none'), record.profile.id).toEqual([])
+    }
   })
 })

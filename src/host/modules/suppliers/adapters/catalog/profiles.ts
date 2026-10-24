@@ -5,7 +5,7 @@
 //
 // Drivers attach later, one issue each (ISSUE-150…158); until a driver is attached, the
 // registry offers none for that transport. Models, efforts and permission modes arrive with the
-// catalog transplant (ISSUE-147). Labels are the providers' own plain-text names (ADR-008 item 7).
+// catalog transplant (ISSUE-147); v1 ships one permission mode, "Ask first" (`ASK_FIRST_MODES`). Labels are the providers' own plain-text names (ADR-008 item 7).
 //
 // Ceilings (ADR-009 D2 "each profile declares a ceiling"; 15 §0): the field-wise upper bound of
 // the provider's rows in 15 §3 (driver rows and observed rows, C1 excluded: not offered in v1), an
@@ -23,6 +23,20 @@ import {
 } from '../../domain/capabilities'
 import type { CatalogRecord, PermissionModeCatalog, ProviderProfile } from '../../domain/profile'
 import type { AcpRow } from '../drivers/acp/AcpDriver'
+
+/**
+ * ADR-011 item 1: "Ask first", the interactive mode (id `ask-first`), the one mode v1 ships (owner
+ * decision, 2026-10-24). Its label is the design's ("Permissions: Ask first"). Its `providerArgs`
+ * are empty on purpose: asking is each driver's own default path, so the mode adds no flag and no
+ * option (Claude's `claude -p` asks through the permission prompt tool, Codex's app-server keeps
+ * `approvalPolicy: "on-request"`, an ACP agent keeps the session mode it reports). Listed only by a
+ * record whose permission ceiling can ask; `offeredModes` drops it whenever the effective
+ * permission is not interactive (US-LAUNCH-001.AC11).
+ */
+const ASK_FIRST_MODES: PermissionModeCatalog = {
+  specs: [{ id: 'ask-first', label: 'Ask first', needs: 'interactive', providerArgs: {} }],
+  denyPolicyVerified: false
+}
 
 /** 15 §3 rows C2–C5 (preferred driver C3, `acp`). */
 const CLAUDE_CEILING: CapabilityCeiling = {
@@ -215,13 +229,14 @@ export const CATALOG_RECORDS: readonly CatalogRecord[] = [
       binaries: ['claude'],
       models: [],
       efforts: [],
-      permissionModes: [],
+      permissionModes: ['ask-first'],
       // ADR-009 D4 (AMENDMENT-2, OQ-52): a user-installed claude-agent-acp, then `claude -p`
       // (ClaudeStreamJsonDriver, ISSUE-150: offered only once SP-08 passes).
       drivers: ['acp', 'stream-json'],
       publicLaunch: 'enabled'
     },
     ceiling: CLAUDE_CEILING,
+    modes: ASK_FIRST_MODES,
     // 15 §4 `childEnv`: the Claude Code variable a launched `claude` must share with the person's
     // own (15 §5 Claude row: honour CLAUDE_CONFIG_DIR, HO-09), so its config, login and transcripts
     // are the ones the observer reads. A path, never a credential (ADR-008 item 2).
@@ -234,13 +249,14 @@ export const CATALOG_RECORDS: readonly CatalogRecord[] = [
       binaries: ['codex'],
       models: [],
       efforts: [],
-      permissionModes: [],
+      permissionModes: ['ask-first'],
       // ADR-009 D4: the person's `codex app-server` (CodexAppServerDriver, ISSUE-152), then
       // `codex-acp` when the probe finds no app-server subcommand (15 §2.3, §4.5).
       drivers: ['app-server-rpc', 'acp'],
       publicLaunch: 'enabled'
     },
     ceiling: CODEX_CEILING,
+    modes: ASK_FIRST_MODES,
     // 15 §4 `childEnv`: the Codex variable a launched `codex` must share with the person's own (15
     // §5 Codex row: honour CODEX_HOME), so its config, login and rollouts are the ones the observer
     // reads. A path, never a credential (ADR-008 item 2).
@@ -267,12 +283,13 @@ export const CATALOG_RECORDS: readonly CatalogRecord[] = [
       binaries: ['opencode'],
       models: [],
       efforts: [],
-      permissionModes: [],
+      permissionModes: ['ask-first'],
       drivers: ['http-server', 'acp'],
       publicLaunch: 'enabled',
       answerChannelGate: 'opencode-permissions'
     },
-    ceiling: OPENCODE_CEILING
+    ceiling: OPENCODE_CEILING,
+    modes: ASK_FIRST_MODES
   },
   SIMULATED_RECORD
 ]

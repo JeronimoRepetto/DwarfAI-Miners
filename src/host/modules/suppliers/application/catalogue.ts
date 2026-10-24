@@ -19,7 +19,7 @@ import type { Scheduler } from '../../../kernel/ports/scheduler'
 import { FAIL_CLOSED_CAPABILITIES, type ProviderCapabilities } from '../domain/capabilities'
 import { merge, negotiatedFor } from '../domain/mergeCapabilities'
 import { answerChannelOf, offeredModes } from '../domain/offeredModes'
-import type { CatalogRecord } from '../domain/profile'
+import type { CatalogRecord, PermissionModeSpec } from '../domain/profile'
 import type { IntegrationGateReader } from '../ports/integrationGateReader'
 import { DETECTION_BUDGET_MS, type InstallDetection } from './detection'
 import type { CapabilityProbing } from './probe'
@@ -44,6 +44,18 @@ export interface SupplierCatalogueQueries {
   capabilities(id: ProviderId): ProviderCapabilities
 }
 
+/**
+ * The catalogue as this module builds it: the 05 §3.4 driving port, plus the one answer launching
+ * needs and the port does not carry. `SupplierEntry.permissionModes` lists offered mode ids only,
+ * while `DriverLaunchRequest.permissionMode` takes the mode's `PermissionModeSpec` (15 §1.2; ADR-011
+ * item 1). `offeredMode` answers that spec for a mode the entry offers now, re-derived like `entry`,
+ * and null otherwise (fail closed). It is no member of the port: launching reads it through its own
+ * `LaunchingDeps`, bound by `host/wiring`.
+ */
+export interface SupplierCatalogue extends SupplierCatalogueQueries {
+  offeredMode(id: ProviderId, modeId: string): PermissionModeSpec | null
+}
+
 export interface SupplierCatalogueDeps {
   /** The records of this build (`recordsForBuild`); "Other…" is never one of them (INV-43). */
   readonly records: readonly CatalogRecord[]
@@ -59,7 +71,7 @@ export interface SupplierCatalogueDeps {
   readonly scheduler: Scheduler
 }
 
-export function createSupplierCatalogue(deps: SupplierCatalogueDeps): SupplierCatalogueQueries {
+export function createSupplierCatalogue(deps: SupplierCatalogueDeps): SupplierCatalogue {
   const byId = new Map<ProviderId, CatalogRecord>()
   for (const record of deps.records) byId.set(record.profile.id, record)
 
@@ -98,17 +110,24 @@ export function createSupplierCatalogue(deps: SupplierCatalogueDeps): SupplierCa
     return merge(record.ceiling, negotiatedFor(probed === null ? [] : [probed], gateOf(record)))
   }
 
+  /** ADR-011 item 1: the record's modes the effective capabilities can honour now, in offer order. */
+  const offered = (record: CatalogRecord): PermissionModeSpec[] =>
+    offeredModes(
+      record.profile,
+      effective(record),
+      record.modes ?? { specs: [], denyPolicyVerified: false }
+    )
+
   const toEntry = (record: CatalogRecord): SupplierEntry => {
     const { profile } = record
     const caps = effective(record)
     const gate = gateOf(record)
-    const modes = record.modes ?? { specs: [], denyPolicyVerified: false }
     return {
       providerId: profile.id,
       label: profile.label,
       models: profile.models.map((model) => model.id),
       efforts: [...profile.efforts],
-      permissionModes: offeredModes(profile, caps, modes).map((mode) => mode.id),
+      permissionModes: offered(record).map((mode) => mode.id),
       installed: installedNow(record),
       publicLaunch: profile.publicLaunch,
       answerChannel: answerChannelOf(caps, gate),
@@ -152,6 +171,12 @@ export function createSupplierCatalogue(deps: SupplierCatalogueDeps): SupplierCa
     capabilities(id) {
       const record = byId.get(id)
       return record === undefined ? structuredClone(FAIL_CLOSED_CAPABILITIES) : effective(record)
+    },
+    offeredMode(id, modeId) {
+      const record = byId.get(id)
+      return record === undefined
+        ? null
+        : (offered(record).find((mode) => mode.id === modeId) ?? null)
     }
   }
 }

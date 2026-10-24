@@ -171,6 +171,30 @@ describe('SupplierCatalogueQueries entry and capabilities (ISSUE-147)', () => {
     })
   })
 
+  it('[ADR-011, INV-42, US-LAUNCH-001.AC13] offeredMode answers the spec of a mode the entry offers now, and null for any other mode or supplier', async () => {
+    const gated = record('gated', {
+      permissionModes: ['ask-first', 'accept-edits'],
+      answerChannelGate: 'opencode-permissions'
+    })
+    const m = catalogueMachine([ALPHA, gated])
+    m.install('alpha-cli')
+    m.install('gated-cli')
+    await m.ids()
+
+    expect(m.catalogue.offeredMode('alpha', 'ask-first')).toEqual(spec('ask-first', 'interactive'))
+    expect(m.catalogue.offeredMode('alpha', 'plan-only')).toEqual(spec('plan-only', 'policy-only'))
+    // Listed by no profile, or by another supplier's only: never answered.
+    expect(m.catalogue.offeredMode('alpha', 'read-only')).toBeNull()
+    expect(m.catalogue.offeredMode('alpha', 'no-such-mode')).toBeNull()
+    expect(m.catalogue.offeredMode('no-such-supplier', 'ask-first')).toBeNull()
+
+    // Re-derived on every call: Ask first only while the gating integration is on-verified.
+    m.gate.set('opencode-permissions', 'off')
+    expect(m.catalogue.offeredMode('gated', 'ask-first')).toBeNull()
+    m.gate.set('opencode-permissions', 'on-verified')
+    expect(m.catalogue.offeredMode('gated', 'ask-first')).toEqual(spec('ask-first', 'interactive'))
+  })
+
   it('[NFR-OBS-04, FM-134] a changed CLI version is re-probed and recorded with version and date', async () => {
     const m = catalogueMachine([ALPHA])
     m.install('alpha-cli', { version: '1.0.0', mtimeMs: 1_000 })
