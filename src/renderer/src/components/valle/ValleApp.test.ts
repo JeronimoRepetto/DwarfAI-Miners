@@ -43,6 +43,7 @@ import AddPanel from '../launch/AddPanel.vue'
 import DwarfMessagePanel from '../message/DwarfMessagePanel.vue'
 import markSource from './CurrentMineMark.vue?raw'
 import counterSource from './NeedsYouCounter.vue?raw'
+import HistoryDrawer from './HistoryDrawer.vue'
 import ValleApp from './ValleApp.vue'
 import { valleBridgeOf } from './valleEntry'
 
@@ -1704,6 +1705,68 @@ describe('Valle in the mode lever, the reveal and reduced motion (ISSUE-311)', (
       expect(patches.filter((patch) => patch.kind === 'chat-view').map((p) => p.dwarfId)).toEqual([
         BORIN
       ])
+    } finally {
+      modeTransitionPart().dispose()
+    }
+  })
+})
+
+// APPENDED for ISSUE-293 (AMENDMENT-27, owner 2026-10-24): a run carrying the history slot (07 S24.13, machine 36).
+describe('Valle landing a run carrying the history slot (ISSUE-293)', () => {
+  it("[US-DLG-006.AC02, S24.13, S36.01] a run into the Work front carrying the history slot opens the mine's history drawer, with the carried chat pinned and its draft kept", async () => {
+    modeTransitionPart().dispose()
+    let heard: ((t: ModeTransition) => void) | null = null
+    try {
+      const { root } = mountValle({ preset: 'front', pins: [] }, undefined, {
+        getHostSnapshot: () =>
+          Promise.resolve(
+            snapshotPage(10, {
+              minesEverKnown: true,
+              mines: [mineWire(MORIA), mineWire(EREBOR)],
+              dwarfs: [dwarfWire(BORIN, MORIA), dwarfWire(DAIN, EREBOR)]
+            })
+          ) as never,
+        onModeTransition: (h) => {
+          heard = h as (t: ModeTransition) => void
+          return () => (heard = null)
+        },
+        getUiSession: () =>
+          Promise.resolve({
+            drafts: { [DAIN]: 'carried words' },
+            chatViews: {},
+            askPicks: {},
+            openChat: {},
+            currentMine: {},
+            valle: {}
+          }) as never
+      })
+      modeTransitionPart()
+      await flushPromises()
+      expect(root.find('[data-valle-drawer]').exists()).toBe(false)
+      heard!({
+        transitionId: 'run-history',
+        from: 'veta',
+        to: 'valle',
+        t0: Date.now(),
+        role: 'target',
+        chat: { dwarfId: DAIN, mineId: EREBOR },
+        slot: 'history'
+      })
+      await vi.waitFor(() => expect(root.find('[data-valle-drawer]').exists()).toBe(true), {
+        timeout: 3_000
+      })
+      expect(root.getComponent(HistoryDrawer).props('mineId')).toBe(EREBOR)
+      // The chat whose history was asked for is pinned in the deck, its draft kept for it.
+      await vi.waitFor(
+        () =>
+          expect(
+            (
+              root.get(`[data-valle-chat="${DAIN}"] .dm-composer textarea`)
+                .element as HTMLTextAreaElement
+            ).value
+          ).toBe('carried words'),
+        { timeout: 3_000 }
+      )
     } finally {
       modeTransitionPart().dispose()
     }

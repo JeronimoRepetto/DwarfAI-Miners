@@ -98,7 +98,11 @@ import { useValleMosaic, type ValleZoneKey } from '../../composables/useValleMos
 import { useValleNeedsYou } from '../../composables/useValleNeedsYou'
 import { useMapPage } from '../../composables/useMapPage'
 import { useMines } from '../../composables/useMines'
-import { modeTransitionPart, type CarriedChat } from '../../composables/useModeTransition'
+import {
+  modeTransitionPart,
+  type CarriedChat,
+  type CarriedSlot
+} from '../../composables/useModeTransition'
 import { useMinesPage } from '../../composables/useMinesPage'
 import { useVallePins } from '../../composables/useVallePins'
 import { useVallePreset } from '../../composables/useVallePreset'
@@ -483,8 +487,11 @@ const chat = computed((): { mineId: string; dwarfId: DwarfId } | null => {
  * made current, once the Host's facts are read and the pins restored; the run then restores its draft and view into
  * that chat, the one in focus. A dwarf no longer present is not pinned. Answers once it landed, or once the first read
  * of the Host's facts settled without them, so the hand-off waits for the chat's panel from then.
+ * AMENDED for AMENDMENT-27 (owner, 2026-10-24): a run carrying the history slot (07 S24.13) lands the chat the same
+ * way and then asks for its mine's history, as that chat's own mine-history request does: the drawer in the Work front
+ * (S36.01), the mine's zone in the Control room (S31.11). Its draft waits in the session store for the chat's panel.
  */
-function carriedIn(chat: CarriedChat): Promise<void> | void {
+function carriedIn(chat: CarriedChat, slot: CarriedSlot = 'chat'): Promise<void> | void {
   const land = (): void => {
     split.sendPin({
       kind: 'carried',
@@ -492,6 +499,7 @@ function carriedIn(chat: CarriedChat): Promise<void> | void {
       mineId: chat.mineId,
       present: model.dwarfs.value.some((dwarf) => dwarf.id === chat.dwarfId)
     })
+    if (slot === 'history') chatHistory(chat.mineId)
   }
   if (factsRead.value) {
     land()

@@ -211,7 +211,19 @@ async function revealDwarfChat(target: { mineId: string; dwarfId: string | null 
 // A run into the Panel carrying a chat (a risen Veta chat's "▢ Open in the Panel", 07 S24.12; UC-051) lands on that
 // dwarf's mine column with its chat open, before the run restores its draft, scroll anchor and caret (S27.01,
 // US-MSG-010.AC01): the reveal's own gesture, so a dwarf no longer on the board opens its mine alone (S9.08).
+// AMENDED for AMENDMENT-27 (owner, 2026-10-24): a run carrying the history slot (a mine-history request in the Veta
+// chat, S24.13; US-DLG-006.AC02) lands on that mine's history instead, on the carried dwarf's tab. Its draft and view
+// wait in the session store, and come back when that dwarf's chat opens here (useModeTransition).
 let stopHandoffArrival: (() => void) | undefined
+async function revealHistory(target: { mineId: string; dwarfId: string }): Promise<void> {
+  showMineFromNotification(target.mineId)
+  // The mine watch closes the history when the mine changes: the history opens after it ran, not before.
+  await nextTick()
+  if (viewState.mineId !== target.mineId) return
+  rememberDockOpener()
+  historyOpenOn.value = target.dwarfId
+  historyOpen.value = true
+}
 /* --- end of the ISSUE-293 block --------------------------------------------- */
 
 /* --- The mode lever and Mode at launch (ISSUE-294) — one block, appended ---- */
@@ -807,6 +819,8 @@ function selectDwarf(dwarf: Dwarf): void {
  * the mine goes — the same rule the message panel follows.
  */
 const historyOpen = ref(false)
+/** The dwarf whose tab the history opens on (S24.13, a hand-off's history slot); `null` for the first tab. */
+const historyOpenOn = ref<string | null>(null)
 
 /**
  * What the Host read for the open mine's history (A-19 from its message log, routed `host` by the cut-1 switch,
@@ -838,6 +852,7 @@ function openHistory(): void {
    */
   if (dockItem.value === null) rememberDockOpener()
   closeMessagePanel()
+  historyOpenOn.value = null
   historyOpen.value = true
 }
 
@@ -858,7 +873,10 @@ const dockItem = computed<DockItem | null>(() => {
   if (dock.launchOpen.value) return { kind: 'launch', key: `launch:${mine.id}` }
   const dwarf = dock.selectedDwarf.value
   if (dwarf !== undefined) return { kind: 'message', key: `message:${dwarf.id}` }
-  return historyOpen.value ? { kind: 'history', key: `history:${mine.id}` } : null
+  // Keyed by the tab it opens on as well (S24.13): a hand-off naming another dwarf is a fresh panel on that tab.
+  return historyOpen.value
+    ? { kind: 'history', key: `history:${mine.id}:${historyOpenOn.value ?? ''}` }
+    : null
 })
 
 /*
@@ -1095,7 +1113,9 @@ onMounted(() => {
   unlistenRevealDwarfChat = window.api.onRevealDwarfChat((target) => void revealDwarfChat(target))
   /* --- end of the ISSUE-114 block ------------------------------------------- */
   /* --- Chat hand-off landing (ISSUE-293) — one block, appended -------------- */
-  stopHandoffArrival = modeTransitionPart().onArrival((chat) => revealDwarfChat(chat))
+  stopHandoffArrival = modeTransitionPart().onArrival((chat, slot) =>
+    slot === 'history' ? revealHistory(chat) : revealDwarfChat(chat)
+  )
   /* --- end of the ISSUE-293 block ------------------------------------------- */
   /* --- Typography preferences (#370) — one block, appended ----------------- */
   // Adopts the stored faces, and listens to main's broadcast of them — which
@@ -1350,6 +1370,7 @@ const recoveryNames = computed(() => {
               :history="mineHistory"
               :path-refusal="historyPathRefusal"
               :failed="dwarfDelivery.failed"
+              :open-on="historyOpenOn ?? undefined"
               @close="closeHistory"
               @open-path="openHistoryPath"
               @open-link="openHistoryLink"

@@ -506,3 +506,79 @@ describe('useModeTransition — a carried chat heard before the window opens it 
     expect(restored).toEqual([`carried words ${JSON.stringify(VIEW)}`])
   })
 })
+
+// APPENDED for ISSUE-293 (AMENDMENT-27, owner 2026-10-24): the run carries the slot the target opens (07 S24.13).
+describe('useModeTransition — a run carrying the history slot (ISSUE-293, AMENDMENT-27)', () => {
+  const OTHER = '018f3a2e-7c4b-7d1e-9a5b-2f6c8d0e1a09' as DwarfId
+
+  it('[US-DLG-006.AC02, S24.13] a target carrying slot history opens the history for the carried chat without waiting for the chat, and the draft shows once that chat opens later', async () => {
+    const s = setup({
+      session: { drafts: { [DWARF]: 'carried text' }, chatViews: { [DWARF]: VIEW } }
+    })
+    s.transition.register({
+      open: () => null,
+      draft: () => '',
+      view: () => VIEW,
+      restore: () => void s.events.push('restore none')
+    })
+    s.transition.onArrival((chat, slot) => {
+      s.events.push(`open ${slot} ${chat.dwarfId === DWARF ? 'carried' : 'other'}`)
+    })
+    s.push({
+      role: 'target',
+      from: 'veta',
+      to: 'panel',
+      chat: { dwarfId: DWARF, mineId: MINE },
+      slot: 'history'
+    })
+    await flush()
+    // The history fills the slot: no chat registers, and the content shows at t0, not at the motion's end.
+    s.clock.advance(16)
+    await flush()
+    expect(s.events).toEqual(['open history carried', 'veil false', 'play 1'])
+
+    // Another dwarf's chat opening never takes the carried draft.
+    s.transition.register({
+      open: () => OTHER,
+      draft: () => '',
+      view: () => VIEW,
+      restore: () => void s.events.push('restore other')
+    })
+    // The person opens that dwarf's chat afterwards: the draft and view kept for it are restored there, once.
+    const restored: string[] = []
+    const carried: ChatHandoff = {
+      open: () => DWARF,
+      draft: () => '',
+      view: () => VIEW,
+      restore: (state) => void restored.push(`${state.draft} ${JSON.stringify(state.view)}`)
+    }
+    s.transition.register(carried)
+    await flush()
+    s.transition.register(carried)
+    await flush()
+    expect(restored).toEqual([`carried text ${JSON.stringify(VIEW)}`])
+    expect(s.events).not.toContain('restore other')
+  })
+
+  it('[US-DLG-006.AC02, S24.13] a transition with no slot opens the chat, and the slot reaches a window that hears the chat after landing', async () => {
+    const s = setup({ reduced: true })
+    const heard: string[] = []
+    let open: DwarfId | null = null
+    s.transition.register({
+      open: () => open,
+      draft: () => '',
+      view: () => VIEW,
+      restore: () => {}
+    })
+    s.transition.onArrival((chat, slot) => {
+      heard.push(`arrival ${slot}`)
+      open = chat.dwarfId
+    })
+    s.transition.onLanded((_chat, slot) => void heard.push(`landed ${slot}`))
+    s.push({ role: 'target', from: 'panel', to: 'veta', chat: { dwarfId: DWARF, mineId: MINE } })
+    await flush()
+    s.clock.advance(16)
+    await flush()
+    expect(heard).toEqual(['arrival chat', 'landed chat'])
+  })
+})

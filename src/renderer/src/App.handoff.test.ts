@@ -6,6 +6,7 @@ import { createFakeWindowApi } from '../../contracts/ipc/testing/fakeWindowApi'
 import { publishBoard, type TestBoard } from './testing/board'
 import { defaultDwarf } from './testing/factories'
 import App from './App.vue'
+import HistoryPanel from './components/history/HistoryPanel.vue'
 import DwarfMessagePanel from './components/message/DwarfMessagePanel.vue'
 import { useAgentLaunch } from './composables/useAgentLaunch'
 import { modeTransitionPart } from './composables/useModeTransition'
@@ -208,10 +209,11 @@ const WORKER = defaultDwarf({ id: 'dwarf-handoff-1', name: 'Borin', textDelivery
 const OTHER = defaultDwarf({ id: 'dwarf-handoff-2', name: 'Dain', textDelivery: 'terminal' })
 
 let listener: ((t: ModeTransition) => void) | null = null
+
 const mounted: VueWrapper[] = []
 
 /** The shell, with UI main's session store holding what Veta flushed for the worker. */
-async function mountShell(): Promise<VueWrapper> {
+async function mountShell(carried: string = WORKER.id): Promise<VueWrapper> {
   stubApi({
     board: { mines: [{ ...MINE, dwarfs: [WORKER, OTHER] }], tokensObserved: 0 },
     onModeTransition: (h: (t: ModeTransition) => void) => {
@@ -220,9 +222,9 @@ async function mountShell(): Promise<VueWrapper> {
     },
     modeTransitionDone: vi.fn(),
     getUiSession: vi.fn().mockResolvedValue({
-      drafts: { [WORKER.id]: 'typed in Veta' },
+      drafts: { [carried]: 'typed in Veta' },
       chatViews: {
-        [WORKER.id]: {
+        [carried]: {
           scrollAnchor: 'bottom',
           selection: { start: 2, end: 7, direction: 'backward' }
         }
@@ -242,8 +244,9 @@ async function mountShell(): Promise<VueWrapper> {
 }
 
 /** UI main tells the Panel it is the target of a run from Veta carrying `dwarfId`'s chat. */
-async function arriveWith(dwarfId: string): Promise<void> {
+async function arriveWith(dwarfId: string, slot?: ModeTransition['slot']): Promise<void> {
   listener!({
+    ...(slot === undefined ? {} : { slot }),
     transitionId: `run-${dwarfId}`,
     from: 'veta',
     to: 'panel',
@@ -302,5 +305,30 @@ describe('the Panel landing a chat handed off from Veta (ISSUE-293)', () => {
     await arriveWith('dwarf-handoff-gone')
     expect(useView().state.mineId).toBe(MINE.id)
     expect(wrapper.findComponent(DwarfMessagePanel).exists()).toBe(false)
+  })
+
+  // APPENDED for AMENDMENT-27 (owner, 2026-10-24): the run's slot.
+  it("[US-DLG-006.AC02, S24.13, S27.01] a run from Veta carrying the history slot lands the Panel on that mine's history on the carried dwarf's tab, and that dwarf's chat opened afterwards shows the draft", async () => {
+    // The carried dwarf is the second of the crew, so its tab is not the one the history opens on by default.
+    const wrapper = await mountShell(OTHER.id)
+    await arriveWith(OTHER.id, 'history')
+    expect(useView().state.mineId).toBe(MINE.id)
+    // The window slot holds the history, not the chat.
+    expect(wrapper.findComponent(DwarfMessagePanel).exists()).toBe(false)
+    const history = wrapper.findComponent(HistoryPanel)
+    expect(history.exists()).toBe(true)
+    // On this dwarf's tab (HistoryPanel.test.ts proves the tab an `openOn` names is the one open).
+    expect(history.props('openOn')).toBe(OTHER.id)
+
+    // The draft was kept for when that chat opens in the Panel.
+    await wrapper.get(`button.dm-dwarf[data-dwarf="${OTHER.id}"]`).trigger('click')
+    await flushPromises()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await flushPromises()
+    const panel = wrapper.findComponent(DwarfMessagePanel)
+    expect(panel.props('dwarf')).toMatchObject({ id: OTHER.id })
+    expect((panel.get('.dm-composer textarea').element as HTMLTextAreaElement).value).toBe(
+      'typed in Veta'
+    )
   })
 })
