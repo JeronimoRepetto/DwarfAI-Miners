@@ -28,11 +28,13 @@ import { declareMine } from '../support/veta.ts'
  * L9 (Valle QA VQA-01, VQA-11; a Valle package gap resolved in development, EPIC-20; US-VALLE-007.AC08): the Control
  * room's pinned chat stack with many pins, fourteen stub Claude dwarfs pinned, the way two dives pin two whole crews, in
  * the Valle window at the CI size of 1024 × 768. The design draws the stack with three pins and is silent on more
- * (`DS` organisms/chat-stack); the rule decided in development: the open chat keeps its full space and is never
- * covered, the collapsed lines above and below it share what is left and scroll inside their own regions, nothing in the
- * pinned column draws over the needs-you bar, and every line stays reachable and clickable by scrolling. The focused
- * chat carries no line of its own above its MessagePanel (`DS/prototype/organisms/chat-stack/chat-stack.js` render).
- * Every check reads the laid-out page: what the pointer would hit (`elementFromPoint`) and the boxes it draws.
+ * (`DS` organisms/chat-stack). REWORKED for the owner check of 2026-10-24, which rejected the separate scroll regions
+ * above and below the open chat (three scrollbars): the lines and the open chat are one list that scrolls as one,
+ * carrying the open chat with it, so the pinned column shows two scrollbars, the list's and the open chat's log; opening
+ * a chat brings it into view; the open chat is never covered, nothing in the pinned column draws over the needs-you bar,
+ * and every line stays reachable and clickable by scrolling. The focused chat carries no line of its own above its
+ * MessagePanel (`DS/prototype/organisms/chat-stack/chat-stack.js` render). Every check reads the laid-out page: what the
+ * pointer would hit (`elementFromPoint`) and the boxes it draws.
  */
 
 test.describe.configure({ timeout: 600_000 })
@@ -80,6 +82,10 @@ interface StackFacts {
   barHit: boolean
   /** The open chat's box, and every visible collapsed line's box clipped by its scroll region. */
   overlaps: string[]
+  /** Whether the open chat lies inside the list's view: wholly, or from its head down when it is taller. */
+  openInView: boolean
+  /** What shows a scrollbar in the pinned column (overflowing, overflow-y auto or scroll), by its class. */
+  scrollers: string[]
 }
 
 function stackFacts(valle: Page): Promise<StackFacts> {
@@ -119,7 +125,23 @@ function stackFacts(valle: Page): Promise<StackFacts> {
         if (top < o.bottom && end > o.top) overlaps.push(line.getAttribute('data-pin'))
       }
     }
+    const list = stack.querySelector('.dm-cstack__list').getBoundingClientRect()
+    let openInView = false
+    if (open !== null) {
+      const o = open.getBoundingClientRect()
+      openInView = o.top >= list.top - 1 && (o.bottom <= list.bottom + 1 || Math.abs(o.top - list.top) <= 1)
+    }
+    const scrollers = []
+    for (const el of document.querySelectorAll('.dm-valle__chats *')) {
+      if (el.closest('.dm-vghosts') !== null) continue
+      const o = getComputedStyle(el).overflowY
+      if ((o === 'auto' || o === 'scroll') && el.scrollHeight > el.clientHeight + 1) {
+        scrollers.push(el.classList.contains('dm-cstack__list') ? 'list' : el.classList.contains('dm-msg__log') ? 'log' : el.className || el.tagName)
+      }
+    }
     return {
+      openInView,
+      scrollers,
       open: open === null ? null : open.getAttribute('data-pin'),
       footHit: hits(open === null ? null : open.querySelector('.dm-qcard, .dm-composer')) === true,
       card: open !== null && open.querySelector('.dm-qcard') !== null,
@@ -132,29 +154,60 @@ function stackFacts(valle: Page): Promise<StackFacts> {
   })()`) as Promise<StackFacts>
 }
 
-/** Every fact of the rule at once, so one failure names all that broke. */
-async function expectStackHolds(valle: Page, open: string, card: boolean): Promise<void> {
+/**
+ * Waits until the stack's opening has played (`--dur-panel`): its scripted animations, never the CSS loops a portrait or
+ * an activity line runs inside it.
+ */
+async function stackStill(valle: Page): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        valle.evaluate(
+          `document.getAnimations().filter((a) => !(a instanceof CSSAnimation) && !(a instanceof CSSTransition) && a.playState === 'running' && a.effect?.target?.closest?.('.dm-cstack')).length`
+        ),
+      { timeout: 5_000, message: 'the stack settles' }
+    )
+    .toBe(0)
+}
+
+/**
+ * Every fact of the rule at once, so one failure names all that broke. Only the list and the open chat's log ever show a
+ * scrollbar: the list always does with fourteen pins, the log when its conversation overflows. `opened`: the chat was
+ * just opened by a click, so it is in the list's view.
+ */
+async function expectStackHolds(
+  valle: Page,
+  open: string,
+  card: boolean,
+  opened: boolean
+): Promise<StackFacts> {
+  await stackStill(valle)
   const facts = await stackFacts(valle)
   expect(
     {
       open: facts.open,
+      openInView: opened ? facts.openInView : true,
       footHit: facts.footHit,
       card: facts.card,
       linesInOpen: facts.linesInOpen,
       stackAboveBar: facts.stackBottom <= facts.barTop,
       barHit: facts.barHit,
-      overlaps: facts.overlaps
+      overlaps: facts.overlaps,
+      scrollers: facts.scrollers
     },
     JSON.stringify(facts)
   ).toEqual({
     open,
+    openInView: true,
     footHit: true,
     card,
     linesInOpen: 0,
     stackAboveBar: true,
     barHit: true,
-    overlaps: []
+    overlaps: [],
+    scrollers: facts.scrollers.includes('log') ? ['list', 'log'] : ['list']
   })
+  return facts
 }
 
 test.describe("the Control room's pinned chat stack with many pins (VQA-01, VQA-11)", () => {
@@ -168,7 +221,7 @@ test.describe("the Control room's pinned chat stack with many pins (VQA-01, VQA-
     profile = undefined
   })
 
-  test('[US-VALLE-007.AC08] with fourteen pins at 1024 × 768 the open chat is never covered, every line scrolls into reach and opens on a click, and the stack stays above the needs-you bar', async () => {
+  test('[US-VALLE-007.AC08] with fourteen pins at 1024 × 768 one list scrolls the lines and the open chat together, opening a chat brings it into view, the open chat is never covered, every line opens on a click, and the stack stays above the needs-you bar', async () => {
     profile = createIsolatedProfile()
     const owned = profile
     const world = createClaudeStreamWorld(owned)
@@ -219,9 +272,10 @@ test.describe("the Control room's pinned chat stack with many pins (VQA-01, VQA-
     // As Valle opens: the stack holds before anything is pressed.
     await valle.screenshot({ path: test.info().outputPath('stack-1024x768-14-pins-opened.png') })
     const restored = (await open.getAttribute('data-pin'))!
-    await expectStackHolds(valle, restored, restored === asking)
+    await expectStackHolds(valle, restored, restored === asking, false)
 
-    // The middle line opens on a click: lines lie above and below the open chat, its question card shown.
+    // The middle line opens on a click: lines lie above and below the open chat, its question card shown. Two
+    // scrollbars, the list's and the open chat's log, never one per side of it.
     const middle = stack.locator(`.dm-cstack__row[data-pin="${asking}"]`)
     await middle.scrollIntoViewIfNeeded()
     await middle.click()
@@ -229,7 +283,26 @@ test.describe("the Control room's pinned chat stack with many pins (VQA-01, VQA-
     await expect(open.locator('.dm-qcard')).toBeVisible({ timeout: 30_000 })
     await valleSettled(valle)
     await valle.screenshot({ path: test.info().outputPath('stack-1024x768-14-pins.png') })
-    await expectStackHolds(valle, asking, true)
+    const middleFacts = await expectStackHolds(valle, asking, true, true)
+    expect(middleFacts.scrollers, 'two scrollbars: the list and the open chat log').toEqual([
+      'list',
+      'log'
+    ])
+
+    // One scroll: scrolling the list carries the open chat with it, by as much as the list moved.
+    const carried = (await valle.evaluate(`(() => {
+      const list = document.querySelector('.dm-valle__body .dm-cstack__list')
+      const open = list.querySelector('.dm-cstack__open')
+      const top = open.getBoundingClientRect().top
+      const from = list.scrollTop
+      list.scrollTop = from + 120
+      const moved = list.scrollTop - from
+      const shift = top - open.getBoundingClientRect().top
+      list.scrollTop = from
+      return { moved, shift }
+    })()`)) as { moved: number; shift: number }
+    expect(carried.moved, JSON.stringify(carried)).toBeGreaterThan(0)
+    expect(carried.shift, JSON.stringify(carried)).toBe(carried.moved)
 
     // The last line, under the open chat, scrolls into reach and opens on a real click: Playwright's click fails when
     // anything else would take the pointer at that point.
@@ -239,7 +312,7 @@ test.describe("the Control room's pinned chat stack with many pins (VQA-01, VQA-
     await lastLine.click()
     await expect(open).toHaveAttribute('data-pin', last)
     await valleSettled(valle)
-    await expectStackHolds(valle, last, false)
+    await expectStackHolds(valle, last, false, true)
 
     // And the first line, now with every other line above the open chat.
     const first = dwarfIds[0]!
@@ -248,6 +321,6 @@ test.describe("the Control room's pinned chat stack with many pins (VQA-01, VQA-
     await firstLine.click()
     await expect(open).toHaveAttribute('data-pin', first)
     await valleSettled(valle)
-    await expectStackHolds(valle, first, false)
+    await expectStackHolds(valle, first, false, true)
   })
 })
