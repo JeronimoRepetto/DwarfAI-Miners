@@ -74,21 +74,21 @@ describe('crewPills', () => {
     expect(crewPills([asking, asking])).toEqual([{ text: '2 need you', tone: 'needs', ask: true }])
   })
 
-  // VQA-04: the Host's own status rides on the board dwarf (hostStatus); today's `status` folds asking,
+  // QA finding VQA-04 (#1513): the Host's own status rides on the board dwarf (hostStatus); today's `status` folds asking,
   // idle and asleep into one `waiting`, so the pills read the same word the scene draws.
-  it('[VQA-04] counts an asking Host dwarf as needing you, not asleep', () => {
+  it('[US-MINE-003.AC06, BR-12] counts an asking Host dwarf as needing you, not asleep', () => {
     const asking = dwarf({ status: 'waiting', hostStatus: 'asking' } as Partial<Dwarf>)
     expect(crewPills([asking])).toEqual([{ text: '1 needs you', tone: 'needs', ask: true }])
   })
 
-  it('[VQA-04] counts an idle Host dwarf as idle, not asleep, and an asleep one as asleep', () => {
+  it('[US-OBS-004.AC07] counts an idle Host dwarf as idle, not asleep, and an asleep one as asleep', () => {
     const idle = dwarf({ status: 'waiting', hostStatus: 'idle' } as Partial<Dwarf>)
     const asleep = dwarf({ status: 'waiting', hostStatus: 'asleep' } as Partial<Dwarf>)
     expect(crewPills([idle])).toEqual([{ text: 'idle' }])
     expect(crewPills([idle, asleep])).toEqual([{ text: '1 asleep' }])
   })
 
-  it('[VQA-04] marks the card as needing you for a Host ask, and counts it', () => {
+  it('[BR-12, US-MINES-003.AC04] marks the card as needing you for a Host ask, and counts it', () => {
     const asking = dwarf({ status: 'waiting', hostStatus: 'asking' } as Partial<Dwarf>)
     const view = mineCardView(row({}), board([asking, dwarf({ status: 'working' })]))
     expect(view).toMatchObject({ needs: true, needsCount: 1 })
