@@ -31,7 +31,6 @@ import {
 } from '../../lib/launch/launchState'
 import type { EffortPicker, ModelPicker } from '../../lib/launch/modelTuning'
 import type { ProviderChip } from '../../lib/launch/providerChips'
-import { isCodexPermissionMode, isHeldPermissionMode } from '../../types'
 import ActionButton from '../controls/ActionButton.vue'
 import ChoiceChip from '../controls/ChoiceChip.vue'
 import InputField from '../controls/InputField.vue'
@@ -80,7 +79,10 @@ const props = withDefaults(
     modelPicker: ModelPicker
     /** What the effort select should draw — hidden when the chosen provider has none. */
     effortPicker: EffortPicker
-    /** Whether the Permissions select holds values — held Claude and, since #635, Codex. */
+    /**
+     * Whether the Permissions select holds values: the chosen supplier's entry offers a mode (AMENDED for ISSUE-228,
+     * was: held Claude and, since #635, Codex). The values are the chosen chip's `permissionModes`.
+     */
     permissionsVisible: boolean
     /** The Jev option (#509): availability, the person's toggle, and where a routed launch is. */
     jev: JevState
@@ -148,7 +150,15 @@ const detached = computed(() => props.phase === 'started-detached')
 /** Both end states hold the panel as it is, with nothing left to press but Close. */
 const launched = computed(() => spawning.value || detached.value)
 
-const chosen = computed(() => props.chips.find((chip) => chip.state === 'selected')?.choice ?? null)
+const chosenChip = computed(() => props.chips.find((chip) => chip.state === 'selected'))
+const chosen = computed(() => chosenChip.value?.choice ?? null)
+/**
+ * The Permissions list: the modes the chosen supplier's entry offers now (14 §3.6 `offeredModes`; ADR-011 item 1),
+ * carried on its chip, in offer order. None while the launch model says the select holds no values.
+ */
+const offeredModes = computed(() =>
+  props.permissionsVisible ? (chosenChip.value?.permissionModes ?? []) : []
+)
 const showCommand = computed(() => chosen.value === OTHER_CHOICE)
 const jevOn = computed(() => props.jev.availability === 'ready' && props.jev.enabled)
 
@@ -210,7 +220,7 @@ const selects = computed(() =>
     jevOn: jevOn.value,
     modelPicker: props.modelPicker,
     effortPicker: props.effortPicker,
-    permissionsVisible: props.permissionsVisible,
+    offeredModes: offeredModes.value,
     values: {
       model: props.model ?? null,
       effort: props.effort ?? null,
@@ -300,10 +310,8 @@ async function pickManually(): Promise<void> {
 function pick(label: 'Model' | 'Effort' | 'Permissions', value: string): void {
   if (label === 'Model') emit('model', value)
   else if (label === 'Effort') emit('effort', value)
-  // Held Claude's modes or Codex's (#635); the list the select drew is the chosen supplier's own.
-  else if (isHeldPermissionMode(value) || isCodexPermissionMode(value)) {
-    emit('permissionMode', value)
-  }
+  // A mode the chosen supplier's entry offers (ADR-011 item 1): the list the select drew is that entry's own.
+  else if (offeredModes.value.includes(value)) emit('permissionMode', value)
 }
 
 /** The no-key reason, in the words the Jev fallback line already uses for it (#509). */

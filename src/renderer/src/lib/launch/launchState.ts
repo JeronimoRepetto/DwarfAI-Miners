@@ -27,10 +27,11 @@ import {
 } from '../../types'
 
 /**
- * A mode the row's Permissions select can hold (#635): held Claude's or Codex's. Renderer-local on
- * purpose — no request carries this union; each channel carries its own half.
+ * A mode the row's Permissions select can hold: one of the chosen supplier's entry's offered mode ids (14 §3.6
+ * `offeredModes`; ADR-011 item 1), as A-35 carries it (`LaunchParams.permissionMode`). AMENDED for ISSUE-228 (was:
+ * held Claude's or Codex's own modes, #635): every launch is the Host's since 4b, and the Host takes only an offered id.
  */
-export type LaunchPermissionMode = HeldPermissionMode | CodexPermissionMode
+export type LaunchPermissionMode = string
 
 /**
  * The Add Panel's gates, as `screens/launch.md` states them (#86).
@@ -1079,7 +1080,8 @@ export function launchParamsOf(
   state: LaunchState,
   mineId: MineId,
   requestId: string,
-  retryOf?: string
+  retryOf?: string,
+  offeredModes: readonly string[] = []
 ): LaunchParams | null {
   if (state.choice === OTHER_CHOICE) return null
   const jev = jevChooses(state)
@@ -1091,13 +1093,27 @@ export function launchParamsOf(
         ? { kind: 'jev' }
         : { kind: 'supplier', providerId: state.choice },
     ...launchTuning(state),
-    ...(state.permissionMode === null ? {} : { permissionMode: state.permissionMode }),
+    ...permissionModeOf(state, jev ? [] : offeredModes),
     prompt: launchPrompt(state),
     jevOn: jev,
     jevAutoAccept: state.jev.autoAccept,
     ...(retryOf === undefined ? {} : { retryOf: retryOf as NonNullable<LaunchParams['retryOf']> }),
     requestId
   }
+}
+
+/**
+ * The permission mode a supplier launch carries (ADR-011 item 1; US-LAUNCH-001.AC04): the one the select holds while
+ * the entry offers it, else the first offered one, which is what the select shows; none when the entry offers none (a
+ * supplier without an answer channel and no other mode, US-LAUNCH-001.AC14) or the launch is Jev's (no supplier).
+ */
+function permissionModeOf(
+  state: LaunchState,
+  offeredModes: readonly string[]
+): { permissionMode?: string } {
+  const held = state.permissionMode
+  const mode = held !== null && offeredModes.includes(held) ? held : offeredModes[0]
+  return mode === undefined ? {} : { permissionMode: mode }
 }
 
 /**

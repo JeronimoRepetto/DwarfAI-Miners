@@ -67,6 +67,25 @@ describe('which chips the Add Panel draws', () => {
   })
 })
 
+// ADDED for ISSUE-228 (ADR-011 item 1; 14 §3.6 `offeredModes`): what the Permissions select lists once a chip is chosen.
+describe('the permission modes a chip carries', () => {
+  it('[US-LAUNCH-001.AC07, ADR-011] each supplier chip carries its own entry’s offered modes, in offer order, and Other… none', () => {
+    const chips = providerChips(
+      [
+        { ...claude, offeredModes: ['ask-first'] },
+        { ...offeredCodex, offeredModes: [] }
+      ],
+      'claude'
+    )
+
+    expect(chips.map((chip) => [chip.choice, chip.permissionModes])).toEqual([
+      ['claude', ['ask-first']],
+      ['codex', []],
+      [OTHER_CHOICE, undefined]
+    ])
+  })
+})
+
 describe('the three chip states the design specifies', () => {
   it('draws every chip in its default state before any choice', () => {
     expect(providerChips([claude, offeredCodex], null).map((chip) => chip.state)).toEqual([

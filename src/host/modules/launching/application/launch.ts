@@ -18,8 +18,8 @@
 // - detect through the first driver of the registry (ADR-009 D4–D5): none, or not installed, is
 //   `not-installed` (S5.16);
 // - the `DriverLaunchRequest`: the prompt as the first turn (stdin or protocol, never argv), the
-//   spawn tag `v1:<installId>:<launchId>:<hostEpoch>` (ADR-015 item 2), no permission mode (no
-//   catalog entry lists one yet, so any requested mode is refused above), no delegation (its
+//   spawn tag `v1:<installId>:<launchId>:<hostEpoch>` (ADR-015 item 2), the `PermissionModeSpec` of
+//   the requested mode resolved at acceptance (none requested: null), no delegation (its
 //   `issueFor` is EPIC-12's), and `onSpawned`, which commits the `processes` row and `launches`
 //   `spawned` in one transaction right after the OS spawn, before the handshake wait (16 §2.2;
 //   S5.18, S4.01; CH-11);
@@ -91,6 +91,7 @@ import {
   type DriverSession,
   type DriverTransport,
   type InstalledProvider,
+  type PermissionModeSpec,
   type ProviderDriver,
   type SessionBindings,
   type SupplierCatalogueQueries
@@ -158,7 +159,6 @@ export type LaunchRefusal =
   | 'mine-not-enterable' // INV-50: a mine that is missing, removed or unenterable
   | 'unknown-supplier' // the provider is not in this build's catalogue
   | 'mode-not-offered' // ADR-011 item 1: the mode is not among the entry's offered modes now
-  | 'mode-not-forwardable' // offered, but its PermissionModeSpec cannot reach the driver yet (package gap)
   | 'not-retryable' // INV-54: `retryOf` names no failed launch whose cause allows Retry
   | 'jev-not-built' // the Jev path is ISSUE-164's: hidden until built (21 §1 item 8)
 
@@ -197,6 +197,12 @@ export interface LaunchingDeps {
      */
     launchDriver?: (id: ProviderId) => Promise<ProviderDriver | undefined>
     catalogue: Pick<SupplierCatalogueQueries, 'entry'>
+    /**
+     * The `PermissionModeSpec` of a mode the supplier's entry offers now, or null (`Suppliers.offeredMode`;
+     * ADR-011 item 1): the entry lists mode ids only, and the driver needs the spec (15 §1.2). Absent (a
+     * composition that forwards no mode), every requested mode is refused `mode-not-offered` (fail closed).
+     */
+    offeredMode?: (id: ProviderId, modeId: string) => PermissionModeSpec | null
     bindings: SessionBindings
   }
   /** Calls along the launching → mines edge: the target mine and its folder, the session's cwd. */
@@ -233,6 +239,11 @@ interface Accepted {
   fallback?: JevFallbackReason
   /** An "Other…" launch: the typed command as parsed at acceptance (launchCustom.ts). */
   custom?: CustomCommandCheck
+  /**
+   * The spec of the request's permission mode, resolved at acceptance (ADR-011 item 1); absent or null when the
+   * request names none. "Other…" never has one (15 §4.11: `stdio-raw` launches with no mode).
+   */
+  permissionMode?: PermissionModeSpec | null
 }
 
 /** What a settlement runs: the driver and its install, or the failure it settles with instead. */
@@ -260,16 +271,7 @@ export class LaunchUseCase {
     const providerId = input.way.kind === 'supplier' ? input.way.providerId : null
     const entry = providerId === null ? null : this.deps.suppliers.catalogue.entry(providerId)
     if (providerId !== null && entry === null) throw new LaunchRefusedError('unknown-supplier')
-    if (input.permissionMode !== undefined) {
-      // Offered or not, a mode cannot reach the driver yet: suppliers exposes the offered mode ids,
-      // never their `PermissionModeSpec`, which `DriverLaunchRequest.permissionMode` needs (15 §1.2;
-      // package gap). Refused rather than accepted and dropped.
-      throw new LaunchRefusedError(
-        entry?.permissionModes.includes(input.permissionMode) === true
-          ? 'mode-not-forwardable'
-          : 'mode-not-offered'
-      )
-    }
+    const permissionMode = this.offeredModeSpec(providerId, input.permissionMode)
     this.checkRetry(input.retryOf)
     const worker: WorkerDelegation | undefined =
       delegation === undefined
@@ -298,6 +300,7 @@ export class LaunchUseCase {
       providerId: providerId ?? ('' as ProviderId),
       cwd,
       supplierLabel: entry?.label ?? NO_SUPPLIER_LABEL,
+      permissionMode,
       ...(worker === undefined ? {} : { delegation: worker }),
       ...(delegation?.fallback === undefined ? {} : { fallback: delegation.fallback })
     })
@@ -332,6 +335,24 @@ export class LaunchUseCase {
       supplierLabel: CUSTOM_COMMAND_LABEL,
       custom
     })
+  }
+
+  /**
+   * ADR-011 item 1: the spec of the requested mode, re-derived at send time; null when none was requested. A mode the
+   * supplier's entry does not offer now, a mode on a launch that names no supplier, and a mode whose spec the catalogue
+   * does not answer are refused `mode-not-offered`: never accepted and dropped, never forwarded unchecked.
+   */
+  private offeredModeSpec(
+    providerId: ProviderId | null,
+    modeId: string | undefined
+  ): PermissionModeSpec | null {
+    if (modeId === undefined) return null
+    const offered =
+      providerId !== null &&
+      this.deps.suppliers.catalogue.entry(providerId)?.permissionModes.includes(modeId) === true
+    const spec = offered ? (this.deps.suppliers.offeredMode?.(providerId, modeId) ?? null) : null
+    if (spec === null) throw new LaunchRefusedError('mode-not-offered')
+    return spec
   }
 
   /** INV-50: the mine's folder, the session's cwd; a missing or unenterable mine is refused. */
@@ -442,7 +463,7 @@ export class LaunchUseCase {
         cwd: facts.cwd,
         prompt: request.prompt,
         ...runsWith(launch),
-        permissionMode: null,
+        permissionMode: facts.permissionMode ?? null,
         delegation: null,
         spawnTag: spawnTagFor(this.deps.installId, launch.id, launch.hostEpoch),
         onSpawned: async (identity) => {

@@ -7,12 +7,6 @@
 import { providerLabel } from '../dwarf/dwarfTip'
 import type { EffortPicker, ModelPicker } from './modelTuning'
 import { OTHER_CHOICE, type LaunchChoice, type LaunchPhase } from './launchState'
-import {
-  CODEX_PERMISSION_MODES,
-  HELD_PERMISSION_MODES,
-  type CodexPermissionMode,
-  type HeldPermissionMode
-} from '../../types'
 import type { LaunchPermissionMode } from './launchState'
 
 export interface AddPanelWhy {
@@ -63,45 +57,15 @@ export function addPanelWhy(state: {
 }
 
 /*
- * The held session's permission modes in the design's words where it has them (sample-data.md,
- * providers: "Ask first", "Accept edits", "Plan only" for Claude). The Agent SDK's other two modes
- * have no word in the design, so they keep the SDK's own, spelled for reading.
+ * The permission modes in the design's words (anatomy.md, the Add panel: "Permissions: Ask first"), by the Host's mode
+ * id (ADR-011 item 1: `ask-first` is the interactive mode's id). v1 ships this one mode (owner decision 2026-10-24);
+ * a mode the design draws later gets its word here then.
  */
-const PERMISSION_LABEL: Record<HeldPermissionMode, string> = {
-  default: 'Ask first',
-  acceptEdits: 'Accept edits',
-  plan: 'Plan only',
-  dontAsk: "Don't ask",
-  auto: 'Auto'
-}
+const PERMISSION_MODE_LABEL: Readonly<Record<string, string>> = { 'ask-first': 'Ask first' }
 
-export function permissionModeLabel(mode: HeldPermissionMode): string {
-  return PERMISSION_LABEL[mode]
-}
-
-/*
- * Codex's permission modes in the design's words (#635, PO decision 2026-09-28), in the design's
- * order, so the first — the one a select shows with nothing held — is the mode that adds no flag.
- * It is "Codex default", never "Ask first" (MESSAGE-QUESTIONS 24): a detached `codex exec` offers
- * no approval policy (codex-cli 0.153.4, `codex exec --help`), so it can ask no one, and a label
- * never claims a behaviour the launch cannot deliver. "Ask first" stays held Claude's, whose
- * launch can ask. Which flags each id means is main's table (codexPermissions.ts), not this file's.
- */
-const CODEX_PERMISSION_LABEL: Record<CodexPermissionMode, string> = {
-  default: 'Codex default',
-  'workspace-write': 'Auto in workspace',
-  'read-only': 'Read only'
-}
-
-/**
- * The Permissions select's entries for one supplier: Codex's own modes for Codex, the held
- * session's for everything else the select is shown for (held Claude). Per supplier because the
- * vocabularies differ — see PERMISSION_MODE_PROVIDERS.
- */
-export function permissionModeOptions(choice: LaunchChoice): { value: string; label: string }[] {
-  return choice === 'codex'
-    ? CODEX_PERMISSION_MODES.map((mode) => ({ value: mode, label: CODEX_PERMISSION_LABEL[mode] }))
-    : HELD_PERMISSION_MODES.map((mode) => ({ value: mode, label: PERMISSION_LABEL[mode] }))
+/** A mode's name on the select: the design's word, or the mode id itself when the design has none (never invented). */
+export function permissionModeLabel(mode: string): string {
+  return PERMISSION_MODE_LABEL[mode] ?? mode
 }
 
 /** A supplier chip's name: the tool's own, as people know it, and "Other…" for a command. */
@@ -138,7 +102,8 @@ export function addPanelSelects(state: {
   jevOn: boolean
   modelPicker: ModelPicker
   effortPicker: EffortPicker
-  permissionsVisible: boolean
+  /** The chosen supplier's entry's offered permission modes (14 §3.6 `offeredModes`), in offer order. */
+  offeredModes: readonly string[]
   values?: AddPanelSelectValues
 }): AddPanelSelect[] {
   const LABELS = ['Model', 'Effort', 'Permissions'] as const
@@ -186,7 +151,7 @@ export function addPanelSelects(state: {
     ),
     listed(
       'Permissions',
-      state.permissionsVisible ? permissionModeOptions(state.choice) : [],
+      state.offeredModes.map((mode) => ({ value: mode, label: permissionModeLabel(mode) })),
       state.values?.permissionMode
     )
   ]

@@ -42,7 +42,12 @@ import {
   type SessionReleases
 } from './application/sessionChannels'
 import type { SuppliersEvent } from './domain/events'
-import { recordsForBuild, type CatalogRecord, type DriverTransport } from './domain/profile'
+import {
+  recordsForBuild,
+  type CatalogRecord,
+  type DriverTransport,
+  type PermissionModeSpec
+} from './domain/profile'
 import type { CapabilityRecordStore } from './ports/capabilityRecordStore'
 import type { DriverRegistry } from './ports/driverRegistry'
 import type { ProviderDriver, SessionRef } from './ports/providerDriver'
@@ -215,6 +220,12 @@ export interface SuppliersDeps {
 
 export interface Suppliers {
   readonly catalogue: SupplierCatalogueQueries
+  /**
+   * The `PermissionModeSpec` of a mode the provider's entry offers now, or null (ADR-011 item 1): what a
+   * launch hands its driver (`DriverLaunchRequest.permissionMode`, 15 §1.2), since the entry lists mode
+   * ids only. Re-derived on every call, like `catalogue.entry`.
+   */
+  readonly offeredMode: (id: ProviderId, modeId: string) => PermissionModeSpec | null
   readonly sessions: SessionChannels
   /** Launching binds each session to its dwarf (ADR-015 item 7); events wait for it. */
   readonly bindings: SessionBindings
@@ -282,15 +293,17 @@ export function createSuppliers(deps: SuppliersDeps): Suppliers {
     ids: deps.ids,
     hostEpoch: deps.hostEpoch
   })
+  const catalogue = createSupplierCatalogue({
+    records,
+    publicBuild: deps.publicBuild,
+    detection,
+    probing,
+    gate: deps.integrationGate,
+    scheduler: deps.scheduler
+  })
   return {
-    catalogue: createSupplierCatalogue({
-      records,
-      publicBuild: deps.publicBuild,
-      detection,
-      probing,
-      gate: deps.integrationGate,
-      scheduler: deps.scheduler
-    }),
+    catalogue,
+    offeredMode: (id, modeId) => catalogue.offeredMode(id, modeId),
     sessions: tracked.channels,
     bindings: tracked.bindings,
     releases: tracked.releases,

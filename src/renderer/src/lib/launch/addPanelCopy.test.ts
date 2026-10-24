@@ -78,7 +78,7 @@ describe('addPanelSelects', () => {
       jevOn: false,
       modelPicker: { visible: false, models: [], disabled: true, note: null },
       effortPicker: { visible: false, efforts: [] },
-      permissionsVisible: false
+      offeredModes: []
     })
     expect(row.map((select) => [select.label, select.disabled, select.options])).toEqual([
       ['Model', true, [{ value: '', label: 'Model: Choose a supplier' }]],
@@ -94,7 +94,7 @@ describe('addPanelSelects', () => {
       jevOn: true,
       modelPicker: hidden,
       effortPicker: { visible: false, efforts: [] },
-      permissionsVisible: false
+      offeredModes: []
     })
     expect(jev.map((select) => select.options[0]!.label)).toEqual([
       'Model: Jev decides',
@@ -106,7 +106,7 @@ describe('addPanelSelects', () => {
       jevOn: false,
       modelPicker: hidden,
       effortPicker: { visible: false, efforts: [] },
-      permissionsVisible: false
+      offeredModes: []
     })
     expect(custom.map((select) => [select.options[0]!.label, select.disabled])).toEqual([
       ['Model: Custom', true],
@@ -121,7 +121,7 @@ describe('addPanelSelects', () => {
       jevOn: false,
       modelPicker: picker,
       effortPicker: efforts,
-      permissionsVisible: true
+      offeredModes: ['ask-first']
     })
     expect(model!.options).toEqual([
       { value: 'opus', label: 'Model: opus' },
@@ -129,7 +129,9 @@ describe('addPanelSelects', () => {
     ])
     expect(model!.disabled).toBe(false)
     expect(effort!.options.map((option) => option.label)).toEqual(['Effort: low', 'Effort: high'])
-    expect(permissions!.options[0]).toEqual({ value: 'default', label: 'Permissions: Ask first' })
+    // AMENDED for ISSUE-228 (was: `{ value: 'default', … }`, held Claude's SDK mode): the select lists the entry's
+    // offered mode ids (14 §3.6 `offeredModes`; ADR-011 item 1), the one v1 ships being `ask-first`.
+    expect(permissions!.options).toEqual([{ value: 'ask-first', label: 'Permissions: Ask first' }])
   })
 
   it('draws a select the supplier has no values for disabled, on the session’s own default', () => {
@@ -138,7 +140,7 @@ describe('addPanelSelects', () => {
       jevOn: false,
       modelPicker: picker,
       effortPicker: { visible: false, efforts: [] },
-      permissionsVisible: false
+      offeredModes: []
     })
     expect([effort!.disabled, effort!.options[0]!.label]).toEqual([true, 'Effort: Default'])
     expect([permissions!.disabled, permissions!.options[0]!.label]).toEqual([
@@ -158,13 +160,14 @@ describe('addPanelSelects', () => {
       jevOn: true,
       modelPicker: picker,
       effortPicker: efforts,
-      permissionsVisible: true
+      offeredModes: ['ask-first']
     }
     const held = addPanelSelects({
       ...base,
-      values: { model: 'sonnet', effort: 'high', permissionMode: 'plan' }
+      // AMENDED for ISSUE-228 (was: `'plan'`, a held Claude mode no entry offers): the held mode is an offered id.
+      values: { model: 'sonnet', effort: 'high', permissionMode: 'ask-first' }
     })
-    expect(held.map((select) => select.value)).toEqual(['sonnet', 'high', 'plan'])
+    expect(held.map((select) => select.value)).toEqual(['sonnet', 'high', 'ask-first'])
 
     const none = addPanelSelects({
       ...base,
@@ -181,10 +184,12 @@ describe('the supplier and permission names', () => {
     expect(supplierLabel(OTHER_CHOICE)).toBe('Other…')
   })
 
-  it('names the held session’s permission modes in the design’s words where it has them', () => {
-    expect(permissionModeLabel('default')).toBe('Ask first')
-    expect(permissionModeLabel('acceptEdits')).toBe('Accept edits')
-    expect(permissionModeLabel('plan')).toBe('Plan only')
+  // AMENDED for ISSUE-228 (was: held Claude's `default`, `acceptEdits` and `plan` as "Ask first", "Accept edits",
+  // "Plan only"): the select names the Host's mode ids. v1 ships one mode, "Ask first" (owner, 2026-10-24); an id the
+  // design has no word for keeps its own id, never an invented one (25-AGENTS §8.1).
+  it('[US-LAUNCH-001.AC13, ADR-011] names Ask first in the design’s words, and any other mode id as the id itself', () => {
+    expect(permissionModeLabel('ask-first')).toBe('Ask first')
+    expect(permissionModeLabel('plan-only')).toBe('plan-only')
   })
 })
 
@@ -216,48 +221,42 @@ describe('addPanelWhy after a launch the notice names a cause for', () => {
 })
 
 /*
- * #635 (PO decision 2026-09-28): Codex's Permissions select lists Codex's own modes in the
- * design's words (sample-data.md, providers: "Ask first", "Auto in workspace", "Read only"), and
- * never the held Claude session's.
+ * #635 (PO decision 2026-09-28) gave Codex its own three modes; AMENDED for ISSUE-228 (owner, 2026-10-24): the select
+ * lists the modes the chosen supplier's entry offers (14 §3.6 `offeredModes`; ADR-011 item 1), the same for every
+ * supplier. Every launch is the Host's since 4b, and the Host refuses a mode its entry does not offer, so Codex's
+ * `workspace-write`/`read-only` and held Claude's five SDK modes could no longer launch.
  */
-describe('the Permissions select for Codex (#635)', () => {
+describe('the Permissions select from the entry’s offered modes (ISSUE-228)', () => {
   const codex = {
     choice: 'codex' as const,
     jevOn: false,
     modelPicker: { visible: true, models: [{ value: 'gpt-5-codex' }], disabled: false, note: null },
     effortPicker: { visible: true, efforts: ['low', 'medium', 'high'] },
-    permissionsVisible: true
+    offeredModes: ['ask-first']
   }
 
-  // AMENDED for #635 (MESSAGE-QUESTIONS 24; was: "…, Ask first first" and 'Permissions: Ask
-  // first'): a detached `codex exec` can ask no one, so its no-flag mode is "Codex default".
-  it("lists Codex's three modes in the design's words, enabled, Codex default first", () => {
+  // AMENDED for ISSUE-228 (was: "lists Codex's three modes in the design's words, enabled, Codex default first").
+  it('[US-LAUNCH-001.AC04, US-LAUNCH-001.AC13] lists Ask first for a supplier that offers it, enabled, its first shown with none held', () => {
     const [, , permissions] = addPanelSelects(codex)
     expect(permissions!.disabled).toBe(false)
-    expect(permissions!.options).toEqual([
-      { value: 'default', label: 'Permissions: Codex default' },
-      { value: 'workspace-write', label: 'Permissions: Auto in workspace' },
-      { value: 'read-only', label: 'Permissions: Read only' }
-    ])
+    expect(permissions!.options).toEqual([{ value: 'ask-first', label: 'Permissions: Ask first' }])
     expect(permissions!.value).toBeUndefined()
   })
 
-  it('shows the mode the launch model holds', () => {
+  // AMENDED for ISSUE-228 (was: the held `read-only` of Codex's own list).
+  it('[US-LAUNCH-001.AC06] shows the offered mode the launch model holds', () => {
     const [, , permissions] = addPanelSelects({
       ...codex,
-      values: { model: null, effort: null, permissionMode: 'read-only' }
+      offeredModes: ['ask-first', 'plan-only'],
+      values: { model: null, effort: null, permissionMode: 'plan-only' }
     })
-    expect(permissions!.value).toBe('read-only')
+    expect(permissions!.options.map((option) => option.value)).toEqual(['ask-first', 'plan-only'])
+    expect(permissions!.value).toBe('plan-only')
   })
 
-  it("keeps held Claude's own five modes unchanged", () => {
+  // AMENDED for ISSUE-228 (was: "keeps held Claude's own five modes unchanged").
+  it('[US-LAUNCH-001.AC07] lists only the chosen supplier’s offered modes, never another vocabulary', () => {
     const [, , permissions] = addPanelSelects({ ...codex, choice: 'claude' })
-    expect(permissions!.options.map((option) => option.value)).toEqual([
-      'default',
-      'acceptEdits',
-      'plan',
-      'dontAsk',
-      'auto'
-    ])
+    expect(permissions!.options.map((option) => option.value)).toEqual(['ask-first'])
   })
 })

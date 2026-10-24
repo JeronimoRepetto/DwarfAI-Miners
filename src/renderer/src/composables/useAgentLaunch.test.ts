@@ -324,11 +324,17 @@ describe('submitting a launch', () => {
    * absent when untouched (already pinned above, since the object there
    * carries no `model`/`effort` key at all), present when chosen.
    */
+  // AMENDED for ISSUE-228 (was: held Claude's `plan`, which no entry offers and the Host refuses): the chosen mode is
+  // one the entry offers (14 §3.6 `offeredModes`; ADR-011 item 1).
   it('carries a chosen model, effort and permission mode to a Claude launch', async () => {
-    const { api, launch } = await ready()
+    const { api, launch } = await ready({
+      listAgentProviders: vi
+        .fn()
+        .mockResolvedValue(catalogue(entry('claude', { offeredModes: ['ask-first', 'plan-only'] })))
+    })
     launch.setModel('claude-sonnet-5')
     launch.setEffort('xhigh')
-    launch.setPermissionMode('plan')
+    launch.setPermissionMode('plan-only')
 
     await launch.submit()
 
@@ -336,7 +342,7 @@ describe('submitting a launch', () => {
       supplierParams('claude', {
         model: 'claude-sonnet-5',
         effort: 'xhigh',
-        permissionMode: 'plan'
+        permissionMode: 'plan-only'
       })
     )
   })
@@ -561,15 +567,23 @@ describe('routing a launch to the channel its provider can actually use', () => 
    * and the one picked travels on the detached channel — main turns it into
    * `--sandbox`. The note above the previous test is superseded for Codex.
    */
-  it('carries a chosen Codex permission mode to a detached launch', async () => {
-    const { api, launch } = await ready('codex')
-    launch.setPermissionMode('read-only')
+  // AMENDED for ISSUE-228 (was: "carries a chosen Codex permission mode to a detached launch", Codex's `read-only`):
+  // Codex offers Ask first, and the select's first value is what launches when nothing was picked (US-LAUNCH-001.AC04).
+  it('[US-LAUNCH-001.AC04, US-LAUNCH-001.AC13] carries the first offered mode, Ask first, to a Codex launch nobody tuned', async () => {
+    const { api, launch } = await ready('codex', {
+      listAgentProviders: vi
+        .fn()
+        .mockResolvedValue(
+          catalogue(entry('claude'), entry('codex', { offeredModes: ['ask-first'] }))
+        )
+    })
 
     await launch.submit()
 
     expect(api.launchAgent).toHaveBeenCalledWith(
-      supplierParams('codex', { permissionMode: 'read-only' })
+      supplierParams('codex', { permissionMode: 'ask-first' })
     )
+    expect(launch.permissionsVisible.value).toBe(true)
   })
 
   // AMENDED for ISSUE-001 (was: "never hands a held launch …", today's A-38): the Claude launch is A-35 too.
@@ -1524,7 +1538,11 @@ describe('the OpenCode permission-requests notice (ISSUE-228)', () => {
     await launch.submit()
 
     expect(api.launchAgent).toHaveBeenCalledOnce()
-    expect(api.launchAgent).toHaveBeenCalledWith(supplierParams('opencode'))
+    // AMENDED for ISSUE-228 (was: no `permissionMode`): the refreshed entry's first offered mode, which the select
+    // shows, launches (US-LAUNCH-001.AC04, AC13).
+    expect(api.launchAgent).toHaveBeenCalledWith(
+      supplierParams('opencode', { permissionMode: 'ask' })
+    )
   })
 
   it('[ADR-011] a write that fails keeps the notice, states the failure, and the launch still goes out without an answer channel', async () => {
@@ -1556,6 +1574,9 @@ describe('the OpenCode permission-requests notice (ISSUE-228)', () => {
       way: { kind: 'supplier', providerId: 'opencode' },
       prompt: 'dig the east gallery'
     })
-    expect(request).not.toHaveProperty('permissionMode')
+    // AMENDED for ISSUE-228 (was: no `permissionMode` at all): a provider without an answer channel launches on its
+    // first remaining mode, never Ask first (ADR-011 item 1; US-LAUNCH-001.AC11).
+    expect(request.permissionMode).toBe('build')
+    expect(launch.offeredModes.value).not.toContain('ask')
   })
 })

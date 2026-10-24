@@ -4,11 +4,6 @@
       "count": 1
     }
   },
-  "src/renderer/src/lib/launch/addPanelCopy.ts": {
-    "no-restricted-syntax": {
-      "count": 1
-    }
-  },
   "src/renderer/src/lib/launch/launchState.ts": {
     "no-restricted-syntax": {
       "count": 1
