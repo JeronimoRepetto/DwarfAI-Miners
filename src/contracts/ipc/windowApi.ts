@@ -173,6 +173,8 @@ export interface ModeTransition {
   to: WindowMode
   t0: number // UI-main clock, shared start
   chat?: { dwarfId: DwarfId; mineId: MineId }
+  // AMENDMENT-27 (owner, 2026-10-24): what the target opens for the carried chat (07 N-23, S24.13); absent = 'chat'
+  slot?: 'chat' | 'history'
   role: 'source' | 'target' // what this renderer plays
 }
 
@@ -561,6 +563,7 @@ export const modeTransitionSchema = z
     to: windowModeSchema,
     t0: z.number(),
     chat: z.object({ dwarfId: dwarfIdSchema, mineId: mineIdSchema }).strict().optional(),
+    slot: z.enum(['chat', 'history']).optional(),
     role: z.enum(['source', 'target'])
   })
   .strict() satisfies z.ZodType<ModeTransition>

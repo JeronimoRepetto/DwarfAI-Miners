@@ -613,6 +613,26 @@ describe('ModeCoordinator (ADR-025 item 3; 07 machine 27)', () => {
     void bare.coordinator.moveToMode({ mode: 'panel' })
     expect(bare.coordinator.handoff()).toBeNull()
   })
+
+  // APPENDED for ISSUE-293 (AMENDMENT-27, owner 2026-10-24): the run carries the slot the target opens.
+  it('[US-DLG-006.AC02, S24.13, S27.01] a history request carries slot history to both renderers with its chat, and a move with no chat carries no slot', () => {
+    const s = setup({ start: 'veta' })
+    void s.coordinator.moveToMode({ mode: 'panel', mineId: MINE, dwarfId: DWARF, slot: 'history' })
+    for (const sent of [transitions(s.win.veta)[0]!, transitions(s.win.panel)[0]!]) {
+      expect(sent.chat).toEqual({ dwarfId: DWARF, mineId: MINE })
+      expect(sent.slot).toBe('history')
+    }
+    // The draft still travels: the run carries the chat, so the source flushes it (S9.02) whatever the slot.
+    expect(s.coordinator.handoff()).toMatchObject({ state: 'transitioning', to: 'panel' })
+
+    const plain = setup({ start: 'veta' })
+    void plain.coordinator.moveToMode({ mode: 'panel', mineId: MINE, dwarfId: DWARF })
+    expect(transitions(plain.win.panel)[0]!.slot).toBeUndefined()
+
+    const bare = setup({ start: 'veta' })
+    void bare.coordinator.moveToMode({ mode: 'panel', slot: 'history' })
+    expect(transitions(bare.win.panel)[0]!.slot).toBeUndefined()
+  })
 })
 
 /* --- ISSUE-294: the first open follows "Mode at launch" ------------------------------------------- */

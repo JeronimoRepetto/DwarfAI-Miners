@@ -18,6 +18,8 @@
 // A run that carries a chat steps machine 9 with it (ISSUE-293; `domain/chatHandoff.ts`): the chat lands in the target
 // as the run lands, stays in the source when the target fails to show (S9.06: logged, `lastMode` unwritten), ends
 // read-only or closed when its dwarf departs mid-run (S9.08), and is lost with the UI process (S9.09).
+// The run also carries the slot the target opens for that chat (AMENDMENT-27; S24.13): `'history'` lands on the mine's
+// history on that dwarf's tab; the draft and view state still travel through the session store whatever the slot.
 //
 // OS show/hide animations stay as the platform has them: disabling them is UNVERIFIED until S-025-1 is recorded
 // (ADR-025 item 1), so nothing here depends on it.
@@ -178,6 +180,8 @@ type RevealAnswer = { resolve: (r: RevealOutcome) => void; reject: (error: unkno
 interface Request {
   mode: WindowMode
   chat?: { dwarfId: DwarfId; mineId: MineId }
+  /** What the target opens for the carried chat (AMENDMENT-27; 07 N-23, S24.13); only with `chat`. */
+  slot?: 'chat' | 'history'
   answers: Answer[]
   /** From `tray-only`: S10.12 or S10.13. */
   open?: { reveal: boolean }
@@ -391,6 +395,7 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
     const t0 = timing.now() + MODE_T0_LEAD_MS
     const base: Omit<ModeTransition, 'role'> = { transitionId, from, to, t0 }
     if (request.chat !== undefined) base.chat = request.chat
+    if (request.chat !== undefined && request.slot !== undefined) base.slot = request.slot
     try {
       windowOf(from)?.send(MODE_TRANSITION_PUSH, {
         ...base,
@@ -548,6 +553,8 @@ export function createModeCoordinator(deps: ModeCoordinatorDeps): ModeCoordinato
       const r: Request = { mode: p.mode, answers: [] }
       const chat = chatOf(p)
       if (chat !== undefined) r.chat = chat
+      // AMENDMENT-27: the slot names what the target opens for a carried chat; with no chat there is nothing to open.
+      if (chat !== undefined && p.slot !== undefined) r.slot = p.slot
       return request(r)
     },
     transitionDone(sender, p) {
