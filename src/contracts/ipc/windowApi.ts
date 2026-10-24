@@ -202,6 +202,16 @@ export interface UiSessionSnapshot {
     addPins?: Array<{ mineId: MineId; order: number }> // pending Add panels pinned in the deck: session only (PO #67; R5B-27)
   }
   vetaRisenChat?: DwarfId | null
+  // AMENDMENT-28 (owner, 2026-10-24): the music the shown mode window plays, written by the window a run leaves and
+  // adopted by the window it enters; one music, one playlist across the modes (owner ruling 2026-10-24; #174)
+  music?: UiSessionMusic
+}
+export interface UiSessionMusic {
+  on: boolean // the Music slot's state for this run (US-SHELL-005)
+  track: string | null // the track sounding; null between two tracks or before the first
+  positionMs: number // where in `track` it had got to
+  queue: string[] // the tracks still to play in this shuffled round, in order
+  lastPlayed: string | null // the round's last track, so the next round does not open on it
 }
 export type UiSessionPatch =
   | { kind: 'draft'; dwarfId: DwarfId; text: string }
@@ -211,6 +221,7 @@ export type UiSessionPatch =
   | { kind: 'current-mine'; host: 'panel' | 'valle'; mineId: MineId | null }
   | { kind: 'valle'; patch: UiSessionSnapshot['valle'] }
   | { kind: 'veta-risen-chat'; dwarfId: DwarfId | null }
+  | { kind: 'music'; music: UiSessionMusic } // AMENDMENT-28
 // Main drops a dwarf's draft, chat view, open-chat, talkedTo, focusedPin and secondPane entries on dwarf.departed
 // (INV-34) and emits the patches.
 
@@ -264,6 +275,20 @@ const valleSessionSchema = z
   })
   .strict()
 
+/** A music track: the asset URL the renderer's playlist names (AMENDMENT-28). */
+const musicTrackSchema = z.string().min(1).max(2048)
+
+/** AMENDMENT-28: the music slot of the UI-main session store; an unknown field is refused (14 §1.4). */
+export const uiSessionMusicSchema = z
+  .object({
+    on: z.boolean(),
+    track: musicTrackSchema.nullable(),
+    positionMs: z.number().finite().nonnegative(),
+    queue: z.array(musicTrackSchema).max(64),
+    lastPlayed: musicTrackSchema.nullable()
+  })
+  .strict() satisfies z.ZodType<UiSessionMusic>
+
 export const uiSessionSnapshotSchema = z
   .object({
     drafts: idRecordSchema(dwarfIdSchema, messageTextSchema),
@@ -283,7 +308,8 @@ export const uiSessionSnapshotSchema = z
       })
       .strict(),
     valle: valleSessionSchema,
-    vetaRisenChat: dwarfIdSchema.nullable().optional()
+    vetaRisenChat: dwarfIdSchema.nullable().optional(),
+    music: uiSessionMusicSchema.optional()
   })
   .strict() satisfies z.ZodType<UiSessionSnapshot>
 
@@ -313,7 +339,8 @@ const patchVariants = {
   vetaRisenChat: z.object({
     kind: z.literal('veta-risen-chat'),
     dwarfId: dwarfIdSchema.nullable()
-  })
+  }),
+  music: z.object({ kind: z.literal('music'), music: uiSessionMusicSchema })
 } as const
 
 /** A-N18's request: one patch kind; an unknown kind or an extra key is refused (14 §1.4). */
@@ -324,7 +351,8 @@ export const uiSessionPatchSchema = z.discriminatedUnion('kind', [
   patchVariants.openChat.strict(),
   patchVariants.currentMine.strict(),
   patchVariants.valle.strict(),
-  patchVariants.vetaRisenChat.strict()
+  patchVariants.vetaRisenChat.strict(),
+  patchVariants.music.strict()
 ]) satisfies z.ZodType<UiSessionPatch>
 
 /** A-N19's payload: a patch and the window it came from. */
@@ -335,7 +363,8 @@ export const uiSessionChangeSchema = z.discriminatedUnion('kind', [
   patchVariants.openChat.extend({ origin: windowModeSchema }).strict(),
   patchVariants.currentMine.extend({ origin: windowModeSchema }).strict(),
   patchVariants.valle.extend({ origin: windowModeSchema }).strict(),
-  patchVariants.vetaRisenChat.extend({ origin: windowModeSchema }).strict()
+  patchVariants.vetaRisenChat.extend({ origin: windowModeSchema }).strict(),
+  patchVariants.music.extend({ origin: windowModeSchema }).strict()
 ]) satisfies z.ZodType<UiSessionChange>
 
 // A-N20 `getUiPreferences`, A-N21 `setUiPreference` (14 §2.2, §3.9; ADR-024 items 1, 9): the persisted UI preferences
