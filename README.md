@@ -37,11 +37,13 @@ DwarfAI-Miners has been rebuilt from the ground up. The app is now two parts:
 - the **window**, an Electron client of the Host. Closing it never ends a session; the Host keeps
   running, with its tray icon, until you choose **Stop everything and quit…** in the tray menu.
 
-**[v0.22.0](https://github.com/JeronimoRepetto/DwarfAI-Miners/releases/tag/v0.22.0) is the latest
-preview of the rebuilt app.** It completes the three modes: beside the Panel there is now **Veta**,
-the compact strip at the screen edge, and **Valle**, the full workspace with every mine at once (see
-[Three ways to watch](#three-ways-to-watch)). **Mode at launch** in Settings › General picks the one
-the app opens in. It has installers for Windows, macOS and Linux, plus `SHA256SUMS`.
+**[v0.22.1](https://github.com/JeronimoRepetto/DwarfAI-Miners/releases/tag/v0.22.1) is the latest
+preview of the rebuilt app.** v0.22.0 completed the three modes: beside the Panel there is now
+**Veta**, the compact strip at the screen edge, and **Valle**, the full workspace with every mine at
+once (see [Three ways to watch](#three-ways-to-watch)). **Mode at launch** in Settings › General
+picks the one the app opens in. v0.22.1 keeps one music playing across the three modes, opens a
+mine's history from a Veta chat with its draft kept, and on Windows lets you write to a Claude Code
+subagent directly from its chat. It has installers for Windows, macOS and Linux, plus `SHA256SUMS`.
 The builds are not signed yet, so Windows SmartScreen and macOS Gatekeeper ask before the first
 open; the release notes say how to get past them. The work still open before v1 is in EPIC-17
 (packaging and distribution): signing and notarization in the release pipeline, the release job
