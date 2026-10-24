@@ -777,6 +777,18 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
+      # P-SCOOP (20 §6; ADR-027 item 1; ADR-016 item 7; OQ-59; FM-128; ISSUE-275). Owner decision 2026-10-24: it
+      # replaces the issue's manual Windows VM check. It installs Scoop with its documented installer (`-RunAsAdmin`,
+      # since this runner is elevated), puts the generated manifest into a local bucket with the url moved to a
+      # loopback server over `release/` (nothing of the app is downloaded), and runs `scoop install`, `scoop update`
+      # to a bumped version of the same zip, and `scoop uninstall`. It fails unless install and update ran no
+      # `--revert-integrations` and uninstall ran it exactly once (read from the UI's `host.revert-integrations`
+      # records). After the upload, so a failure still leaves the artifacts to inspect; a failed leg blocks the release.
+      - name: Scoop install, update and uninstall from a local bucket (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/release/scoop/scoop-check.ps1 -Release release
+
   # The release job (20 §2.1 `release`, §3.2; 18 C-32, C-33, C-34; ISSUE-278). On a pushed `v*` tag, after every leg
   # of the package job and the licence report, it collects the installers of the three OSes (the Windows nsis
   # installer and zip, the macOS arm64 and x64 dmg and zip, the Linux AppImage and deb) with licenses.json and the
