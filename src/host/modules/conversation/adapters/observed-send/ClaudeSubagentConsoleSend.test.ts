@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ProcessIdentity } from '../../../../kernel/domain/processIdentity'
 import type { DwarfId } from '../../../../kernel/domain/values'
-import { agentConsoleScreen } from './testing/agentConsoleScreens'
+import { agentConsoleScreen, type AgentConsoleScreenName } from './testing/agentConsoleScreens'
 import {
   ClaudeSubagentConsoleSend,
   RECOGNISED_CLAUDE_VERSIONS,
@@ -17,8 +17,12 @@ import { FakeClaudeLeadConsole } from './testing/FakeClaudeLeadConsole'
 
 const DWARF = '00000000-0000-7000-8000-0000000000d1' as DwarfId
 const LEAD: ProcessIdentity = { pid: 4242, processStartTimeMs: 1_790_000_000_000, bootId: 'boot' }
-const ECHO = 'Run ping five times (echo)'
-const FOXTROT = 'Run ping five times (foxtrot)'
+const GOLF = 'Run ping four times (golf)'
+/** Its row shows an activity summary, never its description. */
+const HOTEL = 'Run ping four times (hotel)'
+/** Too long for the window: its rule label is cut short. */
+const LONG =
+  'Run ping four times then report back, this description is deliberately very long to see how the terminal label shows it in full or cut short (india)'
 const TEXT = 'SPIKE-MARKER-7Q3X reply with the word marked.'
 
 function route(
@@ -36,7 +40,7 @@ function route(
         asked.push(dwarfId)
         return facts === null
           ? null
-          : { lead: LEAD, description: ECHO, twins: 0, version: '2.1.310', ...facts }
+          : { lead: LEAD, description: HOTEL, twins: 0, version: '2.1.310', ...facts }
       }
     }
   })
@@ -48,17 +52,36 @@ function atLeadInput(console_: FakeClaudeLeadConsole): void {
   expect({ view: console_.view, focus: console_.focus }).toEqual({ view: 0, focus: 'input' })
 }
 
-describe('FakeClaudeLeadConsole draws the screens of fixtures/claude/observer/2.1.310', () => {
-  it('[ADR-012] the lead view, the list on main, an open view and the input after a send match the fixture screens', () => {
-    const console_ = new FakeClaudeLeadConsole()
-    expect(console_.render()).toEqual(agentConsoleScreen('lead-input-empty'))
-    console_.focus = 'list'
-    expect(console_.render()).toEqual(agentConsoleScreen('lead-list-main'))
-    console_.pointer = 2
-    console_.view = 2
-    expect(console_.render()).toEqual(agentConsoleScreen('view-echo-list'))
-    console_.focus = 'input'
-    expect(console_.render()).toEqual(agentConsoleScreen('view-echo-input-empty'))
+/** The fake's rows take the labels and times a capture shows (they change while agents run). */
+function drawnLike(tui: FakeClaudeLeadConsole, name: AgentConsoleScreenName): string[] {
+  const shown = agentConsoleScreen(name)
+  const rows = shown.filter((row) => /^(?:❯ | {2})[●◯] general-purpose {2}/.test(row))
+  rows.forEach((row, index) => {
+    const parts = /^(?:❯ | {2})[●◯] \S+ {2}(.+?)\s+((?:\d+h )?(?:\d+m )?\d+s · .*)$/.exec(row)
+    tui.agents[index]!.row = parts![1]!
+    tui.agents[index]!.timing = parts![2]!
+  })
+  return shown
+}
+
+describe('FakeClaudeLeadConsole draws the measured screens of fixtures/claude/observer/2.1.310', () => {
+  it('[ADR-012] every state the route reads matches its real capture', () => {
+    const states: Array<[AgentConsoleScreenName, Partial<FakeClaudeLeadConsole>]> = [
+      ['lead-input-empty', { view: 0, focus: 'input', pointer: 0 }],
+      ['lead-list-main', { view: 0, focus: 'list', pointer: 0 }],
+      ['lead-list-golf', { view: 0, focus: 'list', pointer: 1 }],
+      ['view-golf-list', { view: 1, focus: 'list', pointer: 1 }],
+      ['view-long-list', { view: 3, focus: 'list', pointer: 3 }],
+      ['view-long-list-main', { view: 3, focus: 'list', pointer: 0 }],
+      ['lead-back-list-main', { view: 0, focus: 'list', pointer: 0 }],
+      ['view-golf-input-empty', { view: 1, focus: 'input', input: '' }],
+      ['view-golf-draft', { view: 1, focus: 'input', input: 'x' }]
+    ]
+    for (const [name, state] of states) {
+      const tui = Object.assign(new FakeClaudeLeadConsole(), state)
+      const shown = drawnLike(tui, name)
+      expect({ name, rows: tui.render() }).toEqual({ name, rows: shown })
+    }
   })
 })
 
@@ -66,8 +89,8 @@ describe('ClaudeSubagentConsoleSend: the message reaches that subagent only', ()
   it('[ADR-012, ADR-014] a row showing an activity summary: each view is opened until the label verifies, the text goes there, the lead view comes back', async () => {
     const { sender, tui } = route()
     expect(await sender.send(DWARF, TEXT)).toEqual({ kind: 'delivered' })
-    expect(tui.submitted).toEqual([{ to: ECHO, text: TEXT }])
-    // ↓ into the list, ↓ to delta, Enter (delta's view: no), ↓ to echo, Enter (verified), type,
+    expect(tui.submitted).toEqual([{ to: HOTEL, text: TEXT }])
+    // ↓ into the list, ↓ to golf, Enter (golf's view: no), ↓ to hotel, Enter (verified), type,
     // ↓ from the empty input to main, Enter (the lead's view), ↑ (the input gets the focus back).
     expect(tui.keys()).toEqual([
       'down',
@@ -84,10 +107,10 @@ describe('ClaudeSubagentConsoleSend: the message reaches that subagent only', ()
   })
 
   it('[ADR-012] a row still labelled with the description is opened first', async () => {
-    const { sender, tui } = route({ description: FOXTROT })
+    const { sender, tui } = route({ description: GOLF })
     expect(await sender.send(DWARF, TEXT)).toEqual({ kind: 'delivered' })
-    expect(tui.submitted).toEqual([{ to: FOXTROT, text: TEXT }])
-    expect(tui.keys().slice(0, 6)).toEqual(['down', 'down', 'down', 'down', 'enter', 'type'])
+    expect(tui.submitted).toEqual([{ to: GOLF, text: TEXT }])
+    expect(tui.keys().slice(0, 4)).toEqual(['down', 'down', 'enter', 'type'])
     atLeadInput(tui)
   })
 
@@ -106,10 +129,10 @@ describe('ClaudeSubagentConsoleSend: the message reaches that subagent only', ()
     let presses = 0
     console_.afterStep = (c) => {
       presses += 1
-      // Right after ↓ reaches delta, delta ends: the pointer moves onto echo's row.
-      if (presses === 2) c.finish('Run ping five times (delta)')
+      // Right after ↓ reaches golf, golf ends: the pointer moves onto hotel's row.
+      if (presses === 2) c.finish(GOLF)
     }
-    const { sender } = route({ description: 'Run ping five times (delta)' }, console_)
+    const { sender } = route({ description: GOLF }, console_)
     expect(await sender.send(DWARF, TEXT)).toEqual({ kind: 'refused', reason: 'not-found' })
     expect(console_.submitted).toEqual([])
     atLeadInput(console_)
@@ -163,6 +186,14 @@ describe('ClaudeSubagentConsoleSend: every doubt refuses before anything is type
 
   it('[ADR-012] no view shows the description: every row tried, nothing typed, the lead view restored', async () => {
     const { sender, tui } = route({ description: 'Review the change' })
+    expect(await sender.send(DWARF, TEXT)).toEqual({ kind: 'refused', reason: 'not-found' })
+    expect(tui.submitted).toEqual([])
+    expect(tui.keys()).not.toContain('type')
+    atLeadInput(tui)
+  })
+
+  it('[ADR-012] a description cut short in the rule label (measured): every view tried, nothing typed, refused', async () => {
+    const { sender, tui } = route({ description: LONG })
     expect(await sender.send(DWARF, TEXT)).toEqual({ kind: 'refused', reason: 'not-found' })
     expect(tui.submitted).toEqual([])
     expect(tui.keys()).not.toContain('type')
@@ -233,7 +264,7 @@ describe('ClaudeSubagentConsoleSend: Windows only, and never Esc', () => {
 
   it('[ADR-012] over every scenario the route presses only ↓, ↑ and Enter, and ↑ never while the input has the focus', async () => {
     const worlds: FakeClaudeLeadConsole[] = []
-    for (const description of [ECHO, FOXTROT, 'Run ping five times (delta)', 'Review the change']) {
+    for (const description of [GOLF, HOTEL, LONG, 'Review the change']) {
       const console_ = new FakeClaudeLeadConsole()
       const upsFromInput: string[] = []
       const press = console_.press.bind(console_)

@@ -24,14 +24,17 @@ import { WindowsConsoleScreen } from './WindowsConsoleScreen'
 
 /**
  * The stub lead terminal (17 §1.8: a stub process, never a provider CLI), run as
- * `node -e STUB <screen.json>` in the hidden console every `windowsHide` child gets: it clears its
- * OWN console and draws the rows of <screen.json> top-left (`CONOUT$` through a tty stream, so the
+ * `node -e STUB <screen.json>` in the hidden console every `windowsHide` child gets: it widens that
+ * console to 160 columns (the captures are 138 wide), clears it and draws the rows of <screen.json> top-left (`CONOUT$` through a tty stream, so the
  * text reaches the buffer as UTF-16), then reads its OWN console's input (`CONIN$`, raw mode),
  * printing `ready` and then one `key <hex>` line per chunk. It exits when its stdin ends, or after
  * 30 s. `//./CONOUT$` and `//./CONIN$`: Node resolves the bare names as relative file names.
  */
 const STUB = String.raw`
 const { openSync, readFileSync } = require('node:fs')
+const { spawnSync } = require('node:child_process')
+// The captures are 138 columns wide: widen this hidden console first (mode.com, no shell).
+spawnSync('mode.com', ['con:', 'cols=160', 'lines=60'], { stdio: 'inherit', shell: false })
 const { ReadStream, WriteStream } = require('node:tty')
 const cap = setTimeout(() => process.exit(0), 30000)
 const rows = JSON.parse(readFileSync(process.argv[1], 'utf8')).rows
@@ -109,11 +112,11 @@ describe.runIf(process.platform === 'win32')(
     }
 
     it('[ADR-012, ADR-014] reads back the screen the lead terminal shows, glyphs intact, as the same screen', async () => {
-      const { identity } = await stub('view-echo-list')
+      const { identity } = await stub('view-golf-list')
       const read = await screen().read(identity)
       expect(read.kind).toBe('screen')
       const lines = read.kind === 'screen' ? read.lines : []
-      const drawn = agentConsoleScreen('view-echo-list')
+      const drawn = agentConsoleScreen('view-golf-list')
       expect(lines.slice(0, drawn.length)).toEqual(drawn)
       expect(readAgentConsole(lines)).toEqual(readAgentConsole(drawn))
     }, 60_000)

@@ -1,15 +1,15 @@
 {
   "rows": [
-    "⏺ I will start three background agents: delta, echo and foxtrot.",
-    "",
-    "────────────────────────────────────────────────────────────────────────────────",
+    "⏺ (transcript scrubbed)",
+    "──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
     "❯",
-    "────────────────────────────────────────────────────────────────────────────────",
+    "──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  (status line scrubbed)",
     "  ⏵⏵ bypass permissions on (shift+tab to cycle)",
-    "  main",
-    "  ● Run ping five times (delta)                               22s · ↓ 1.2k tokens",
-    "  ● Running ping loop, run 2 of 5                             20s · ↓ 1.1k tokens",
-    "  ● Run ping five times (foxtrot)                             17s · ↓ 0.9k tokens",
-    "  ↓ to manage agents"
+    "",
+    "  ● main",
+    "  ◯ general-purpose  Run ping four times (golf)                                                                   1m 4s · ↓ 58.2k tokens",
+    "  ◯ general-purpose  Run ping four times (hotel)                                                                  1m 4s · ↓ 58.2k tokens",
+    "  ◯ general-purpose  Run ping four times then report back, this description is deliberately very long to see how… 1m 3s · ↓ 58.2k tokens"
   ]
 }

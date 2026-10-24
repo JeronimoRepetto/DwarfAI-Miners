@@ -2,7 +2,8 @@
 // 16 §2.8, 17 §2.2 `Fake<Port>` family): it implements the console-reading capability, the
 // navigation keys and the text relay's `write`, keeps the TUI's state as the spike measured it
 // (odd/handoff/spike-claude-subagent-terminal-input.md §2 keys table, §4 return, §5 shared input) and
-// draws each screen in the layout of fixtures/claude/observer/2.1.310. It never starts a process.
+// draws each screen in the measured layout of fixtures/claude/observer/2.1.310 (its validation-run
+// appendix). It never starts a process.
 //
 // What it models: ↓ from the input enters the list on `main` (a multi-line draft keeps it in the
 // input); ↓/↑ move the pointer; ↑ on `main` gives the input the focus; ↑ in the input recalls the last
@@ -31,33 +32,45 @@ export interface FakeSubagent {
 /** One step the console took, in order: a key, a typed text, or a read. */
 export type FakeConsoleEvent = { key: NavKey } | { typed: string } | { read: true }
 
-const RULE = '─'.repeat(80)
-const LEAD_TRANSCRIPT = ['⏺ I will start three background agents: delta, echo and foxtrot.', '']
-const VIEW_TRANSCRIPT = ['⏺ Bash(ping -n 31 127.0.0.1 > /dev/null)', '  ⎿  Running…', '']
-const STATUS = '  ⏵⏵ bypass permissions on (shift+tab to cycle)'
-const HINT_INPUT = '  ↓ to manage agents'
-const HINT_MAIN = '  ↑/↓ to select'
-const HINT_AGENT = '  Enter to view · x to stop · ctrl+x ctrl+k to stop all agents'
+/** The measured window: rules 138 wide, agent rows right-aligned to 136 (2026-10-24 captures). */
+const WIDTH = 138
+const ROW_WIDTH = 136
+const RULE = '─'.repeat(WIDTH)
+/** The scrubbed parts of the captures: the transcript area and the person's status line. */
+const TRANSCRIPT = '⏺ (transcript scrubbed)'
+const STATUS = '  (status line scrubbed)'
+const HINT_INPUT = '  ⏵⏵ bypass permissions on (shift+tab to cycle)'
+const HINT_LEAD_MAIN = '  ↑/↓ to select'
+const HINT_LEAD_AGENT = '  Enter to view · x to stop · ctrl+x ctrl+k to stop all agents'
+const HINT_VIEW_MAIN = '  ↑/↓ to select · Enter to view'
+const HINT_VIEW_AGENT = '  ↑/↓ to select · ctrl+x ctrl+k to stop all agents'
 
-/** The three agents of the spike's second prompt; echo's row already shows an activity summary. */
-export function spikeSubagents(): FakeSubagent[] {
+/** The longest label a rule shows whole: a longer one is cut short with `…` and fills the rule. */
+const RULE_LABEL_MAX = WIDTH - 3
+
+/**
+ * The three agents of the validation run (2026-10-24): golf's row still shows its description,
+ * hotel's an activity summary, and the long one's row and rule label are cut short.
+ */
+export function measuredSubagents(): FakeSubagent[] {
   return [
     {
-      description: 'Run ping five times (delta)',
-      row: 'Run ping five times (delta)',
-      timing: '22s · ↓ 1.2k tokens',
+      description: 'Run ping four times (golf)',
+      row: 'Run ping four times (golf)',
+      timing: '41s · ↓ 58.2k tokens',
       agentType: 'general-purpose'
     },
     {
-      description: 'Run ping five times (echo)',
-      row: 'Running ping loop, run 2 of 5',
-      timing: '20s · ↓ 1.1k tokens',
+      description: 'Run ping four times (hotel)',
+      row: 'Running second ping delay',
+      timing: '40s · ↓ 58.2k tokens',
       agentType: 'general-purpose'
     },
     {
-      description: 'Run ping five times (foxtrot)',
-      row: 'Run ping five times (foxtrot)',
-      timing: '17s · ↓ 0.9k tokens',
+      description:
+        'Run ping four times then report back, this description is deliberately very long to see how the terminal label shows it in full or cut short (india)',
+      row: 'Run ping four times then report back, this description is deliberately very long to see how t…',
+      timing: '40s · ↓ 58.2k tokens',
       agentType: 'general-purpose'
     }
   ]
@@ -84,7 +97,7 @@ export class FakeClaudeLeadConsole implements ConsoleScreenReader, ConsoleNaviga
   afterStep: ((console: FakeClaudeLeadConsole) => void) | null = null
   private readonly history: string[] = []
 
-  constructor(agents: FakeSubagent[] = spikeSubagents()) {
+  constructor(agents: FakeSubagent[] = measuredSubagents()) {
     this.agents = agents
   }
 
@@ -168,35 +181,52 @@ export class FakeClaudeLeadConsole implements ConsoleScreenReader, ConsoleNaviga
     this.input = ''
   }
 
-  /** The visible window, in the layout of fixtures/claude/observer/2.1.310. */
+  /** The visible window, in the layout of fixtures/claude/observer/2.1.310 (scrubbed parts included). */
   render(): string[] {
     const agent = this.view === 0 ? null : this.agents[this.view - 1]!
-    const top =
-      agent === null
-        ? RULE
-        : `${'─'.repeat(80 - agent.description.length - 3)} ${agent.description} ─`
+    const top = agent === null ? RULE : ruleLabelled(agent.description)
     const [first = '', ...more] = this.input.split('\n')
-    const shown = first === '' && agent !== null ? `Message @${agent.agentType}` : first
+    const shown = first === '' && agent !== null ? `Message @${agent.agentType}…` : first
     const listed = this.focus === 'list'
-    const rows =
+    const hint = !listed
+      ? HINT_INPUT
+      : agent === null
+        ? this.pointer === 0
+          ? HINT_LEAD_MAIN
+          : HINT_LEAD_AGENT
+        : this.pointer === 0
+          ? HINT_VIEW_MAIN
+          : HINT_VIEW_AGENT
+    const mark = (index: number) => (listed && this.pointer === index ? '❯ ' : '  ')
+    const bullet = (index: number) => (this.view === index ? '●' : '◯')
+    const list =
       this.agents.length === 0
-        ? ['  /tasks to see subagents']
+        ? []
         : [
-            `${listed && this.pointer === 0 ? '❯ ' : '  '}main`,
-            ...this.agents.map(
-              (row, index) =>
-                `${`${listed && this.pointer === index + 1 ? '❯ ' : '  '}● ${row.row}`.padEnd(62)}${row.timing}`
-            ),
-            !listed ? HINT_INPUT : this.pointer === 0 ? HINT_MAIN : HINT_AGENT
+            '',
+            `${mark(0)}${bullet(0)} main`,
+            ...this.agents.map((row, index) => {
+              const head = `${mark(index + 1)}${bullet(index + 1)} ${row.agentType}  ${row.row}`
+              return `${head.padEnd(ROW_WIDTH - row.timing.length)}${row.timing}`
+            })
           ]
     return [
-      ...(agent === null ? LEAD_TRANSCRIPT : VIEW_TRANSCRIPT),
+      TRANSCRIPT,
       top,
-      `❯ ${shown}`,
+      `❯ ${shown}`,
       ...more.map((line) => `  ${line}`),
       RULE,
       STATUS,
-      ...rows
+      hint,
+      ...list
     ].map((line) => line.trimEnd())
   }
+}
+
+/** The top rule of a view: `── label ─`, or ` label… ─` when the label is cut short. */
+function ruleLabelled(description: string): string {
+  if (description.length <= RULE_LABEL_MAX) {
+    return `${'─'.repeat(WIDTH - description.length - 3)} ${description} ─`
+  }
+  return ` ${description.slice(0, RULE_LABEL_MAX - 1)}… ─`
 }
