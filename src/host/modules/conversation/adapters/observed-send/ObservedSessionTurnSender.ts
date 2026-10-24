@@ -17,7 +17,7 @@
 //   `unconfirmed` once typed; ✓✓ on the subagent transcript's `queued_command` echo (S-022-1 rule,
 //   AMENDMENT-29). Elsewhere, or without the lead's process, there is no send path, as before. Its
 //   refusals are `channel-error`s (S7.06: the person may clear a draft and Retry) whose reasons are
-//   marked placeholders until copy design writes them (SUBAGENT_REFUSAL_COPY). A subagent view takes
+//   the owner-approved sentences of SUBAGENT_REFUSAL_COPY (2026-10-24). A subagent view takes
 //   no file (unmeasured), so a message with files is refused whole.
 // - An observed Codex thread (X3): the text is queued on the thread's own queue for its next turn
 //   (CodexThreadQueue, `codex queue --thread`), never written into its terminal, so never mid-turn.
@@ -77,15 +77,19 @@ export interface ObservedSessionTurnSenderDeps {
 }
 
 /**
- * The reasons a subagent route's refusal shows in the failed bubble (S7.06). Copy design has not
- * written them (25-AGENTS §8.1): each is the `⟦COPY NEEDED: <design item>⟧` marker, never invented text.
+ * The reasons a subagent route's refusal shows in the failed bubble (S7.06), owner-approved
+ * 2026-10-24 ("Tienes mi OK"). Like the relay's other reasons above, they are the Host's own words,
+ * shown as sent: no copy dictionary holds Host refusal reasons.
  */
 export const SUBAGENT_REFUSAL_COPY = Object.freeze({
-  draft: '⟦COPY NEEDED: AMENDMENT-29 refusal, unsent text in the lead terminal⟧',
-  ambiguous: '⟦COPY NEEDED: AMENDMENT-29 refusal, subagent cannot be told apart⟧',
-  'not-found': '⟦COPY NEEDED: AMENDMENT-29 refusal, subagent view not found⟧',
-  unrecognised: '⟦COPY NEEDED: AMENDMENT-29 refusal, lead terminal not readable⟧',
-  files: '⟦COPY NEEDED: AMENDMENT-29 refusal, a subagent view takes no file⟧'
+  draft:
+    "Not sent: there is unsent text in the foreman's terminal. Send or clear it there, then try again.",
+  ambiguous:
+    "Not sent: another worker in this mine has the same task, so DwarfAI can't tell them apart.",
+  'not-found':
+    "Not sent: this worker's view wasn't found in the foreman's terminal. It may have finished.",
+  unrecognised: "Not sent: DwarfAI can't read the foreman's terminal for this Claude Code version.",
+  files: "Files can't be sent to a worker. Send the text alone, or write to the foreman."
 })
 
 type SendPath =

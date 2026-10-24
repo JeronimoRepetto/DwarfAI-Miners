@@ -420,10 +420,19 @@ describe('ObservedSessionTurnSender: an observed Claude subagent (AMENDMENT-29)'
         result: { ok: false, error }
       })
     }
-    // Copy design has not written: each refusal is a marked placeholder, never invented text.
-    for (const reason of Object.values(SUBAGENT_REFUSAL_COPY)) {
-      expect(reason).toMatch(/^⟦COPY NEEDED: AMENDMENT-29 .+⟧$/)
-    }
+    // AMENDED for the owner-approved copy (2026-10-24, "Tienes mi OK"; was: each reason a
+    // `⟦COPY NEEDED: AMENDMENT-29 …⟧` placeholder): the exact approved sentences.
+    expect(SUBAGENT_REFUSAL_COPY).toEqual({
+      draft:
+        "Not sent: there is unsent text in the foreman's terminal. Send or clear it there, then try again.",
+      ambiguous:
+        "Not sent: another worker in this mine has the same task, so DwarfAI can't tell them apart.",
+      'not-found':
+        "Not sent: this worker's view wasn't found in the foreman's terminal. It may have finished.",
+      unrecognised:
+        "Not sent: DwarfAI can't read the foreman's terminal for this Claude Code version.",
+      files: "Files can't be sent to a worker. Send the text alone, or write to the foreman."
+    })
   })
 
   it('[US-MSG-002.AC03, ADR-022] a subagent view takes no file: the message is refused whole, nothing typed', async () => {
