@@ -265,16 +265,15 @@ Running a provider's tool with your subscription is governed by that provider's 
 
 ### Connections to Claude Code and OpenCode
 
-⟦COPY NEEDED: R-21 connections to Claude Code and OpenCode⟧
+<!-- Wording approved by the owner on 2026-10-24 (20 §8 R-21; OQ-68; ADR-016 items 5, 7). -->
 
-<!-- Required content (20 §8 R-21; OQ-68; ADR-016 items 5, 7), wording to be approved by
-     design/owner: what "Claude Code · instant updates" (a hook entry in ~/.claude/settings.json)
-     and "OpenCode · permission requests" (a plugin file in OpenCode's plugin folder) do; that
-     DwarfAI asks once, on the first open, with both pre-selected, and writes nothing before
-     "Activate"; how to turn either off later (Settings › Integrations), which removes exactly
-     DwarfAI's entry and keeps everything else; that the first rebuilt release replaces or removes
-     entries written by the old app, according to the person's answer; that uninstall removes
-     them (R-19). -->
+DwarfAI can connect to two tools to see more of what your dwarfs do. **Claude Code · instant
+updates** adds one hook entry to `~/.claude/settings.json`, so the app hears a session's events as
+they happen. **OpenCode · permission requests** adds one plugin file to OpenCode's plugin folder,
+so you can answer OpenCode's permission requests from the app. On the first open DwarfAI asks
+once, with both selected, and writes nothing until you press **Activate**. You can turn either off
+later in **Settings › Integrations**: that removes exactly DwarfAI's entry and leaves the rest as
+it was. Uninstalling removes them too.
 
 <p align="center"><img src="docs/readme/plates/run-from-source.png" width="644" alt="Section plate: Run from source"></p>
 
@@ -307,12 +306,12 @@ SmartScreen warning.
 
 <!-- release:R-18 -->
 
-⟦COPY NEEDED: R-18 SmartScreen note⟧
+<!-- Wording approved by the owner on 2026-10-24 (20 §8 R-18, §5; OQ-53). -->
 
-<!-- Required content (20 §8 R-18, §5; OQ-53), wording to be approved by design/owner and to match
-     what the R-11 clean-machine check observes: what the unknown-publisher warning looks like on the
-     unsigned Windows build, how to check the download came from the Releases page or the DwarfAI
-     Scoop bucket, and how to continue. -->
+The Windows build is not signed yet, so the first time you run it SmartScreen shows **Windows
+protected your PC** with an unknown publisher. Check that you downloaded it from this repository's
+[Releases page](https://github.com/JeronimoRepetto/DwarfAI-Miners/releases), then choose **More
+info › Run anyway**.
 
 <!-- release:R-19 -->
 
