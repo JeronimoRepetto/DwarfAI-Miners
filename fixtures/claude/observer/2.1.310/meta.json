@@ -1,0 +1,16 @@
+{
+  "providerVersion": "2.1.310",
+  "capturedAt": "2026-10-24",
+  "capturedBy": "ci-synthetic",
+  "os": "win32",
+  "scrubbed": true,
+  "synthetic": true,
+  "source": "Hand-written from odd/handoff/spike-claude-subagent-terminal-input.md (AMENDMENT-29 spike, Claude Code 2.1.310, Windows 11): the keys table of §2, the rule label equal to the subagent's `description`, the `Message @<agentType>` placeholder, the hints `↑/↓ to select`, `Enter to view · x to stop · ctrl+x ctrl+k to stop all agents` and `/tasks to see subagents`, rows in start order with the elapsed time and tokens after the label, and a row label that turns into an activity summary. The raw CONOUT$ dumps of the spike were not kept, so the column widths, the status line and the exact glyphs (❯ pointer and prompt, ● bullet, ─ rules) are a reconstruction. Each console-<state>.json holds the rows of one visible console window, top to bottom. Replace each screen with a scrubbed CONOUT$ capture of the same state on the maintainer's machine before the route is trusted; the reader refuses any screen it does not recognise.",
+  "capabilities": {
+    "observe": true,
+    "subagents": "transcript",
+    "subagentViewLabel": "description",
+    "agentViewPlaceholder": "Message @<agentType>",
+    "keys": ["down", "up", "enter"]
+  }
+}

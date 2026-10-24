@@ -1,7 +1,0 @@
-⏺ I will start three background agents: delta, echo and foxtrot.
-
-────────────────────────────────────────────────────────────────────────────────
-❯
-────────────────────────────────────────────────────────────────────────────────
-  ⏵⏵ bypass permissions on (shift+tab to cycle)
-  /tasks to see subagents

@@ -1,0 +1,16 @@
+{
+  "rows": [
+    "⏺ Bash(ping -n 31 127.0.0.1 > /dev/null)",
+    "  ⎿  Running…",
+    "",
+    "─────────────────────────────────────────────────── Run ping five times (echo) ─",
+    "❯ DRAFT2-LEAD",
+    "────────────────────────────────────────────────────────────────────────────────",
+    "  ⏵⏵ bypass permissions on (shift+tab to cycle)",
+    "  main",
+    "  ● Run ping five times (delta)                               22s · ↓ 1.2k tokens",
+    "❯ ● Running ping loop, run 2 of 5                             20s · ↓ 1.1k tokens",
+    "  ● Run ping five times (foxtrot)                             17s · ↓ 0.9k tokens",
+    "  Enter to view · x to stop · ctrl+x ctrl+k to stop all agents"
+  ]
+}

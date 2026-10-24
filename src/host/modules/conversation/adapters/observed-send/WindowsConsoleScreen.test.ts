@@ -38,7 +38,7 @@ function world(
     cwd: CWD,
     scheduler: new FakeScheduler(clock)
   })
-  return { tools, clock, console: console_ }
+  return { tools, clock, reader: console_ }
 }
 
 const GONE: ReadonlyArray<[string, ProcessIdentity | 'absent']> = [
@@ -50,10 +50,10 @@ const GONE: ReadonlyArray<[string, ProcessIdentity | 'absent']> = [
   ['a process that is gone', 'absent']
 ]
 
-describe('WindowsConsoleScreen.read: the visible window of the lead console, read only', () => {
+describe('WindowsConsoleScreen.read: the visible window of the lead reader, read only', () => {
   it('[ADR-012, ADR-014] reads the console of that pid in a hidden PowerShell child, after the identity check', async () => {
-    const { tools, console } = world('win32')
-    expect(await console.read(TARGET)).toEqual({ kind: 'screen', lines: SCREEN })
+    const { tools, reader } = world('win32')
+    expect(await reader.read(TARGET)).toEqual({ kind: 'screen', lines: SCREEN })
     expect(tools.spawns).toEqual([
       {
         executable: 'powershell.exe',
@@ -72,14 +72,14 @@ describe('WindowsConsoleScreen.read: the visible window of the lead console, rea
 
   it('[ADR-014, INV-51] a target whose process is gone or recycled is never attached to', async () => {
     for (const [why, probed] of GONE) {
-      const { tools, console } = world('win32')
+      const { tools, reader } = world('win32')
       tools.script(TARGET.pid, probed)
-      expect({ why, read: await console.read(TARGET) }).toEqual({ why, read: { kind: 'gone' } })
+      expect({ why, read: await reader.read(TARGET) }).toEqual({ why, read: { kind: 'gone' } })
       expect(tools.spawns).toEqual([])
     }
-    const { tools, console } = world('win32')
+    const { tools, reader } = world('win32')
     tools.script(TARGET.pid, 'unknown')
-    expect(await console.read(TARGET)).toEqual({ kind: 'not-targeted' })
+    expect(await reader.read(TARGET)).toEqual({ kind: 'not-targeted' })
     expect(tools.spawns).toEqual([])
   })
 
@@ -90,11 +90,11 @@ describe('WindowsConsoleScreen.read: the visible window of the lead console, rea
       [{ code: 5 }, { kind: 'failed' }],
       [{ code: 0, stdout: 'garbage!' }, { kind: 'failed' }]
     ] as const) {
-      const { console } = world('win32', () => answer)
-      expect({ answer, read: await console.read(TARGET) }).toEqual({ answer, read })
+      const { reader } = world('win32', () => answer)
+      expect({ answer, read: await reader.read(TARGET) }).toEqual({ answer, read })
     }
-    const { tools, clock, console } = world('win32', () => 'hang')
-    const reading = console.read(TARGET)
+    const { tools, clock, reader } = world('win32', () => 'hang')
+    const reading = reader.read(TARGET)
     await new Promise((resolve) => setImmediate(resolve))
     clock.advance(CONSOLE_SCREEN_TIMEOUT_MS)
     expect(await reading).toEqual({ kind: 'failed' })
@@ -103,8 +103,8 @@ describe('WindowsConsoleScreen.read: the visible window of the lead console, rea
 
   it('[ADR-012] macOS and Linux have no read: nothing runs', async () => {
     for (const platform of ['darwin', 'linux'] as const) {
-      const { tools, console } = world(platform)
-      expect(await console.read(TARGET)).toEqual({ kind: 'not-targeted' })
+      const { tools, reader } = world(platform)
+      expect(await reader.read(TARGET)).toEqual({ kind: 'not-targeted' })
       expect(tools.events).toEqual([])
     }
   })
@@ -113,8 +113,8 @@ describe('WindowsConsoleScreen.read: the visible window of the lead console, rea
 describe('WindowsConsoleScreen.press: one navigation key into the lead console', () => {
   it('[ADR-012, ADR-014] presses ↓, ↑ or Enter into the console of that pid, after the identity check', async () => {
     for (const key of ['down', 'up', 'enter'] as const) {
-      const { tools, console } = world('win32', () => ({ code: 0 }))
-      expect(await console.press(TARGET, key)).toBe('pressed')
+      const { tools, reader } = world('win32', () => ({ code: 0 }))
+      expect(await reader.press(TARGET, key)).toBe('pressed')
       expect([...tools.stdinOf.values()]).toEqual([
         powerShellStdinLine(windowsNavKeyScript(TARGET.pid, key)!)
       ])
@@ -124,9 +124,9 @@ describe('WindowsConsoleScreen.press: one navigation key into the lead console',
 
   it('[ADR-014, INV-51] a gone or recycled target gets no key', async () => {
     for (const [why, probed] of GONE) {
-      const { tools, console } = world('win32', () => ({ code: 0 }))
+      const { tools, reader } = world('win32', () => ({ code: 0 }))
       tools.script(TARGET.pid, probed)
-      expect({ why, outcome: await console.press(TARGET, 'enter') }).toEqual({
+      expect({ why, outcome: await reader.press(TARGET, 'enter') }).toEqual({
         why,
         outcome: 'gone'
       })
@@ -141,10 +141,10 @@ describe('WindowsConsoleScreen.press: one navigation key into the lead console',
       [4, 'incomplete'],
       [1, 'incomplete']
     ] as const) {
-      const { console } = world('win32', () => ({ code }))
-      expect({ code, outcome: await console.press(TARGET, 'down') }).toEqual({ code, outcome })
+      const { reader } = world('win32', () => ({ code }))
+      expect({ code, outcome: await reader.press(TARGET, 'down') }).toEqual({ code, outcome })
     }
-    const { console } = world('linux')
-    expect(await console.press(TARGET, 'down')).toBe('not-targeted')
+    const { reader } = world('linux')
+    expect(await reader.press(TARGET, 'down')).toBe('not-targeted')
   })
 })

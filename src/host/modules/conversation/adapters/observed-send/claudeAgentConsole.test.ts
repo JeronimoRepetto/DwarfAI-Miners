@@ -1,6 +1,6 @@
 // layer: L1
 // L1 (17 §1.1): the pure reader of a Claude Code lead terminal's screen (AMENDMENT-29), over the
-// Claude Code 2.1.310 screens of fixtures/claude/console/2.1.310 (reconstructed from the spike
+// Claude Code 2.1.310 screens of fixtures/claude/observer/2.1.310 (reconstructed from the spike
 // record, see its meta.json). Every screen it cannot read positively is null: the route refuses.
 import { describe, expect, it } from 'vitest'
 import { readAgentConsole } from './claudeAgentConsole'

@@ -61,7 +61,7 @@ export type SubagentSendOutcome =
 
 export interface ClaudeSubagentConsoleSendDeps {
   /** The lead terminal's screen and keys (WindowsConsoleScreen; a fake in tests). */
-  console: ConsoleScreenReader & ConsoleNavigator
+  screen: ConsoleScreenReader & ConsoleNavigator
   /** The text relay's write (ConsoleTextDelivery): the relay text, then Enter, identity-checked. */
   terminal: { write(target: ProcessIdentity, text: string): Promise<TextWriteOutcome> }
   /** Observation's facts of the subagent dwarf, read fresh per send. */
@@ -105,22 +105,22 @@ export class ClaudeSubagentConsoleSend {
     description: string,
     text: string
   ): Promise<SubagentSendOutcome> {
-    const { console: lead_ } = this.deps
+    const { screen } = this.deps
     let state: AgentPlanState = START
     /** Set when the typing failed: whatever the return does, the message was not delivered. */
     let typing: TextWriteOutcome | null = null
     const stopped = (): SubagentSendOutcome =>
       state.sent && typing === null ? DELIVERED : INCOMPLETE
     for (let step = 0; step < MAX_ROUTE_STEPS; step += 1) {
-      const read = await lead_.read(lead)
+      const read = await screen.read(lead)
       if (read.kind === 'gone') return state.sent && typing === null ? DELIVERED : { kind: 'gone' }
       if (read.kind !== 'screen' && state.phase === 'start') return NOT_TARGETED
-      const screen = read.kind === 'screen' ? readAgentConsole(read.lines) : null
-      const planned = planAgentSend(state, screen, description)
+      const shown = read.kind === 'screen' ? readAgentConsole(read.lines) : null
+      const planned = planAgentSend(state, shown, description)
       state = planned.state
       switch (planned.step.kind) {
         case 'press': {
-          const pressed = await lead_.press(lead, planned.step.key)
+          const pressed = await screen.press(lead, planned.step.key)
           if (pressed === 'pressed') break
           if (pressed === 'gone')
             return state.sent && typing === null ? DELIVERED : { kind: 'gone' }

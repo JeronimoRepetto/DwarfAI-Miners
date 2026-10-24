@@ -1097,7 +1097,7 @@ async function bootHost(base: HostBase): Promise<void> {
           // only), read and driven through the same kernel ProcessControl (R17).
           const subagentConsoles = observedObservation.observation.subagentConsoles
           const subagentRoute = new ClaudeSubagentConsoleSend({
-            console: new WindowsConsoleScreen({
+            screen: new WindowsConsoleScreen({
               processes: processControl,
               platform: hostRuntime().os as NodeJS.Platform,
               env: process.env,

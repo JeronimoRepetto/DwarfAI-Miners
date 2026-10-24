@@ -28,7 +28,7 @@ function route(
 ) {
   const asked: DwarfId[] = []
   const sender = new ClaudeSubagentConsoleSend({
-    console: console_,
+    screen: console_,
     terminal: console_,
     platform,
     facts: {
@@ -40,7 +40,7 @@ function route(
       }
     }
   })
-  return { sender, console: console_, asked }
+  return { sender, tui: console_, asked }
 }
 
 /** The fake is back where the person left it: the lead's view, its input focused. */
@@ -48,7 +48,7 @@ function atLeadInput(console_: FakeClaudeLeadConsole): void {
   expect({ view: console_.view, focus: console_.focus }).toEqual({ view: 0, focus: 'input' })
 }
 
-describe('FakeClaudeLeadConsole draws the screens of fixtures/claude/console/2.1.310', () => {
+describe('FakeClaudeLeadConsole draws the screens of fixtures/claude/observer/2.1.310', () => {
   it('[ADR-012] the lead view, the list on main, an open view and the input after a send match the fixture screens', () => {
     const console_ = new FakeClaudeLeadConsole()
     expect(console_.render()).toEqual(agentConsoleScreen('lead-input-empty'))
@@ -64,12 +64,12 @@ describe('FakeClaudeLeadConsole draws the screens of fixtures/claude/console/2.1
 
 describe('ClaudeSubagentConsoleSend: the message reaches that subagent only', () => {
   it('[ADR-012, ADR-014] a row showing an activity summary: each view is opened until the label verifies, the text goes there, the lead view comes back', async () => {
-    const { sender, console } = route()
+    const { sender, tui } = route()
     expect(await sender.send(DWARF, TEXT)).toEqual({ kind: 'delivered' })
-    expect(console.submitted).toEqual([{ to: ECHO, text: TEXT }])
+    expect(tui.submitted).toEqual([{ to: ECHO, text: TEXT }])
     // ↓ into the list, ↓ to delta, Enter (delta's view: no), ↓ to echo, Enter (verified), type,
     // ↓ from the empty input to main, Enter (the lead's view), ↑ (the input gets the focus back).
-    expect(console.keys()).toEqual([
+    expect(tui.keys()).toEqual([
       'down',
       'down',
       'enter',
@@ -80,24 +80,24 @@ describe('ClaudeSubagentConsoleSend: the message reaches that subagent only', ()
       'enter',
       'up'
     ])
-    atLeadInput(console)
+    atLeadInput(tui)
   })
 
   it('[ADR-012] a row still labelled with the description is opened first', async () => {
-    const { sender, console } = route({ description: FOXTROT })
+    const { sender, tui } = route({ description: FOXTROT })
     expect(await sender.send(DWARF, TEXT)).toEqual({ kind: 'delivered' })
-    expect(console.submitted).toEqual([{ to: FOXTROT, text: TEXT }])
-    expect(console.keys().slice(0, 6)).toEqual(['down', 'down', 'down', 'down', 'enter', 'type'])
-    atLeadInput(console)
+    expect(tui.submitted).toEqual([{ to: FOXTROT, text: TEXT }])
+    expect(tui.keys().slice(0, 6)).toEqual(['down', 'down', 'down', 'down', 'enter', 'type'])
+    atLeadInput(tui)
   })
 
   it('[ADR-012] the screen is read before every key and before the typing', async () => {
-    const { sender, console } = route()
+    const { sender, tui } = route()
     await sender.send(DWARF, TEXT)
-    const steps = console.events.filter((event) => !('read' in event))
+    const steps = tui.events.filter((event) => !('read' in event))
     expect(steps.length).toBeGreaterThan(0)
-    console.events.forEach((event, index) => {
-      if (!('read' in event)) expect(console.events[index - 1]).toEqual({ read: true })
+    tui.events.forEach((event, index) => {
+      if (!('read' in event)) expect(tui.events[index - 1]).toEqual({ read: true })
     })
   })
 
@@ -143,30 +143,30 @@ describe('ClaudeSubagentConsoleSend: every doubt refuses before anything is type
 
   it('[ADR-012] no description, or the same description on another live subagent: refused with nothing read', async () => {
     for (const facts of [{ description: null }, { twins: 1 }]) {
-      const { sender, console } = route(facts)
+      const { sender, tui } = route(facts)
       expect(await sender.send(DWARF, TEXT)).toEqual({ kind: 'refused', reason: 'ambiguous' })
-      expect(console.events).toEqual([])
+      expect(tui.events).toEqual([])
     }
   })
 
   it('[ADR-012] a Claude Code version whose layout the route does not know: refused with nothing read', async () => {
     expect(RECOGNISED_CLAUDE_VERSIONS).toEqual(['2.1.310'])
     for (const version of ['2.1.311', '2.1.309', null]) {
-      const { sender, console } = route({ version })
+      const { sender, tui } = route({ version })
       expect(await sender.send(DWARF, TEXT)).toEqual({
         kind: 'refused',
         reason: 'unsupported-version'
       })
-      expect(console.events).toEqual([])
+      expect(tui.events).toEqual([])
     }
   })
 
   it('[ADR-012] no view shows the description: every row tried, nothing typed, the lead view restored', async () => {
-    const { sender, console } = route({ description: 'Review the change' })
+    const { sender, tui } = route({ description: 'Review the change' })
     expect(await sender.send(DWARF, TEXT)).toEqual({ kind: 'refused', reason: 'not-found' })
-    expect(console.submitted).toEqual([])
-    expect(console.keys()).not.toContain('type')
-    atLeadInput(console)
+    expect(tui.submitted).toEqual([])
+    expect(tui.keys()).not.toContain('type')
+    atLeadInput(tui)
   })
 
   it('[ADR-012] a screen that is not the measured layout: refused before any key', async () => {
@@ -182,41 +182,41 @@ describe('ClaudeSubagentConsoleSend: every doubt refuses before anything is type
 
   it('[ADR-012, ADR-014] a lead that is gone, a console that cannot be attached, no target: nothing written', async () => {
     const gone = route()
-    gone.console.readAnswers.push({ kind: 'gone' })
+    gone.tui.readAnswers.push({ kind: 'gone' })
     expect(await gone.sender.send(DWARF, TEXT)).toEqual({ kind: 'gone' })
     const refused = route()
-    refused.console.readAnswers.push({ kind: 'not-targeted' })
+    refused.tui.readAnswers.push({ kind: 'not-targeted' })
     expect(await refused.sender.send(DWARF, TEXT)).toEqual({ kind: 'not-targeted' })
     const unknown = route(null)
     expect(await unknown.sender.send(DWARF, TEXT)).toEqual({ kind: 'not-targeted' })
     expect(unknown.asked).toEqual([DWARF])
     const blank = route()
     expect(await blank.sender.send(DWARF, ' \r\n ')).toEqual({ kind: 'not-targeted' })
-    for (const world of [gone, refused, unknown, blank]) expect(world.console.keys()).toEqual([])
+    for (const world of [gone, refused, unknown, blank]) expect(world.tui.keys()).toEqual([])
   })
 
   it('[ADR-012] a read or a key that fails mid-way stops the route: incomplete, no further key', async () => {
     const reads = route()
-    reads.console.readAnswers.push(...[])
-    const { sender, console } = reads
+    reads.tui.readAnswers.push(...[])
+    const { sender, tui } = reads
     let presses = 0
-    console.afterStep = (c) => {
+    tui.afterStep = (c) => {
       presses += 1
       if (presses === 2) c.readAnswers.push({ kind: 'failed' })
     }
     expect(await sender.send(DWARF, TEXT)).toEqual({ kind: 'incomplete' })
-    expect(console.keys()).toEqual(['down', 'down'])
+    expect(tui.keys()).toEqual(['down', 'down'])
     const keys = route()
-    keys.console.keyAnswers.push('incomplete')
+    keys.tui.keyAnswers.push('incomplete')
     expect(await keys.sender.send(DWARF, TEXT)).toEqual({ kind: 'incomplete' })
-    expect(keys.console.submitted).toEqual([])
+    expect(keys.tui.submitted).toEqual([])
   })
 
   it('[ADR-012] a typing that did not complete is incomplete, never delivered', async () => {
-    const { sender, console } = route()
-    console.writeAnswer = 'incomplete'
+    const { sender, tui } = route()
+    tui.writeAnswer = 'incomplete'
     expect(await sender.send(DWARF, TEXT)).toEqual({ kind: 'incomplete' })
-    expect(console.submitted).toEqual([])
+    expect(tui.submitted).toEqual([])
   })
 })
 
@@ -224,10 +224,10 @@ describe('ClaudeSubagentConsoleSend: Windows only, and never Esc', () => {
   it('[ADR-012] only a Windows Host reaches a subagent; elsewhere nothing is read or pressed', async () => {
     expect(route().sender.reaches()).toBe(true)
     for (const platform of ['darwin', 'linux'] as const) {
-      const { sender, console } = route({}, new FakeClaudeLeadConsole(), platform)
+      const { sender, tui } = route({}, new FakeClaudeLeadConsole(), platform)
       expect(sender.reaches()).toBe(false)
       expect(await sender.send(DWARF, TEXT)).toEqual({ kind: 'not-targeted' })
-      expect(console.events).toEqual([])
+      expect(tui.events).toEqual([])
     }
   })
 

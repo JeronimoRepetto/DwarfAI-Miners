@@ -1,7 +1,7 @@
 // layer: L1
 // L1 (17 §1.1): the planner of the observed-subagent route (AMENDMENT-29; spike §2 keys, §4 return,
 // §5 robustness): given what the lead terminal shows now, the one key, the typing, or the refusal that
-// comes next. Screens: fixtures/claude/console/2.1.310 (reconstructed from the spike record).
+// comes next. Screens: fixtures/claude/observer/2.1.310 (reconstructed from the spike record).
 import { describe, expect, it } from 'vitest'
 import { readAgentConsole } from './claudeAgentConsole'
 import { planAgentSend, START, type AgentPlanState, type AgentPlanStep } from './claudeAgentPlan'

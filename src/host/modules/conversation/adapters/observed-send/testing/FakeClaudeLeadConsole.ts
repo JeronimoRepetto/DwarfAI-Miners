@@ -2,7 +2,7 @@
 // 16 §2.8, 17 §2.2 `Fake<Port>` family): it implements the console-reading capability, the
 // navigation keys and the text relay's `write`, keeps the TUI's state as the spike measured it
 // (odd/handoff/spike-claude-subagent-terminal-input.md §2 keys table, §4 return, §5 shared input) and
-// draws each screen in the layout of fixtures/claude/console/2.1.310. It never starts a process.
+// draws each screen in the layout of fixtures/claude/observer/2.1.310. It never starts a process.
 //
 // What it models: ↓ from the input enters the list on `main` (a multi-line draft keeps it in the
 // input); ↓/↑ move the pointer; ↑ on `main` gives the input the focus; ↑ in the input recalls the last
@@ -168,7 +168,7 @@ export class FakeClaudeLeadConsole implements ConsoleScreenReader, ConsoleNaviga
     this.input = ''
   }
 
-  /** The visible window, in the layout of fixtures/claude/console/2.1.310. */
+  /** The visible window, in the layout of fixtures/claude/observer/2.1.310. */
   render(): string[] {
     const agent = this.view === 0 ? null : this.agents[this.view - 1]!
     const top =
