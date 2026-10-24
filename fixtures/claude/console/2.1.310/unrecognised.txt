@@ -1,0 +1,4 @@
+Microsoft Windows [Version 10.0.26200]
+(c) Microsoft Corporation.
+
+C:\work>

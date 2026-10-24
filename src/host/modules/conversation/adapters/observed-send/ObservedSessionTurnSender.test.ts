@@ -10,6 +10,7 @@ import { FakeClock } from '../../../../kernel/fakes/FakeClock'
 import { FakeScheduler } from '../../../../kernel/fakes/FakeScheduler'
 import type { DwarfId, MessageId } from '../../../../kernel/domain/values'
 import type { TurnInput } from '../../../suppliers'
+import type { TurnSendFailure } from '../../ports/turnSender'
 import { FakeTurnSender } from '../../ports/fakes/FakeTurnSender'
 import {
   runTurnSenderContract,
@@ -18,7 +19,12 @@ import {
 import { SUBMIT_SPLIT_DELAY_MS } from './consoleText'
 import { CodexThreadQueue, type CodexQueueOutcome } from './CodexThreadQueue'
 import { ConsoleTextDelivery, type TextWriteOutcome } from './ConsoleTextDelivery'
-import { ObservedSessionTurnSender, type ObservedSendTarget } from './ObservedSessionTurnSender'
+import type { SubagentSendOutcome } from './ClaudeSubagentConsoleSend'
+import {
+  ObservedSessionTurnSender,
+  SUBAGENT_REFUSAL_COPY,
+  type ObservedSendTarget
+} from './ObservedSessionTurnSender'
 import { ScriptedConsoleTools } from './testing/ScriptedConsoleTools'
 
 const CLAUDE = '00000000-0000-7000-8000-0000000000c1' as DwarfId
@@ -289,6 +295,160 @@ describe('ObservedSessionTurnSender: each outcome is an honest delivery failure'
       codex: { queue: async () => 'queued' }
     })
     expect(await sender.send(CLAUDE, turn('dig'))).toEqual({
+      ok: false,
+      error: { kind: 'channel-error', reason: 'the write into the terminal did not complete' }
+    })
+  })
+})
+
+/*
+ * APPENDED for AMENDMENT-29 (owner, 2026-10-24): an observed Claude SUBAGENT gets the subagent route
+ * (ClaudeSubagentConsoleSend.ts) on a Windows Host, never the lead's own terminal relay.
+ */
+describe('ObservedSessionTurnSender: an observed Claude subagent (AMENDMENT-29)', () => {
+  const SUBAGENT = '00000000-0000-7000-8000-0000000000c4' as DwarfId
+  const SUB_TARGET: ObservedSendTarget = {
+    providerId: 'claude',
+    providerSessionId: 'claude-session-1',
+    providerAgentId: 'a7725068ba6a77d24',
+    process: PROCESS
+  }
+
+  function subagentWorld(
+    outcome: SubagentSendOutcome = { kind: 'delivered' },
+    opts: { reaches?: boolean; target?: ObservedSendTarget } = {}
+  ) {
+    const writes: string[] = []
+    const routed: Array<[DwarfId, string]> = []
+    const sender = new ObservedSessionTurnSender({
+      targets: {
+        targetOf: (dwarfId) => (dwarfId === SUBAGENT ? (opts.target ?? SUB_TARGET) : null)
+      },
+      terminal: {
+        write: async (_target, text) => {
+          writes.push(text)
+          return 'written'
+        }
+      },
+      codex: { queue: async () => 'queued' },
+      subagents: {
+        reaches: () => opts.reaches ?? true,
+        send: async (dwarfId, text) => {
+          routed.push([dwarfId, text])
+          return outcome
+        }
+      }
+    })
+    return { sender, writes, routed }
+  }
+
+  it("[INV-33, ADR-012] a subagent whose lead runs in a Windows console has a send path: the subagent route takes the text, never the lead's relay", async () => {
+    const { sender, writes, routed } = subagentWorld()
+    expect(sender.canDeliverTo(SUBAGENT)).toBe(true)
+    expect(await sender.send(SUBAGENT, turn('dig'))).toEqual({
+      ok: true,
+      value: {
+        confidence: 'unconfirmed',
+        heldUntilTurnEnd: false,
+        correlation: '00000000-0000-7000-8000-0000000000a1',
+        reactionEvidence: 'transcript-match'
+      }
+    })
+    expect(routed).toEqual([[SUBAGENT, 'dig']])
+    expect(writes).toEqual([])
+  })
+
+  it('[INV-33, ADR-014] off Windows, without a recorded lead process or without the route: no send path, as today', async () => {
+    const worlds = [
+      subagentWorld(undefined, { reaches: false }),
+      subagentWorld(undefined, { target: { ...SUB_TARGET, process: null } })
+    ]
+    for (const { sender, writes, routed } of worlds) {
+      expect(sender.canDeliverTo(SUBAGENT)).toBe(false)
+      expect(await sender.send(SUBAGENT, turn('dig'))).toEqual({
+        ok: false,
+        error: { kind: 'session-closed' }
+      })
+      expect([writes, routed]).toEqual([[], []])
+    }
+    const without = new ObservedSessionTurnSender({
+      targets: { targetOf: () => SUB_TARGET },
+      terminal: { write: async () => 'written' },
+      codex: { queue: async () => 'queued' }
+    })
+    expect(without.canDeliverTo(SUBAGENT)).toBe(false)
+  })
+
+  it('[ADR-022, S7.06, S7.07] each refusal and failure of the route is an honest delivery failure', async () => {
+    const cases: Array<[SubagentSendOutcome, TurnSendFailure]> = [
+      [{ kind: 'gone' }, { kind: 'session-closed' }],
+      [
+        { kind: 'not-targeted' },
+        { kind: 'channel-error', reason: 'the terminal of that session cannot be targeted' }
+      ],
+      [
+        { kind: 'incomplete' },
+        { kind: 'channel-error', reason: 'the write into the terminal did not complete' }
+      ],
+      [
+        { kind: 'refused', reason: 'draft' },
+        { kind: 'channel-error', reason: SUBAGENT_REFUSAL_COPY.draft }
+      ],
+      [
+        { kind: 'refused', reason: 'ambiguous' },
+        { kind: 'channel-error', reason: SUBAGENT_REFUSAL_COPY.ambiguous }
+      ],
+      [
+        { kind: 'refused', reason: 'not-found' },
+        { kind: 'channel-error', reason: SUBAGENT_REFUSAL_COPY['not-found'] }
+      ],
+      [
+        { kind: 'refused', reason: 'unrecognised-screen' },
+        { kind: 'channel-error', reason: SUBAGENT_REFUSAL_COPY.unrecognised }
+      ],
+      [
+        { kind: 'refused', reason: 'unsupported-version' },
+        { kind: 'channel-error', reason: SUBAGENT_REFUSAL_COPY.unrecognised }
+      ]
+    ]
+    for (const [outcome, error] of cases) {
+      expect({
+        outcome,
+        result: await subagentWorld(outcome).sender.send(SUBAGENT, turn('dig'))
+      }).toEqual({
+        outcome,
+        result: { ok: false, error }
+      })
+    }
+    // Copy design has not written: each refusal is a marked placeholder, never invented text.
+    for (const reason of Object.values(SUBAGENT_REFUSAL_COPY)) {
+      expect(reason).toMatch(/^⟦COPY NEEDED: AMENDMENT-29 .+⟧$/)
+    }
+  })
+
+  it('[US-MSG-002.AC03, ADR-022] a subagent view takes no file: the message is refused whole, nothing typed', async () => {
+    const { sender, routed } = subagentWorld()
+    const attached = turn('dig', { attachments: [{ path: 'C:\a.png', name: 'a.png', bytes: 1 }] })
+    expect(await sender.send(SUBAGENT, attached)).toEqual({
+      ok: false,
+      error: { kind: 'channel-error', reason: SUBAGENT_REFUSAL_COPY.files }
+    })
+    expect(routed).toEqual([])
+  })
+
+  it('[ADR-012] a route that throws is a channel error, never a silent loss', async () => {
+    const sender = new ObservedSessionTurnSender({
+      targets: { targetOf: () => SUB_TARGET },
+      terminal: { write: async () => 'written' },
+      codex: { queue: async () => 'queued' },
+      subagents: {
+        reaches: () => true,
+        send: async () => {
+          throw new Error('boom')
+        }
+      }
+    })
+    expect(await sender.send(SUBAGENT, turn('dig'))).toEqual({
       ok: false,
       error: { kind: 'channel-error', reason: 'the write into the terminal did not complete' }
     })
