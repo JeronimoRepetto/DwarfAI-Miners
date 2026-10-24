@@ -55,6 +55,13 @@ function vault(sample: GoldenSample): MaterialTotals {
 }
 
 /*
+ * The offered permission modes the Host answers per provider (suppliers' catalog records, ISSUE-228): "Ask first" for
+ * every provider whose permission ceiling can ask, none for Antigravity. Sample data, as the Host would send it, so the
+ * goldens draw "Permissions: Ask first" as the design does (anatomy.md, the Add panel).
+ */
+const ASK_FIRST_PROVIDERS: ReadonlySet<string> = new Set(['claude', 'codex', 'opencode'])
+
+/*
  * The sample's providers as A-36 answers them from the step-3a switch (ISSUE-001; 14 §3.6 `SupplierEntryView`): one entry
  * per provider, its catalogue's models each carrying the catalogue's efforts, launchable as the sample says.
  */
@@ -69,8 +76,8 @@ function supplierEntries(sample: GoldenSample): SupplierEntryView[] {
         ...(model.label === undefined ? {} : { label: model.label }),
         efforts: [...(model.effortLevels ?? catalog?.efforts ?? [])]
       })),
-      permissionModes: [],
-      offeredModes: [],
+      permissionModes: ASK_FIRST_PROVIDERS.has(option.provider) ? ['ask-first'] : [],
+      offeredModes: ASK_FIRST_PROVIDERS.has(option.provider) ? ['ask-first'] : [],
       installed: option.installed,
       publicLaunch: option.launchable ? 'enabled' : 'gated',
       answerChannel: 'available'
