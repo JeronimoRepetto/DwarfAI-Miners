@@ -54,7 +54,12 @@ export function vetaTakesPointer(hit: Element | null): boolean {
   if (hit === null) return false
   const tab = hit.closest('[data-veta-tab]')
   if (tab !== null) return tab.getAttribute('data-risen') === 'true'
-  return hit.closest('[data-veta-island], [data-veta-overlay-card], [data-veta-risen]') !== null
+  // A menu the risen chat opened floats on the body (`.dm-menu-float`, its ⋯ menu): it takes the pointer too (S24.13).
+  return (
+    hit.closest(
+      '[data-veta-island], [data-veta-overlay-card], [data-veta-risen], .dm-menu-float'
+    ) !== null
+  )
 }
 
 /** Click-through over the page's own `window.api` (R13: `window.api` is read in composables only). */

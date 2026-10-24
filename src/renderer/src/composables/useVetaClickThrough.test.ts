@@ -72,3 +72,15 @@ describe('useVetaClickThrough (ADR-025 item 4; 14 §2.2 A-N22)', () => {
     document.body.innerHTML = ''
   })
 })
+
+// APPENDED for ISSUE-293 (AMENDMENT-27): the risen chat's ⋯ menu floats on the body, outside the risen card.
+describe('the risen chat menu takes the pointer (ISSUE-293)', () => {
+  it('[US-DLG-006.AC02, S24.13, ADR-025] a menu the risen chat opened takes the pointer, so its Mine history row can be pressed', () => {
+    document.body.innerHTML = `
+      <div data-veta-root><div data-veta-risen><section class="dm-msg"></section></div></div>
+      <div class="dm-menu-float"><button role="menuitem">Mine history</button></div>`
+    expect(vetaTakesPointer(document.querySelector('[role="menuitem"]'))).toBe(true)
+    expect(vetaTakesPointer(document.querySelector('.dm-menu-float'))).toBe(true)
+    document.body.innerHTML = ''
+  })
+})

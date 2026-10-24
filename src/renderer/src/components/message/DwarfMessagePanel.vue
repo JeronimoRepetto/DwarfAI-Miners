@@ -38,7 +38,6 @@ import {
   STOP_DWARF_BODY,
   bubbleMark,
   dayLabel,
-  MENU_HISTORY,
   messagePanelChips,
   messagePanelMenu,
   messagePanelMenuAction,
@@ -210,7 +209,7 @@ const props = defineProps<{
   /**
    * The mode window hosting this chat (ISSUE-293; BR-21: one component in every mode). In Veta the header offers
    * "▢ Open in the Panel" (screens/message.md, Header: "only when the chat rose from Veta"; US-MSG-010.AC02, AC03),
-   * and the mine-history request stays hidden until the Panel can be opened on the history (BR-19; 07 S24.13 waits on
+   * and its ⋯ menu's mine-history request hands the chat off to the Panel on the history (07 S24.13; AMENDMENT-27,
    * `ModeTransition.slot`). In Valle's pins and panes (TVC) "▢ Open in the Panel" does not show; AMENDED for ISSUE-311
    * (was: and the panel registers no mode-transition hand-off), it registers its hand-off while it is the chat in focus
    * (`inFocus`), the one a run carries (07 machine 9, S28.21); AMENDED for ISSUE-308 (was: no Mine history either), its
@@ -973,27 +972,20 @@ const { setName, resetName: resetDwarfName } = useDwarfRename()
  * never depends on the turn (OQ-54).
  */
 const offersReset = computed(() => props.dwarf.customName !== undefined)
-/** Hosted in Veta: the hand-off tool shows, and the mine-history request is not offered yet (BR-19). */
-const inVeta = computed(() => props.hostedIn === 'veta')
 /**
- * Hosted in Veta: the mine-history request is not offered yet (BR-19). AMENDED for ISSUE-308 (was: nor in Valle): in
- * Valle it shows the mine's history in its zone from the Control room stack (07 S31.11) and opens the drawer under the
- * chats from the Work front's deck (S36.01; US-VALLE-011.AC01).
+ * Hosted in Veta: the header's hand-off tool stands where the History tool stands. AMENDED for AMENDMENT-27 (owner,
+ * 2026-10-24; was: the mine-history request not offered in Veta, BR-19): the ⋯ menu's Mine history is offered in every
+ * host; in Veta it hands the chat off to the Panel on the mine's history (07 S24.13), in Valle it shows the history in
+ * its zone or the drawer (S31.11, S36.01), in the Panel in the dock's slot.
  */
-const offersHistory = computed(() => props.hostedIn !== 'veta')
-const menu = computed(() => {
-  const entries = messagePanelMenu(
-    props.stopDisabled === true ? 'stopping' : null,
-    offersReset.value
-  )
-  return offersHistory.value ? entries : entries.filter((_, i) => i !== MENU_HISTORY)
-})
+const inVeta = computed(() => props.hostedIn === 'veta')
+const menu = computed(() =>
+  messagePanelMenu(props.stopDisabled === true ? 'stopping' : null, offersReset.value)
+)
 const stopAsked = ref(false)
 
 function onMenu(index: number): void {
-  // In Veta the menu lacks its Mine history row: a pick past it names the row one further down.
-  const row = !offersHistory.value && index >= MENU_HISTORY ? index + 1 : index
-  const picked = messagePanelMenuAction(row, offersReset.value)
+  const picked = messagePanelMenuAction(index, offersReset.value)
   if (picked === 'console') emit('open-console')
   else if (picked === 'history') emit('history')
   else if (picked === 'reset-name') void resetName()
@@ -1200,7 +1192,7 @@ async function resetName(): Promise<void> {
           @click="emit('open-in-panel')"
         />
         <ActionButton
-          v-else-if="offersHistory"
+          v-else
           icon="history"
           size="sm"
           title="Mine history"

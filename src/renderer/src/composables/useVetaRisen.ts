@@ -269,9 +269,15 @@ export function useVetaRisen(deps: VetaRisenDeps): VetaRisen {
         host.bringMine(effect.mineId)
         return true
       case 'move-to-panel':
-        // S24.12: machine 27 runs the move and machine 9 carries the chat; UI main out of reach moves nothing.
+        // S24.12, S24.13: machine 27 runs the move and machine 9 carries the chat, on the history slot for a history
+        // request; UI main out of reach moves nothing.
         void bridge
-          .moveToMode({ mode: 'panel', mineId: effect.mineId, dwarfId: effect.dwarfId })
+          .moveToMode({
+            mode: 'panel',
+            mineId: effect.mineId,
+            dwarfId: effect.dwarfId,
+            ...(effect.slot === undefined ? {} : { slot: effect.slot })
+          })
           .catch(() => undefined)
         return true
       case 'log-refused':

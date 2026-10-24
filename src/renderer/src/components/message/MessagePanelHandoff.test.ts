@@ -135,17 +135,26 @@ describe('MessagePanel chat hand-off (ISSUE-284)', () => {
     expect(hosted.emitted('open-in-panel')).toHaveLength(1)
   })
 
-  it('[US-DLG-006.AC02, BR-19] a chat hosted in Veta offers no mine-history request until the Panel can be opened on the history (pending amendment)', async () => {
-    const hosted = mount(DwarfMessagePanel, { props: { dwarf, hostedIn: 'veta' } })
-    // Neither the History tool nor the ⋯ menu's Mine history is drawn: hidden until built (BR-19).
+  // AMENDED for AMENDMENT-27 (owner, 2026-10-24; was: no mine-history request in Veta until the Panel could be opened on
+  // the history, BR-19): `ModeTransition.slot` lets the Panel open on the history, so the request is built (07 S24.13).
+  it('[US-DLG-006.AC02, S24.13] a chat hosted in Veta offers Mine history in its ⋯ menu, its header keeping Open in the Panel', async () => {
+    const hosted = mount(DwarfMessagePanel, {
+      props: { dwarf, hostedIn: 'veta' },
+      attachTo: document.body
+    })
+    // The header's hand-off tool stands where the Panel's History tool stands.
     expect(hosted.find('.dm-msg__tools button[title="Mine history"]').exists()).toBe(false)
+    expect(hosted.find('.dm-msg__tools button[title="Open in the Panel"]').exists()).toBe(true)
     await hosted.get('.dm-msg__tools button[title="More"]').trigger('click')
-    const items = [...document.querySelectorAll('[role="menuitem"]')].map((i) =>
-      i.textContent?.trim()
+    const items = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+    expect(items.map((i) => i.textContent?.trim())).toEqual(
+      expect.arrayContaining(['Open console', 'Mine history'])
     )
-    expect(items).toContain('Open console')
-    expect(items).not.toContain('Mine history')
-    expect(hosted.emitted('history')).toBeUndefined()
+    items.find((i) => i.textContent?.trim() === 'Mine history')!.click()
+    await flushPromises()
+    expect(hosted.emitted('history')).toHaveLength(1)
+    expect(hosted.emitted('open-console')).toBeUndefined()
+    hosted.unmount()
   })
 
   // APPENDED for ISSUE-293: the scroll anchor by Host message id (ADR-024 item 3; OQ-37 B; INV-114).

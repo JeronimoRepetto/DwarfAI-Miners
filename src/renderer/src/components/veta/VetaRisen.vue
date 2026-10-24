@@ -14,8 +14,8 @@
  * before a rise and shrunk after a fold, never during one (`useVetaRisen`).
  *
  * The chat is hosted as Veta's (`hostedIn: 'veta'`), so its header offers "▢ Open in the Panel" (S24.12; ISSUE-293),
- * relayed as `open-in-panel`; its mine-history request stays hidden until the Panel can be opened on the history
- * (S24.13, pending `ModeTransition.slot`).
+ * relayed as `open-in-panel`; its ⋯ menu's mine-history request is relayed as `history` (S24.13; AMENDMENT-27), the
+ * Panel opening on the mine's history.
  */
 import type { ChatViewState } from '@dwarfai/contracts'
 import { computed, nextTick, onBeforeUnmount, ref, type CSSProperties } from 'vue'
@@ -50,6 +50,8 @@ const emit = defineEmits<{
   close: []
   /** "▢ Open in the Panel" in the chat header (S24.12). */
   'open-in-panel': []
+  /** "Mine history" in the chat's ⋯ menu (S24.13). */
+  history: []
 }>()
 
 const root = ref<HTMLElement | null>(null)
@@ -211,6 +213,7 @@ defineExpose({ play, focusContent, captureView, restoreView })
       hosted-in="veta"
       :open-at="openAt"
       @open-in-panel="emit('open-in-panel')"
+      @history="emit('history')"
       @draft="(dwarfId, text) => emit('draft', dwarfId, text)"
       @close="emit('close')"
     />

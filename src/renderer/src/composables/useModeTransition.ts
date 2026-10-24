@@ -17,7 +17,10 @@
  * The chat hand-off (ISSUE-293; 07 machine 9; UC-051): before the source flushes, an input-method composition in
  * progress is ended, so what it held travels as draft text (S9.02, US-DLG-006.AC03). A target carrying a chat first
  * opens it (`onArrival`: the Panel's mine column and chat), and restores the draft and view into that chat alone. A
- * window that hears the carried chat after landing (`onLanded`: Veta's rise, S24.18) is told M + 60 ms after `t0`. A
+ * window that hears the carried chat after landing (`onLanded`: Veta's rise, S24.18) is told M + 60 ms after `t0`.
+ * Both hear the run's slot (`ModeTransition.slot`, AMENDMENT-27; S24.13): on `'history'` the target opens the mine's
+ * history on that dwarf's tab instead of the chat, waits for no chat, and keeps the carried draft and view in the session
+ * store for when that chat next opens here, restoring them then. A
  * carried chat heard before the window could open it (Valle's root mounts once its stores were read, S39.03; ISSUE-311)
  * is kept and opened when `onArrival` registers, its draft and view restored into it then; the run never waits for it. A
  * run into the Panel carrying no chat opens the mine the session store names as the Panel's current mine
@@ -74,6 +77,17 @@ export interface ChatHandoff {
 /** The chat a run carries (14 §3.9 `ModeTransition.chat`). */
 export type CarriedChat = NonNullable<ModeTransition['chat']>
 
+/**
+ * What the target opens for the carried chat (14 §3.9 `ModeTransition.slot`, AMENDMENT-27; 07 S24.13): the chat, or the
+ * mine's history on that dwarf's tab. A transition without it means the chat.
+ */
+export type CarriedSlot = NonNullable<ModeTransition['slot']>
+
+/** The run's slot, `'chat'` when it names none. */
+export function carriedSlot(t: Pick<ModeTransition, 'slot'>): CarriedSlot {
+  return t.slot ?? 'chat'
+}
+
 export interface ModeTransitionDeps {
   bridge: ModeTransitionBridge
   clock: ModeTransitionClock
@@ -90,14 +104,14 @@ export interface ModeTransitionPart {
   /** Registers the open chat's hand-off; answers the unregister. */
   register(handoff: ChatHandoff): () => void
   /** Opens the carried chat in this window before its draft and view are restored; answers the unregister. */
-  onArrival(open: (chat: CarriedChat) => Promise<void> | void): () => void
+  onArrival(open: (chat: CarriedChat, slot: CarriedSlot) => Promise<void> | void): () => void
   /**
    * Opens the mine the session store names for this window's host (`currentMine`) when a run with no chat lands here,
    * before the content shows (S27.01, S22.13); answers the unregister.
    */
   onMineArrival(open: (mineId: MineId) => void): () => void
   /** Hears the carried chat once this window landed as a run's target; answers the unregister. */
-  onLanded(hear: (chat: CarriedChat) => void): () => void
+  onLanded(hear: (chat: CarriedChat, slot: CarriedSlot) => void): () => void
   /** Hears each run this window left, once its source half ended and its content is veiled; answers the unregister. */
   onLeft(hear: (t: ModeTransition) => void): () => void
   /**
@@ -115,13 +129,18 @@ export const CHAT_RISE_AFTER_MS = 60
 export function useModeTransition(deps: ModeTransitionDeps): ModeTransitionPart {
   const { bridge, clock } = deps
   let handoff: ChatHandoff | null = null
-  let arrival: ((chat: CarriedChat) => Promise<void> | void) | null = null
+  let arrival: ((chat: CarriedChat, slot: CarriedSlot) => Promise<void> | void) | null = null
   let mineArrival: ((mineId: MineId) => void) | null = null
-  let landed: ((chat: CarriedChat) => void) | null = null
+  let landed: ((chat: CarriedChat, slot: CarriedSlot) => void) | null = null
   let left: ((t: ModeTransition) => void) | null = null
   let entered: ((t: ModeTransition) => void) | null = null
   /** A carried chat heard before this window registered how to open it (`onArrival`), opened once it does. */
-  let unopened: CarriedChat | null = null
+  let unopened: { chat: CarriedChat; slot: CarriedSlot } | null = null
+  /**
+   * A chat carried here on the history slot (S24.13): the history fills the slot, so its draft and view are kept in the
+   * session store and restored when that chat opens here later ("the draft is kept for when that chat opens").
+   */
+  let kept: CarriedChat | null = null
   /** A carried chat opened here whose panel has not registered yet, and what its registration settles. */
   let awaited: { dwarfId: DwarfId; registered: () => void } | null = null
   /** The runs this renderer took part in: one answer each. */
@@ -153,13 +172,35 @@ export function useModeTransition(deps: ModeTransitionDeps): ModeTransitionPart 
 
   async function restore(t: ModeTransition): Promise<void> {
     const chat = t.chat
+    kept = null
     if (chat === undefined) return openNamedMine(t)
+    const slot = carriedSlot(t)
+    if (slot === 'history') {
+      // S24.13: the window opens on the mine's history, on this dwarf's tab; no chat mounts, so nothing waits for one.
+      kept = chat
+      if (arrival === null) unopened = { chat, slot }
+      else await opened(arrival, chat, slot)
+      return
+    }
     // S27.01: the window opens on the carried chat first (the Panel's mine column and chat, US-MSG-010.AC01).
-    if (handoff?.open() !== chat.dwarfId && arrival === null) unopened = chat
+    if (handoff?.open() !== chat.dwarfId && arrival === null) unopened = { chat, slot }
     if (handoff?.open() !== chat.dwarfId && arrival !== null) {
       await open(arrival, chat, t.t0 + MODE_MOTION_MS)
     }
     await restoreInto(chat)
+  }
+
+  /** Runs the window's opener; one that fails leaves the window as it is, and the run still plays. */
+  async function opened(
+    opening: (chat: CarriedChat, slot: CarriedSlot) => Promise<void> | void,
+    chat: CarriedChat,
+    slot: CarriedSlot
+  ): Promise<void> {
+    try {
+      await opening(chat, slot)
+    } catch {
+      // Nothing opened: the window shows what it shows.
+    }
   }
 
   /**
@@ -169,12 +210,12 @@ export function useModeTransition(deps: ModeTransitionDeps): ModeTransitionPart 
    * nothing.
    */
   async function open(
-    opening: (chat: CarriedChat) => Promise<void> | void,
+    opening: (chat: CarriedChat, slot: CarriedSlot) => Promise<void> | void,
     chat: CarriedChat,
     until: number | null
   ): Promise<void> {
     try {
-      await opening(chat)
+      await opening(chat, 'chat')
       if (handoff?.open() !== chat.dwarfId) {
         await registration(chat.dwarfId, until ?? clock.now() + MODE_MOTION_MS)
       }
@@ -256,6 +297,7 @@ export function useModeTransition(deps: ModeTransitionDeps): ModeTransitionPart 
         void deps.play(half).then(() => answer(t))
       })
     if (t.role === 'source') {
+      kept = null
       flush()
       playAtT0()
       return
@@ -265,7 +307,7 @@ export function useModeTransition(deps: ModeTransitionDeps): ModeTransitionPart 
       // S24.18: the carried chat is heard M + 60 ms after `t0`, once the shell motion has landed (at `t0` under
       // reduced motion, where the shell motion lasts 0 ms).
       const after = deps.reducedMotion() ? 0 : MODE_MOTION_MS + CHAT_RISE_AFTER_MS
-      atT0(t.t0 + after, () => landed?.(chat))
+      atT0(t.t0 + after, () => landed?.(chat, carriedSlot(t)))
     }
     void restore(t).then(playAtT0)
   }
@@ -280,6 +322,12 @@ export function useModeTransition(deps: ModeTransitionDeps): ModeTransitionPart 
         awaited = null
         registered()
       }
+      // S24.13: the chat the history slot kept opens here now: its draft and view come back, once.
+      if (kept !== null && next.open() === kept.dwarfId) {
+        const chat = kept
+        kept = null
+        void restoreInto(chat)
+      }
       return () => {
         if (handoff === next) handoff = null
       }
@@ -287,9 +335,11 @@ export function useModeTransition(deps: ModeTransitionDeps): ModeTransitionPart 
     onArrival(opening) {
       arrival = opening
       // A chat carried here before this window could open it (ISSUE-311): opened now, its draft and view restored.
-      const chat = unopened
+      const carried = unopened
       unopened = null
-      if (chat !== null) {
+      if (carried?.slot === 'history') void opened(opening, carried.chat, 'history')
+      else if (carried !== null) {
+        const { chat } = carried
         void open(opening, chat, null).then(() => restoreInto(chat))
       }
       return () => {
