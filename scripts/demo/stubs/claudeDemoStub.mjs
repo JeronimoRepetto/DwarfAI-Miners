@@ -21,7 +21,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import path from 'node:path'
 import { createInterface } from 'node:readline'
 import { playStub } from '../../../fixtures/bin/_kit/stubCli.mjs'
-import { behaviorFor } from './behavior.mjs'
+import { behaviorFor, replyOf } from './behavior.mjs'
 import {
   agentIdOf,
   claudeSessionFile,
@@ -300,7 +300,8 @@ function startSubagents(sessionId, spawns) {
         })
       }
       await pause(Math.min(spawn.stepMs, 1_500))
-      said([{ type: 'text', text: spawn.reply }], 'end_turn')
+      // Each pass says something new (`replyOf`): a working worker never repeats itself back to back.
+      said([{ type: 'text', text: replyOf(spawn, pass) }], 'end_turn')
       if (spawn.end !== 'loop') break
     }
     if (spawn.end === 'complete') {
@@ -325,6 +326,8 @@ function runSession(worldDir, argv) {
   let messages = 0
   let turns = 0
   let spawned = false
+  /** How many times each prompt was answered: its next reply is the next one in turn. */
+  const answered = new Map()
   let relay = null
 
   const assistant = (content, stopReason, tokens) => {
@@ -391,7 +394,9 @@ function runSession(worldDir, argv) {
       )
       emit(toolResultLine(id, toolResult(step), false))
     }
-    let reply = behavior.reply
+    const times = answered.get(text) ?? 0
+    answered.set(text, times + 1)
+    let reply = replyOf(behavior, times)
     if (behavior.ask?.kind === 'permission') {
       await pause(Math.min(behavior.stepMs, 2_000))
       const id = `toolu_demo_${turns}_ask`

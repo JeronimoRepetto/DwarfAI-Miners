@@ -12,7 +12,7 @@ import {
   stubScriptOf,
   timelineOf
 } from './scenario.mjs'
-import { behaviorFor } from './stubs/behavior.mjs'
+import { behaviorFor, replyOf } from './stubs/behavior.mjs'
 
 const showcase = SCENARIOS.showcase
 const behaviorOf = (dwarf, speed = 1) =>
@@ -261,5 +261,71 @@ describe('the stub behaviour lookup', () => {
     expect(behaviorFor(script, `  ${text}\n`)).toEqual(behavior)
     expect(behaviorFor(script, 'Something nobody scripted.')).toEqual(script.fallback)
     expect(behaviorFor(null, 'anything')).toMatchObject({ ask: null, steps: [] })
+  })
+})
+
+describe('varied replies', () => {
+  const sequence = (behavior, count) =>
+    Array.from({ length: count }, (_, n) => replyOf(behavior, n))
+  const noBackToBack = (list) => list.every((text, at) => at === 0 || text !== list[at - 1])
+
+  it('never gives a foreman the same reply twice in a row, whatever it is asked', () => {
+    for (const provider of ['claude', 'codex']) {
+      for (const [text, behavior] of Object.entries(
+        stubScriptOf(showcase, provider, 1).behaviors
+      )) {
+        expect(noBackToBack(sequence(behavior, 12)), `${provider}: ${text}`).toBe(true)
+      }
+    }
+  })
+
+  it('never gives a working worker the same reply twice in a row, pass after pass', () => {
+    for (const foreman of foremenOf(showcase)) {
+      for (const spawn of behaviorOf(foreman).spawns.filter((s) => s.end === 'loop')) {
+        expect(noBackToBack(sequence(spawn, 12)), spawn.key).toBe(true)
+      }
+    }
+  })
+
+  it('sends a foreman a different follow-up each time, so its replies follow suit', () => {
+    const held = foremenOf(showcase).find((d) => !d.asks)
+    const texts = [0, 1, 2, 3, 4, 5].map(
+      (sent) =>
+        holdPlan(
+          showcase,
+          [{ key: held.key, status: 'idle', idleSince: 0, sent }],
+          600_000,
+          1,
+          0
+        )[0].text
+    )
+    expect(noBackToBack(texts)).toBe(true)
+  })
+
+  it('names every foreman and every worker', () => {
+    for (const dwarf of dwarfsOf(showcase))
+      expect(dwarf.name, dwarf.key).toEqual(expect.any(String))
+  })
+})
+
+describe('varied replies over a whole hold', () => {
+  it('gives a foreman a different reply each time the hold loop sends it the next follow-up', () => {
+    const held = foremenOf(showcase).find((d) => !d.asks)
+    const script = stubScriptOf(showcase, held.provider, 1)
+    const seen = new Map()
+    const replies = []
+    for (let sent = 0; sent < 24; sent++) {
+      const [send] = holdPlan(
+        showcase,
+        [{ key: held.key, status: 'idle', idleSince: 0, sent }],
+        600_000,
+        1,
+        0
+      )
+      const n = seen.get(send.text) ?? 0
+      seen.set(send.text, n + 1)
+      replies.push(replyOf(script.behaviors[send.text], n))
+    }
+    expect(replies.every((text, at) => at === 0 || text !== replies[at - 1])).toBe(true)
   })
 })

@@ -18,7 +18,7 @@ import { appendFileSync, mkdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
-import { behaviorFor } from './behavior.mjs'
+import { behaviorFor, replyOf } from './behavior.mjs'
 import { readScript } from './claudeDemoStub.mjs'
 import { replyItems, userItems } from './codexItems.mjs'
 import { codexRolloutFile, codexSubthreadMeta, threadIdOf } from './subagents.mjs'
@@ -160,7 +160,8 @@ function startSubthreads(parentThreadId, cwd, spawns) {
         rate_limits: null
       })
     }
-    for (;;) {
+    let last = spawn.reply
+    for (let pass = 0; ; pass++) {
       for (let step = 0; step < spawn.steps.length; step++) {
         await pause(spawn.stepMs)
         spend()
@@ -170,12 +171,13 @@ function startSubthreads(parentThreadId, cwd, spawns) {
         type: 'message',
         id: randomUUID(),
         role: 'assistant',
-        content: [{ type: 'output_text', text: spawn.reply }],
+        // Each pass says something new (`replyOf`): a working worker never repeats itself back to back.
+        content: [{ type: 'output_text', text: (last = replyOf(spawn, pass)) }],
         phase: spawn.end === 'loop' ? 'commentary' : 'final_answer'
       })
       if (spawn.end !== 'loop') break
     }
-    write('event_msg', { type: 'task_complete', turn_id: turnId, last_agent_message: spawn.reply })
+    write('event_msg', { type: 'task_complete', turn_id: turnId, last_agent_message: last })
   }
 }
 
@@ -189,6 +191,8 @@ function runServer(worldDir) {
   let open = null
   let rollout = () => {}
   let spawned = false
+  /** How many times each prompt was answered: its next reply is the next one in turn. */
+  const answered = new Map()
   const total = {
     totalTokens: 0,
     inputTokens: 0,
@@ -315,7 +319,9 @@ function runServer(worldDir) {
       })
       spend(turnId, share)
     }
-    let reply = behavior.reply
+    const times = answered.get(text) ?? 0
+    answered.set(text, times + 1)
+    let reply = replyOf(behavior, times)
     if (behavior.ask?.kind === 'question') {
       const itemId = randomUUID()
       const answered = await ask('item/tool/requestUserInput', {
