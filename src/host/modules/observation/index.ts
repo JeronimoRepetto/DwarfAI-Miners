@@ -29,6 +29,11 @@ import type { ObservationEvent } from './application/events'
 import type { ObservationControl } from './application/observationControl'
 import { ObservationLoop, type ObservedPresence } from './application/observationLoop'
 import { createObservationQueries, type ObservationQueries } from './application/observationQueries'
+import {
+  observedSubagentConsoles,
+  type ObservedSubagentConsoleRegistry,
+  type ObservedSubagentConsoles
+} from './application/subagentConsoles'
 import type { CursorStore } from './ports/cursorStore'
 import type { ObservationAdapter } from './ports/observationAdapter'
 import type { EndedAgentLedger } from './ports/endedAgentLedger'
@@ -82,6 +87,11 @@ export {
   type ObservedPresence
 } from './application/observationLoop'
 export type { ObservationQueries } from './application/observationQueries'
+export type {
+  ObservedSubagentConsoleRegistry,
+  ObservedSubagentConsoles,
+  ObservedSubagentSendFacts
+} from './application/subagentConsoles'
 export {
   observedTransition,
   type ObservedSessionState,
@@ -135,6 +145,11 @@ export interface ObservationDeps {
    */
   processRegistries?: readonly ObservedProcessRegistry[]
   /**
+   * AMENDMENT-29: the adapters that can tell an observed subagent's lead terminal (the Claude
+   * adapter); none answers `null` for every dwarf, so no subagent has a send path.
+   */
+  subagentConsoles?: readonly ObservedSubagentConsoleRegistry[]
+  /**
    * The adapters that can tell whether an observed session's process runs (the Claude adapter);
    * a session one of them reports `not-live` arrives already departed (owner decision B).
    */
@@ -187,6 +202,11 @@ export interface Observation {
   processIdentities: ObservedProcessIdentities
   /** Stub. */
   identities: ObservedIdentities
+  /**
+   * AMENDMENT-29: an observed subagent's lead terminal (its lead's process identity, description,
+   * twins and version), read by the observed-subagent route; known like `processIdentities`.
+   */
+  subagentConsoles: ObservedSubagentConsoles
   /** Resolves once no observation cycle is in flight (tests and an orderly shutdown). */
   whenIdle(): Promise<void>
 }
@@ -215,6 +235,10 @@ export function createObservation(deps: ObservationDeps): Observation {
       }
     },
     identities: { identityOf: (dwarfId) => loop.identityOf(dwarfId) },
+    subagentConsoles: observedSubagentConsoles(
+      (dwarfId) => loop.identityOf(dwarfId),
+      deps.subagentConsoles ?? []
+    ),
     whenIdle: () => loop.whenIdle()
   }
 }

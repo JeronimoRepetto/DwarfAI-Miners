@@ -4,14 +4,16 @@
 // `DriverSession.sendTurn` hands the turn over on stdin or the protocol, never argv (15 §1.2).
 // `routedTurnSender` (ISSUE-167) sends every other dwarf that is observed to the observed-session
 // relay (`ObservedSessionTurnSender`), over the targets `observedSendTargets` reads from crew and
-// observation.
+// observation. AMENDMENT-29: an observed Claude subagent's target carries its agent id and its LEAD
+// session's process identity (`ObservedSubagentConsoles.leadProcessOf`), never a process of its own.
 import type { DwarfId, ProviderIdentity } from '../../kernel/domain/values'
 import type { TurnSender, TurnSendFailure, TurnSendResult } from '../../modules/conversation'
 import type { ObservedSendTarget } from '../../modules/conversation/adapters/observed-send/ObservedSessionTurnSender'
 import type {
   ObservationQueries,
   ObservedIdentities,
-  ObservedProcessIdentities
+  ObservedProcessIdentities,
+  ObservedSubagentConsoles
 } from '../../modules/observation'
 import type { ProviderDriver, SessionChannels, TurnInput } from '../../modules/suppliers'
 
@@ -103,6 +105,8 @@ export interface ObservedSendTargetsDeps {
   observation: Pick<ObservationQueries, 'observedSessionOf'>
   /** The process identity observation recorded for an observed dwarf (ADR-014 item 2). */
   processes: ObservedProcessIdentities
+  /** AMENDMENT-29: a subagent's lead process; absent, a subagent has none (no send path). */
+  subagents?: Pick<ObservedSubagentConsoles, 'leadProcessOf'>
 }
 
 /**
@@ -118,12 +122,34 @@ export function observedSendTargets(deps: ObservedSendTargetsDeps): {
       const dwarf = deps.dwarfs.get(dwarfId)
       if (dwarf === null || dwarf.departed || dwarf.owned) return null
       if (deps.observation.observedSessionOf(dwarfId) === null) return null
-      return {
-        providerId: dwarf.identity.providerId,
-        providerSessionId: dwarf.identity.providerSessionId,
-        process: deps.processes.processIdentityOf(dwarfId)
-      }
+      return targetOver(dwarfId, dwarf.identity, deps)
     }
+  }
+}
+
+/**
+ * The target of an observed dwarf of `identity`: a session with the process observation recorded,
+ * or (AMENDMENT-29) a subagent with its agent id and its lead session's process.
+ */
+function targetOver(
+  dwarfId: DwarfId,
+  identity: ProviderIdentity,
+  deps: {
+    processes: ObservedProcessIdentities
+    subagents?: Pick<ObservedSubagentConsoles, 'leadProcessOf'>
+  }
+): ObservedSendTarget {
+  const base = {
+    providerId: identity.providerId,
+    providerSessionId: identity.providerSessionId
+  }
+  if (identity.providerAgentId === undefined) {
+    return { ...base, process: deps.processes.processIdentityOf(dwarfId) }
+  }
+  return {
+    ...base,
+    providerAgentId: identity.providerAgentId,
+    process: deps.subagents?.leadProcessOf(dwarfId) ?? null
   }
 }
 
@@ -137,16 +163,13 @@ export function observedSendTargets(deps: ObservedSendTargetsDeps): {
 export function observedRouteTargets(deps: {
   identities: ObservedIdentities
   processes: ObservedProcessIdentities
+  /** AMENDMENT-29: a subagent's lead process; absent, a subagent has none (no send path). */
+  subagents?: Pick<ObservedSubagentConsoles, 'leadProcessOf'>
 }): { targetOf(dwarfId: DwarfId): ObservedSendTarget | null } {
   return {
     targetOf: (dwarfId) => {
       const identity = deps.identities.identityOf(dwarfId)
-      if (identity === null) return null
-      return {
-        providerId: identity.providerId,
-        providerSessionId: identity.providerSessionId,
-        process: deps.processes.processIdentityOf(dwarfId)
-      }
+      return identity === null ? null : targetOver(dwarfId, identity, deps)
     }
   }
 }

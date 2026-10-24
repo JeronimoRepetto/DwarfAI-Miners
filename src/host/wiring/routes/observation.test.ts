@@ -5,9 +5,12 @@
 // else CLAUDE_CONFIG_DIR, else `~/.claude`. Every Claude consumer of the Host reads the same list.
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { FakeClock } from '../../kernel/fakes/FakeClock'
 import { FakeFs } from '../../kernel/fakes/FakeFs'
+import { FakeProcessControl } from '../../kernel/fakes/FakeProcessControl'
+import { ClaudeObservationAdapter } from '../../modules/observation'
 import { CLAUDE_CONFIG_DIRS_KEY } from '@dwarfai/contracts'
-import { observedProviderFolders, readHostSettings } from './observation'
+import { observationAdapters, observedProviderFolders, readHostSettings } from './observation'
 
 const HOME = join('/home', 'j')
 const CONFIG_FILE = join('/data', 'DwarfAI-Miners', 'config-v1.json')
@@ -66,5 +69,26 @@ describe('the Claude roots the Host observes (CLAUDE_CONFIG_DIRS)', () => {
     expect(observedProviderFolders({}, HOME, { settings: malformed }).claudeConfigDirs).toEqual([
       join(HOME, '.claude')
     ])
+  })
+})
+
+/*
+ * APPENDED for AMENDMENT-29 (owner, 2026-10-24): the Claude adapter is the one that tells an
+ * observed subagent's lead terminal to the observed-subagent route.
+ */
+describe('the adapters that tell a subagent lead terminal (AMENDMENT-29)', () => {
+  it('[ADR-014] the Claude adapter alone, the same instance the loop reads', () => {
+    const observed = observationAdapters({
+      folders: observedProviderFolders({}, HOME),
+      fs: new FakeFs(),
+      clock: new FakeClock(0),
+      processes: new FakeProcessControl(),
+      openSnapshot: (() => {
+        throw new Error('no provider database is read here')
+      }) as unknown as Parameters<typeof observationAdapters>[0]['openSnapshot']
+    })
+    expect(observed.subagentConsoles).toHaveLength(1)
+    expect(observed.subagentConsoles[0]).toBeInstanceOf(ClaudeObservationAdapter)
+    expect(observed.subagentConsoles[0]).toBe(observed.adapters[0])
   })
 })

@@ -78,6 +78,7 @@ import {
   type ObservedBatchSink,
   type ObservedPresence,
   type ObservedProcessRegistry,
+  type ObservedSubagentConsoleRegistry,
   type ObservedSessionStore
 } from '../../modules/observation'
 import type { ReadOnlySnapshotOpener } from '../../platform/sqlite/readOnlySnapshot'
@@ -215,12 +216,14 @@ const OBSERVED: Readonly<
 /**
  * The four observation adapters in the loop's order, each told the other providers' folders for
  * the longest-prefix dispatch (FM-093), and the registries that answer a process identity: only
- * Claude's (15 §5 "pid for kill / focus"; spike S-014-1 `partial` for the others).
+ * Claude's (15 §5 "pid for kill / focus"; spike S-014-1 `partial` for the others). Claude's also
+ * tells an observed subagent's lead terminal to the observed-subagent route (AMENDMENT-29).
  */
 export function observationAdapters(deps: ObservationAdapterDeps): {
   adapters: ObservationAdapter[]
   processRegistries: ObservedProcessRegistry[]
   presence: ObservedPresence[]
+  subagentConsoles: ObservedSubagentConsoleRegistry[]
 } {
   const { folders, fs, clock, processes, openSnapshot } = deps
   const rootsOf: Readonly<Record<keyof typeof OBSERVED, readonly string[]>> = {
@@ -277,7 +280,8 @@ export function observationAdapters(deps: ObservationAdapterDeps): {
     ],
     processRegistries: [claude],
     // Owner decision 2026-10-10: only Claude's registry tells a session's process at first sight.
-    presence: [claude]
+    presence: [claude],
+    subagentConsoles: [claude]
   }
 }
 
@@ -290,6 +294,8 @@ export interface ObservationWiringDeps {
   /** The adapters and registries `observationAdapters` built. */
   adapters: readonly ObservationAdapter[]
   processRegistries: readonly ObservedProcessRegistry[]
+  /** AMENDMENT-29: the adapters that tell a subagent's lead terminal (`observationAdapters`). */
+  subagentConsoles?: readonly ObservedSubagentConsoleRegistry[]
   /** The adapters that tell a session's presence at first sight (`observationAdapters`). */
   presence?: readonly ObservedPresence[]
   /**
@@ -347,6 +353,7 @@ export function wireObservation(deps: ObservationWiringDeps): WiredObservation {
   const observation = createObservation({
     adapters: deps.adapters,
     processRegistries: deps.processRegistries,
+    ...(deps.subagentConsoles === undefined ? {} : { subagentConsoles: deps.subagentConsoles }),
     ...(deps.presence === undefined ? {} : { presence: deps.presence }),
     ...(deps.installMoment === undefined ? {} : { installMoment: deps.installMoment }),
     fs: deps.fs,
