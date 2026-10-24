@@ -2,7 +2,7 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { NO_PINS, addKey, stepPins, type PinInput, type PinSet } from '../../lib/valle/pins'
 import { pinFacts, pinHarness } from '../../lib/valle/testing/pinHarness'
 import { BORIN, DAIN, EREBOR, MORIA, NALI } from '../../lib/veta/testing/vetaFixtures'
@@ -198,11 +198,13 @@ describe("an Add pin's line in the stack (EPIC-20 visual parity)", () => {
   })
 })
 
-// APPENDED for the Valle QA (VQA-01, VQA-11; EPIC-20). The design draws the stack with three pins and is silent on more
-// (`DS` organisms/chat-stack); the rule decided in development: the open chat keeps its full space and is never
-// covered, the collapsed lines above and below it share what is left and scroll inside their own regions, and nothing in
-// the pinned column draws past it. jsdom lays nothing out, so the layout is read from the rules the stack declares (the
-// house idiom, valleChatHosting.test.ts); the laid-out page is the L9 case `e2e/valle/stack-overflow.e2e.ts`.
+// APPENDED for the Valle QA (VQA-01, VQA-11; EPIC-20), REWORKED for the owner check of 2026-10-24. The design draws the
+// stack with three pins and is silent on more (`DS` organisms/chat-stack). #1514 gave the lines above and below the open
+// chat a scroll region each; the owner rejected the three scrollbars that made, and asked for one list that scrolls
+// whole, carrying the open chat with it, a visible outline round the open chat, and an opening that is not abrupt. So the
+// two regions are gone and the expectations that pinned them are replaced by the owner's model. jsdom lays nothing out,
+// so the layout is read from the rules the stack declares (the house idiom, valleChatHosting.test.ts) and the geometry
+// the motion reads is a stub; the laid-out page is the L9 case `e2e/valle/stack-overflow.e2e.ts`.
 const stackCss = readFileSync(join(import.meta.dirname, 'PinnedStack.vue'), 'utf8')
 
 /** The declarations of the stack's rule whose selector is exactly `selector`. */
@@ -222,12 +224,20 @@ function rule(selector: string): Record<string, string> {
   )
 }
 
-/** The pins of each part of the list, in order: a lines region by its lines, the open chat by its own pin. */
-const parts = (wrapper: VueWrapper): string[][] =>
+/** Every selector of the stack's style that lets its box scroll. */
+function scrollers(): string[] {
+  const style = stackCss.slice(stackCss.indexOf('<style'))
+  return [...style.matchAll(/\n([^\n{}]+) \{([^}]*)\}/g)]
+    .filter(([, , body]) => /overflow(-y)?:\s*(auto|scroll)/.test(body!))
+    .map(([, selector]) => selector!.trim())
+}
+
+/** The list's children in order: a line by its pin, the open chat as `open:<pin>`. */
+const parts = (wrapper: VueWrapper): string[] =>
   [...wrapper.get('.dm-cstack__list').element.children].map((part) =>
     part.classList.contains('dm-cstack__open')
-      ? ['open:' + part.getAttribute('data-pin')]
-      : [...part.querySelectorAll('[data-pin]')].map((line) => line.getAttribute('data-pin') ?? '')
+      ? 'open:' + part.getAttribute('data-pin')
+      : (part.getAttribute('data-pin') ?? part.className)
   )
 
 describe('the pinned chat stack with many pins (Valle QA VQA-01, VQA-11)', () => {
@@ -251,44 +261,166 @@ describe('the pinned chat stack with many pins (Valle QA VQA-01, VQA-11)', () =>
     ).toHaveLength(0)
   })
 
-  it('[US-VALLE-007.AC08] the lines above and below the open chat sit in their own regions, in pin order', async () => {
+  it('[US-VALLE-007.AC08] one list holds the lines and the open chat in pin order and scrolls as one; no line region scrolls on its own', async () => {
     const { root } = mountStack(three())
-    expect(parts(root)).toEqual([[`open:${BORIN}`], [DAIN, NALI]])
+    expect(parts(root)).toEqual([`open:${BORIN}`, DAIN, NALI])
     await root.get(`.dm-cstack__row[data-pin="${DAIN}"]`).trigger('click')
-    expect(parts(root)).toEqual([[BORIN], [`open:${DAIN}`], [NALI]])
+    expect(parts(root)).toEqual([BORIN, `open:${DAIN}`, NALI])
     await root.get(`.dm-cstack__row[data-pin="${NALI}"]`).trigger('click')
-    expect(parts(root)).toEqual([[BORIN, DAIN], [`open:${NALI}`]])
-    // Every region is a lines region, named for what it holds.
-    for (const region of root.findAll('.dm-cstack__list > :not(.dm-cstack__open)')) {
-      expect(region.classes()).toContain('dm-cstack__lines')
-      expect(region.attributes('role')).toBe('group')
-    }
+    expect(parts(root)).toEqual([BORIN, DAIN, `open:${NALI}`])
+    // The list is the stack's one scroll (the open chat's log scrolls inside the chat, the MessagePanel's own).
+    expect(scrollers()).toEqual(['.dm-cstack__list'])
+    expect(rule('.dm-cstack__list')).toMatchObject({ 'min-height': '0', 'overflow-y': 'auto' })
   })
 
-  it('[US-VALLE-007.AC08] the lines regions give way first and scroll inside themselves; the open chat never shrinks; nothing leaves the list', () => {
-    // A lines region shrinks before the open chat (flex-shrink 1 against 0), down to one whole line, and scrolls what
-    // no longer fits; its lines keep the design's 44 px plate.
-    expect(rule('.dm-cstack__lines')).toMatchObject({
-      display: 'flex',
-      'flex-direction': 'column',
-      flex: '0 1 auto',
-      'min-height': 'calc(44px + 2 * var(--px, 2px))',
-      'overflow-y': 'auto'
+  it('[US-VALLE-007.AC08] the open chat keeps a fixed room in the list: it fills what the lines leave, never under 240 px or the list less two lines', () => {
+    // Few lines: it grows into what they leave, as in the prototype. Many: it never shrinks (the list scrolls instead),
+    // holding the list's height less two lines (a line is 44 px, a 2 px margin above and below, and a 4 px gap), so a
+    // neighbour line shows on each side when it is in view, and at least the design's 240 px, never more than the list.
+    expect(rule('.dm-cstack__open')).toMatchObject({
+      flex: '1 0 auto',
+      'min-height': 'min(100%, max(240px, 100% - 2 * (44px + 2 * var(--px, 2px) + 4px)))'
     })
     expect(rule('.dm-cstack__row')).toMatchObject({ flex: 'none', height: '44px' })
-    // The open chat takes what is left and never gives any of it up: at least the design's 240 px and at least half the
-    // list, so many lines never squeeze its conversation to a sliver, or more when its own content needs more (the flex
-    // item's automatic minimum, kept by declaring no min-height).
-    const open = rule('.dm-cstack__open')
-    expect(open).toMatchObject({ flex: '1 0 max(240px, 50%)' })
-    expect(open['min-height']).toBeUndefined()
-    // That content is the MessagePanel's fixed parts, its head, its card or composer, never its conversation: the log
-    // scrolls inside the room left to it (`DS/docs/screens/message.md`, height set by the layout, scrolls inside), so a
-    // long log never sizes the open chat and pushes its composer out of view.
+    // Its floor is its fixed parts and that room, never its conversation: the log scrolls inside the room left to it
+    // (`DS/docs/screens/message.md`, height set by the layout, scrolls inside).
     expect(rule('.dm-cstack__open > :deep(.dm-msg .dm-msg__log)')).toMatchObject({
       contain: 'size'
     })
-    // Should the floors together still not fit, the list scrolls as a whole: nothing draws past the column.
-    expect(rule('.dm-cstack__list')).toMatchObject({ 'min-height': '0', 'overflow-y': 'auto' })
+  })
+
+  it('[US-VALLE-007.AC08] the open chat wears an outline from its head to its composer: the brass edge the deck gives the pane in focus', () => {
+    // `DS/prototype/organisms/chat-deck/chat-deck.css` `.dm-cdeck__pane.is-focus::after`: an overlay over the whole
+    // chat, painted, never hit.
+    expect(rule('.dm-cstack__open')).toMatchObject({ position: 'relative' })
+    expect(rule('.dm-cstack__open::after')).toEqual({
+      content: "''",
+      position: 'absolute',
+      inset: '0',
+      'pointer-events': 'none',
+      'box-shadow': 'inset 0 0 0 2px var(--brass)'
+    })
+  })
+})
+
+// APPENDED for the owner check of 2026-10-24: opening a chat plays, and brings it into view. jsdom lays nothing out and
+// has no Web Animations, so the boxes are a stub laid out from the list's order (a line 52 px, the open chat 160 px, the
+// list `listHeight` tall and scrolled by its own `scrollTop`) and `animate` is a recording fake.
+describe('opening a chat in the pinned stack (owner check 2026-10-24)', () => {
+  interface Played {
+    pin: string | null
+    frames: Keyframe[]
+    timing: KeyframeAnimationOptions
+  }
+  let played: Played[] = []
+  let listHeight = 1000
+  let reduced = false
+  const proto = HTMLElement.prototype as unknown as Record<string, unknown>
+  const realRect = HTMLElement.prototype.getBoundingClientRect
+  const realMatchMedia = window.matchMedia
+
+  const box = (top: number, height: number): DOMRect =>
+    ({
+      top,
+      height,
+      bottom: top + height,
+      left: 0,
+      right: 300,
+      width: 300,
+      x: 0,
+      y: top
+    }) as DOMRect
+
+  beforeEach(() => {
+    played = []
+    listHeight = 1000
+    reduced = false
+    proto.animate = function (
+      this: HTMLElement,
+      frames: Keyframe[],
+      timing: KeyframeAnimationOptions
+    ) {
+      played.push({ pin: this.getAttribute('data-pin'), frames, timing })
+      return { cancel() {}, finished: Promise.resolve() }
+    }
+    HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement): DOMRect {
+      if (this.classList.contains('dm-cstack__list')) return box(0, listHeight)
+      const list = this.parentElement
+      if (list === null || !list.classList.contains('dm-cstack__list')) return box(0, 0)
+      let top = -list.scrollTop
+      for (const part of list.children) {
+        const height = part.classList.contains('dm-cstack__open') ? 160 : 52
+        if (part === this) return box(top, height)
+        top += height
+      }
+      return box(0, 0)
+    }
+    window.matchMedia = ((query: string) => ({
+      matches: reduced && query.includes('reduce'),
+      media: query,
+      addEventListener() {},
+      removeEventListener() {}
+    })) as unknown as typeof window.matchMedia
+  })
+  afterEach(() => {
+    delete proto.animate
+    HTMLElement.prototype.getBoundingClientRect = realRect
+    window.matchMedia = realMatchMedia
+  })
+
+  /** A list whose `scrollTop` holds what is set, as a laid-out one does. */
+  function scrollable(wrapper: VueWrapper): HTMLElement {
+    const list = wrapper.get('.dm-cstack__list').element as HTMLElement
+    let top = 0
+    Object.defineProperty(list, 'scrollTop', {
+      configurable: true,
+      get: () => top,
+      set: (value: number) => {
+        top = value
+      }
+    })
+    return list
+  }
+
+  it('[US-VALLE-007.AC08] opening a chat unrolls it from its head over --dur-panel while the lines it moved slide to their place; under reduced motion it opens at once, nothing played', async () => {
+    const { root } = mountStack(three())
+    scrollable(root)
+    // BORIN open, DAIN, NALI → BORIN, DAIN, NALI open: DAIN rises from under BORIN's chat, 108 px; BORIN stays put.
+    await root.get(`.dm-cstack__row[data-pin="${NALI}"]`).trigger('click')
+    await flushPromises()
+    const timing = { duration: 180, easing: 'cubic-bezier(0.2, 0.7, 0.1, 1)' }
+    expect(played).toEqual([
+      { pin: DAIN, frames: [{ transform: 'translateY(108px)' }, { transform: 'none' }], timing },
+      {
+        pin: NALI,
+        frames: [{ clipPath: 'inset(0 0 100% 0)' }, { clipPath: 'inset(0 0 0 0)' }],
+        timing
+      }
+    ])
+    // Reduced motion: the next chat opens in one frame.
+    reduced = true
+    played = []
+    await root.get(`.dm-cstack__row[data-pin="${DAIN}"]`).trigger('click')
+    await flushPromises()
+    expect(root.get('.dm-cstack__open').attributes('data-pin')).toBe(DAIN)
+    expect(played).toEqual([])
+  })
+
+  it('[US-VALLE-007.AC08] opening a chat scrolls the list to bring it into view, head first, its composer shown when it fits', async () => {
+    for (const motion of [false, true]) {
+      reduced = motion
+      listHeight = 200
+      const { root } = mountStack(three())
+      const list = scrollable(root)
+      // NALI opens at 104 px, 160 px tall, under a 200 px list: its foot lines up with the list's, 64 px down.
+      await root.get(`.dm-cstack__row[data-pin="${NALI}"]`).trigger('click')
+      await flushPromises()
+      expect(list.scrollTop, `reduced ${motion}`).toBe(64)
+      // Back to BORIN, now above the view: its head lines up with the list's top.
+      await root.get(`.dm-cstack__row[data-pin="${BORIN}"]`).trigger('click')
+      await flushPromises()
+      expect(list.scrollTop, `reduced ${motion}`).toBe(0)
+      root.unmount()
+    }
   })
 })
